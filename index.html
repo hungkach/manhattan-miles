@@ -62,7 +62,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.2.0 from hungkach/body-arcade@446ad48, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.3.0 from hungkach/body-arcade@3887e1d, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -71,7 +71,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.2.0';
+  RE.version = '0.3.0';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -210,17 +210,32 @@
         squatFullDrop: 0.5, // hip drop (in T) that reads as squat_depth 1
       },
       // Lengths in body units: S = shoulder width, T = torso length.
+      // March steps: four cues per leg, after Homecoming Hero's step trigger.
+      // A leg steps when `need` of its known cues pass `on`, and re-arms when
+      // `need` drop below `off`; a cue whose landmarks are not visible is
+      // unknown and counts neither way. Two cues read 3D world landmarks and
+      // two read the 2D image, so either source can carry a step alone.
       march: {
-        liftOn: 0.15,        // knee lift (T) above the other knee that starts a step
-        liftOff: 0.08,       // lift (T) the knee must fall below before the next step
-        debounceMs: 150,     // per leg
+        cues: {
+          pitch: { on: 25, off: 12 },     // world: thigh angle from the calibrated vertical (degrees), above the other thigh's
+          lift: { on: 0.15, off: 0.08 },  // world: knee height above standing (T), above the other knee's
+          rise: { on: 0.16, off: 0.07 },  // image: knee height above its standing spot (T)
+          lead: { on: 0.14, off: 0.05 },  // image: this knee's rise minus the other knee's (T)
+        },
+        need: 2,
+        refractoryMs: 250,   // per leg, after it fires
         sameLegMinMs: 600,   // a same-leg repeat counts only after this gap (legs alternate)
+        // Warm-up tuning (engine.apply_capture): each cue's on is set to tuneFrac of
+        // the weakest captured round that reached seenFrac of the default on, kept
+        // within [minFrac, maxFrac] of the default; off goes to half of that.
+        tune: { tuneFrac: 0.5, seenFrac: 0.5, minFrac: 0.4, maxFrac: 1.5 },
         squatPauseDrop: 0.2, // squat beats march: hip drop (T) past this pauses stepping
         liftSource: 'auto',  // 'auto' uses world landmarks when the profile has them, 'image' forces 2D
         cadenceWindowMs: 3000,
       },
       run: {
         lift: 0.35,     // peak knee lift (T) of a high-knee step
+        pitch: 65,      // or peak thigh angle (degrees) of a high-knee step
         cadence: 150,   // steps per minute between high-knee steps
         startSteps: 2,  // consecutive high-knee steps that start a run
         exitMs: 600,    // run ends after this long with no high-knee step
@@ -302,6 +317,9 @@
     living_room: { id: 'living_room', label: 'Living room', facingMode: 'user', mirrorDisplay: true, distanceFt: 4 },
     garage: { id: 'garage', label: 'Garage', facingMode: 'user', mirrorDisplay: true, distanceFt: 6 },
     custom: { id: 'custom', label: 'Custom', facingMode: 'user', mirrorDisplay: true, distanceFt: null },
+    // Back camera, screen mirrored to a TV. Prefers the ultra-wide lens (or the
+    // widest zoom), falls back to the main back camera, then the front camera.
+    tv: { id: 'tv', label: 'TV, back camera', facingMode: 'environment', wideLens: true, mirrorDisplay: true, distanceFt: 6 },
   });
 
   // Deep merge for config overrides (plain objects only).
@@ -513,6 +531,31 @@
     };
   };
 
+  // Thigh angles in degrees from the calibrated vertical, from 3D world
+  // landmarks: 0 standing, about 90 with the thigh level. `up` is the
+  // calibrated hip-to-shoulder direction (world y points down), so a phone
+  // tilted back or sideways reads the same angles.
+  const v3 = (a, b) => ({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z });
+  RE.thighPitch = function (world, up) {
+    const down = { x: -up.x, y: -up.y, z: -up.z };
+    const angle = (hip, knee) => {
+      const d = v3(world[hip], world[knee]);
+      const n = Math.hypot(d.x, d.y, d.z);
+      if (!(n > 0)) return null;
+      return (Math.acos(RE.clamp((d.x * down.x + d.y * down.y + d.z * down.z) / n, -1, 1)) * 180) / Math.PI;
+    };
+    return { L: angle(L.L_HIP, L.L_KNEE), R: angle(L.R_HIP, L.R_KNEE) };
+  };
+  // Hip-to-shoulder unit vector in world landmarks (null if degenerate).
+  RE.worldUp = function (world) {
+    const sm = RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER]);
+    const hm = RE.mid3(world[L.L_HIP], world[L.R_HIP]);
+    const d = v3(hm, sm);
+    const n = Math.hypot(d.x, d.y, d.z);
+    return n > 0 ? { x: d.x / n, y: d.y / n, z: d.z / n } : null;
+  };
+  RE.mid3 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 });
+
   RE.computeSignals = function (points, cal, cfg, world) {
     const { confidence, missing } = RE.confidenceOf(points, cfg.visibility.hold);
     const out = { confidence, missing, calibrated: !!cal };
@@ -546,6 +589,14 @@
     const useWorld = cfg.march.liftSource !== 'image' && out.kneeLiftWL != null;
     out.stepLiftL = useWorld ? out.kneeLiftWL : out.kneeLiftL;
     out.stepLiftR = useWorld ? out.kneeLiftWR : out.kneeLiftR;
+    // thigh angle above standing, when this profile has a world vertical
+    out.pitchL = null;
+    out.pitchR = null;
+    if (world && cal.up) {
+      const p = RE.thighPitch(world, cal.up);
+      if (p.L != null) out.pitchL = p.L - (cal.pitchBaseL || 0);
+      if (p.R != null) out.pitchR = p.R - (cal.pitchBaseR || 0);
+    }
     // shoulder width and torso length now vs calibration. Both scale with
     // distance; only shoulder width shrinks when the torso turns, so torso
     // length tracks distance and their quotient tracks the turn.
@@ -607,11 +658,23 @@
     }
   }
 
-  // March steps and high knees. A step fires on the rising edge of one knee
-  // lifting above the other, so squats (both knees) never count, and legs
-  // must alternate. High knees: startSteps consecutive steps with a peak
-  // lift of run.lift T, spaced at run.cadence or faster, start a run; the run
-  // ends after run.exitMs with no such step.
+  // March steps and high knees, after Homecoming Hero's step trigger, which
+  // holds up on real phones. Each leg has four cues (cfg.march.cues): thigh
+  // angle and knee height from 3D world landmarks, knee rise and knee lead
+  // from the 2D image. A leg steps when `need` of its known cues pass their
+  // on values and re-arms when `need` drop below off; a cue whose knee is not
+  // tracked is unknown and counts neither way, so one hidden or badly read
+  // source never blocks the other. Thigh angle and knee height count above
+  // the other leg's and lead is one knee's rise minus the other's, so a squat
+  // (both legs together) never steps. Legs alternate. Thresholds come from
+  // the profile's tuned cues (engine.apply_capture) when it has them.
+  // High knees: startSteps consecutive steps whose peak thigh angle reaches
+  // run.pitch, or whose peak knee lift reaches run.lift, spaced at
+  // run.cadence or faster, start a run; it ends after run.exitMs without one.
+  const STEP_CUES = ['pitch', 'lift', 'rise', 'lead'];
+  const LEGS = { left: { knee: L.L_KNEE, other: 'right', k: 'L', o: 'R' }, right: { knee: L.R_KNEE, other: 'left', k: 'R', o: 'L' } };
+  const above = (v, other) => (v == null ? null : v - Math.max(0, other == null ? 0 : other));
+
   class StepDetector {
     constructor(cfg) {
       this.m = cfg.march;
@@ -624,10 +687,33 @@
       this.lastHighAt = -Infinity;
       this.running = false;
       this.peaks = [];
-      this.legs = {
-        left: { up: true, counted: false, peak: 0, lastStep: -Infinity, interval: Infinity },
-        right: { up: true, counted: false, peak: 0, lastStep: -Infinity, interval: Infinity },
-      };
+      // legs start held, so nothing fires until the knee is seen down
+      const leg = () => ({ active: true, lastFire: -Infinity, lastStep: -Infinity, counted: false, interval: Infinity, peakPitch: 0, peakLift: 0 });
+      this.legs = { left: leg(), right: leg() };
+    }
+
+    // This frame's cue values per leg, null for a cue that cannot be read.
+    cues(ctx) {
+      const s = ctx.sig;
+      const kneeSeen = { left: seen(ctx, L.L_KNEE), right: seen(ctx, L.R_KNEE) };
+      const out = {};
+      for (const name of ['left', 'right']) {
+        const g = LEGS[name];
+        if (!kneeSeen[name]) { out[name] = { pitch: null, lift: null, rise: null, lead: null }; continue; }
+        const other = kneeSeen[g.other];
+        out[name] = {
+          pitch: above(s['pitch' + g.k], other ? s['pitch' + g.o] : null),
+          lift: above(s['kneeLiftW' + g.k], other ? s['kneeLiftW' + g.o] : null),
+          rise: s['kneeLift' + g.k],
+          lead: other ? s['kneeLift' + g.k] - s['kneeLift' + g.o] : null,
+        };
+      }
+      return out;
+    }
+
+    threshold(ctx, name, id) {
+      const tuned = ctx.cal.cues && ctx.cal.cues[name] && ctx.cal.cues[name][id];
+      return tuned || this.m.cues[id];
     }
 
     update(ctx, out) {
@@ -638,18 +724,11 @@
         this.highCount = 0;
         out.events.push(['run_end', {}]);
       }
-      const paused = ctx.low || s.hipDrop > this.m.squatPauseDrop || s.stepLiftL == null;
-      if (paused) {
-        // a knee must come back down before it can count again
-        this.legs.left.up = this.legs.right.up = true;
-        this.legs.left.counted = this.legs.right.counted = false;
-      } else {
-        const lifts = {
-          left: s.stepLiftL - Math.max(0, s.stepLiftR),
-          right: s.stepLiftR - Math.max(0, s.stepLiftL),
-        };
-        for (const name of ['left', 'right']) this.updateLeg(name, lifts[name], t, out);
-      }
+      // squat beats march: a deep hip drop holds both legs
+      const paused = s.hipDrop > this.m.squatPauseDrop;
+      const vals = paused ? null : this.cues(ctx);
+      out.stepCues = vals;
+      for (const name of ['left', 'right']) this.updateLeg(ctx, name, vals && vals[name], t, out);
       out.cadence = RE.cadenceFromSteps(this.steps, t, this.m.cadenceWindowMs);
       out.running = this.running;
       out.kneeLift = this.peaks.length ? this.peaks.reduce((a, b) => a + b, 0) / this.peaks.length : 0;
@@ -659,36 +738,52 @@
         : 0;
     }
 
-    updateLeg(name, lift, t, out) {
+    updateLeg(ctx, name, v, t, out) {
       const leg = this.legs[name];
-      if (!leg.up) {
-        if (lift < this.m.liftOn) return;
-        leg.up = true;
-        leg.peak = lift;
-        leg.counted = false;
-        const sinceLeg = t - leg.lastStep;
-        const alternates = this.lastLeg !== name || sinceLeg >= this.m.sameLegMinMs;
-        if (sinceLeg >= this.m.debounceMs && alternates) {
-          leg.counted = true;
-          leg.interval = t - this.lastStepAt;
-          leg.lastStep = t;
-          this.lastLeg = name;
-          this.lastStepAt = t;
-          this.steps.push(t);
-          if (this.steps.length > 64) this.steps.shift();
-          out.events.push(['step', { leg: name }]);
-        }
+      if (!v) { leg.active = true; leg.counted = false; return; }
+      let on = 0, off = 0;
+      for (const id of STEP_CUES) {
+        const x = v[id];
+        if (x == null || !isFinite(x)) continue;
+        const th = this.threshold(ctx, name, id);
+        if (x >= th.on) on++;
+        if (x <= th.off) off++;
+      }
+      const g = LEGS[name];
+      const s = ctx.sig;
+      if (leg.counted) {
+        // peaks of this step, for high knees and effort
+        if (s['pitch' + g.k] != null) leg.peakPitch = Math.max(leg.peakPitch, s['pitch' + g.k]);
+        const lift = above(s['stepLift' + g.k], s['stepLift' + g.o]);
+        if (lift != null) leg.peakLift = Math.max(leg.peakLift, lift);
+        if (v.rise != null) leg.peakLift = Math.max(leg.peakLift, v.rise);
+      }
+      if (!leg.active) {
+        if (on < this.m.need || t - leg.lastFire < this.m.refractoryMs) return;
+        leg.active = true;
+        leg.lastFire = t;
+        const alternates = this.lastLeg !== name || t - leg.lastStep >= this.m.sameLegMinMs;
+        if (!alternates) return;
+        leg.counted = true;
+        leg.peakPitch = 0;
+        leg.peakLift = 0;
+        leg.interval = t - this.lastStepAt;
+        leg.lastStep = t;
+        this.lastLeg = name;
+        this.lastStepAt = t;
+        this.steps.push(t);
+        if (this.steps.length > 64) this.steps.shift();
+        out.events.push(['step', { leg: name }]);
         return;
       }
-      if (lift > leg.peak) leg.peak = lift;
-      if (lift >= this.m.liftOff) return;
+      if (off < this.m.need) return;
       // knee back down: the step is complete, judge it for high knees
-      leg.up = false;
+      leg.active = false;
       if (!leg.counted) return;
       leg.counted = false;
-      this.peaks.push(leg.peak);
+      this.peaks.push(leg.peakLift);
       if (this.peaks.length > 4) this.peaks.shift();
-      const high = leg.peak >= this.r.lift;
+      const high = leg.peakLift >= this.r.lift || leg.peakPitch >= this.r.pitch;
       const fast = leg.interval <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }
       this.highCount++;
@@ -953,7 +1048,12 @@
 //
 // The game describes its movement model with engine.set_movement():
 //   rails: true snaps movement to paths (manhattan-miles): turn slides you
-//          sideways, a point at an intersection takes that street
+//          sideways, a point takes the next intersection's street. A point
+//          made between intersections waits (snapshot.queued) until
+//          at_intersection() is true; pointing the other way replaces it and
+//          turn around clears it. branch_bearing(side) returns null when there
+//          is no street that way: the player goes straight and the point waits
+//          for the next intersection.
 //   rails: false is free movement (stomp-city): turn sets the turn rate
 //   at_intersection(), branch_bearing(side), target_bearing() are optional hooks
 (function (g) {
@@ -979,11 +1079,14 @@
       this.lastStepAt = -Infinity;
       this.interval = Infinity;
       this.pending = { turnAround: false, point: null };
+      this.queued = null;  // rails: a point waiting for the next intersection
+      this.updating = false;
       this.t = null;
       this.stats = { activeMs: 0, runMs: 0, cadenceMs: 0, peakCadence: 0 };
     }
 
     setModel(model) { this.model = Object.assign({ rails: false }, model); }
+    setFacing(deg) { this.facing = wrap(deg); }
 
     onEvent(name, payload, t) {
       if (name === 'step') {
@@ -997,6 +1100,11 @@
 
     // t in ms; sig: {cadence_spm, turn}; mode: explore | combat | transit
     update(t, sig, mode) {
+      this.updating = true;
+      try { this.step(t, sig, mode); } finally { this.updating = false; }
+    }
+
+    step(t, sig, mode) {
       const dt = this.t === null ? 0 : RE.clamp((t - this.t) / 1000, 0, 0.1);
       this.t = t;
       const c = this.c;
@@ -1018,9 +1126,9 @@
       } else if (turnAround) {
         // both hands overhead: the only way to reverse
         this.facing = wrap(this.facing + 180);
-      } else if (m.rails && point && m.at_intersection && m.at_intersection() && m.branch_bearing) {
-        // point an arm to take that street, like hailing a cab
-        this.facing = wrap(m.branch_bearing(point));
+        this.queued = null;
+      } else if (m.rails && (point || this.queued) && this.takeBranch(point)) {
+        // pointed an arm (now or earlier on the block) and took that street
       } else {
         // no step for stopAfterMs (or 1.5 step intervals at slow cadences,
         // counting intervals up to the slowest walking cadence): stop
@@ -1063,8 +1171,21 @@
       }
     }
 
+    // Rails: a new point replaces any waiting one; at an intersection with a
+    // street that way, take it. Returns true when the facing changed.
+    takeBranch(point) {
+      const m = this.model;
+      if (point) this.queued = point;
+      if (!m.at_intersection || !m.branch_bearing || !m.at_intersection()) return false;
+      const bearing = m.branch_bearing(this.queued);
+      if (bearing == null || !isFinite(bearing)) return false; // no street that way: keep it for the next one
+      this.facing = wrap(bearing);
+      this.queued = null;
+      return true;
+    }
+
     snapshot() {
-      return { state: this.state, speed: this.speed, target_speed: this.targetSpeed, facing: this.facing, lateral: this.lateral };
+      return { state: this.state, speed: this.speed, target_speed: this.targetSpeed, facing: this.facing, lateral: this.lateral, queued: this.queued };
     }
 
     summary() {
@@ -1254,11 +1375,23 @@
       // Knee baselines in body units, relative to the calibrated hip.
       cal.kneeBaseL = median(this.samples.map((s) => (cal.hipMidY - s.kneeLY) / cal.torsoLength));
       cal.kneeBaseR = median(this.samples.map((s) => (cal.hipMidY - s.kneeRY) / cal.torsoLength));
-      // World landmark knee baselines, when the source provides world landmarks.
+      // World landmark baselines, when the source provides world landmarks:
+      // knee heights, the vertical (hip to shoulder), and standing thigh angles.
       const ws = this.samples.filter((s) => s.world);
       if (ws.length >= this.samples.length / 2) {
         cal.kneeBaseWL = median(ws.map((s) => s.world.kneeL));
         cal.kneeBaseWR = median(ws.map((s) => s.world.kneeR));
+        const ups = ws.map((s) => s.up).filter(Boolean);
+        if (ups.length) {
+          const sum = ups.reduce((a, u) => ({ x: a.x + u.x, y: a.y + u.y, z: a.z + u.z }), { x: 0, y: 0, z: 0 });
+          const n = Math.hypot(sum.x, sum.y, sum.z);
+          if (n > 0) {
+            cal.up = { x: sum.x / n, y: sum.y / n, z: sum.z / n };
+            const pitches = ws.map((s) => RE.thighPitch(s.wl, cal.up));
+            cal.pitchBaseL = median(pitches.map((p) => p.L).filter((v) => v != null));
+            cal.pitchBaseR = median(pitches.map((p) => p.R).filter((v) => v != null));
+          }
+        }
       }
       return cal;
     }
@@ -1277,12 +1410,16 @@
       kneeLY: p[L.L_KNEE].y,
       kneeRY: p[L.R_KNEE].y,
       world: world ? RE.worldKneeHeights(world) : null,
+      up: world ? RE.worldUp(world) : null,
+      wl: world ? world.map((q) => (q ? { x: q.x, y: q.y, z: q.z } : q)) : null,
     };
   }
 
   // Saved player profiles, keyed by preset and orientation. Version 2 added
-  // the world landmark knee baselines; older profiles ask for recalibration.
-  RE.PROFILE_VERSION = 2;
+  // the world landmark knee baselines, version 3 the world vertical and thigh
+  // angles; older profiles ask for recalibration. A profile may also carry
+  // `cues`, step thresholds tuned from a warm-up (engine.apply_capture).
+  RE.PROFILE_VERSION = 3;
   RE.profiles = {
     key: (preset, orientation) => `rep-engine:profile:${preset}:${orientation}`,
     load(preset, orientation) {
@@ -1326,6 +1463,68 @@
 
   const pack = (list) => list.map((p) => [p.x, p.y, p.z, p.visibility == null ? 1 : p.visibility]);
 
+  // Opens the preset's camera. Front camera presets ask for facingMode 'user'.
+  // Back camera presets (TV) ask for the back camera, then with wideLens try
+  // the ultra-wide lens by its label, else zoom the main lens all the way out;
+  // with no back camera they fall back to the front one. Resolves with
+  // {stream, info: {facing, lens: 'front' | 'main' | 'ultrawide' | 'wide_zoom', fallback, label}}.
+  RE.openCamera = async function (preset, cfg, md) {
+    const get = (v) => md.getUserMedia({
+      audio: false,
+      video: Object.assign({ width: { ideal: cfg.camera.idealWidth }, height: { ideal: cfg.camera.idealHeight } }, v),
+    });
+    const stopStream = (st) => { if (st) st.getTracks().forEach((tr) => tr.stop()); };
+    const track = (st) => st.getVideoTracks()[0];
+    const front = async (fallback, reason) => {
+      const stream = await get({ facingMode: 'user' });
+      return { stream, info: { facing: 'user', lens: 'front', fallback, label: track(stream).label || '', reason } };
+    };
+    if (preset.facingMode !== 'environment') return front(false);
+    let s = null;
+    try {
+      s = await get({ facingMode: { ideal: 'environment' } });
+      let tr = track(s);
+      const settings = tr.getSettings ? tr.getSettings() : {};
+      if (/front|facetime/i.test(tr.label || '') || settings.facingMode === 'user') throw new Error('no back camera');
+      let lens = 'main';
+      if (preset.wideLens) {
+        if (/ultra ?wide/i.test(tr.label || '')) lens = 'ultrawide';
+        else {
+          const cams = (await md.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+          const uw = cams.find((d) => /ultra ?wide/i.test(d.label) && !/front/i.test(d.label));
+          if (uw) {
+            try {
+              const s2 = await get({ deviceId: { exact: uw.deviceId } });
+              stopStream(s);
+              s = s2;
+              tr = track(s);
+              lens = 'ultrawide';
+            } catch (_) {}
+          }
+          if (lens !== 'ultrawide' && (await widestZoom(tr))) lens = 'wide_zoom';
+        }
+      }
+      return { stream: s, info: { facing: 'environment', lens, fallback: false, label: tr.label || '' } };
+    } catch (err) {
+      stopStream(s);
+      return front(true, err.message);
+    }
+  };
+
+  // Zoom all the way out when the browser allows it (some back cameras reach
+  // the ultra-wide this way). True when the zoom went below 1.
+  async function widestZoom(tr) {
+    try {
+      const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+      const cur = tr.getSettings ? tr.getSettings().zoom : undefined;
+      if (caps.zoom && caps.zoom.min < (cur == null ? 1 : cur)) {
+        await tr.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
+        return caps.zoom.min < 1;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   // Live camera + MediaPipe Pose Landmarker (VIDEO mode, one pose).
   class CameraPoseSource {
     constructor(cfg) {
@@ -1340,6 +1539,7 @@
       this._fpsFrames = 0;
       this._fpsSince = 0;
       this.delegate = null;
+      this.info = null;
     }
 
     async start(video, preset, onFrame, onStatus = () => {}) {
@@ -1354,14 +1554,10 @@
       this.landmarker = await this._createLandmarker(vision, fileset);
 
       onStatus('Starting camera');
-      this.stream = await g.navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: preset.facingMode || 'user',
-          width: { ideal: this.cfg.camera.idealWidth },
-          height: { ideal: this.cfg.camera.idealHeight },
-        },
-      });
+      const opened = await RE.openCamera(preset, this.cfg, g.navigator.mediaDevices);
+      this.stream = opened.stream;
+      this.info = opened.info;
+      if (opened.info.fallback) onStatus('Back camera unavailable, using the front camera');
       video.srcObject = this.stream;
       video.muted = true;
       video.playsInline = true;
@@ -1744,6 +1940,10 @@
 // ---- engine/overlay.js ----
 // Debug overlay: skeleton, live signal bars, calibration prompt and the last
 // events. Toggle with a three-finger tap or the "d" key.
+//   opts.visible  start shown (default true)
+//   opts.panel    signal bars and event log (default true); false leaves just
+//                 the stick figure, for a player-facing camera view. Settable later.
+//   opts.prompt   the big calibration prompt (default true)
 (function (g) {
   'use strict';
   const RE = g.RepEngine;
@@ -1765,6 +1965,8 @@
       this.ctx = canvas.getContext('2d');
       this.engine = engine;
       this.visible = opts.visible !== false;
+      this.panel = opts.panel !== false;
+      this.prompt = opts.prompt !== false;
       this.log = [];
       this.size = engine.cfg.overlay.eventLogSize;
       this.raf = 0;
@@ -1772,7 +1974,8 @@
         if (name === 'frame' || name === 'calibration') return;
         let detail = '';
         if (name === 'calibrated' && payload && payload.cal) detail = ` ${payload.cal.orientation}${payload.fromProfile ? ' (saved)' : ''}`;
-        else if (payload && Object.keys(payload).length) detail = ' ' + JSON.stringify(payload).replace(/"/g, '');
+        else if (name === 'recording_done' && payload && payload.clip) detail = ` ${payload.clip.frames.length} frames`;
+        else if (payload && Object.keys(payload).length) detail = ' ' + logText(payload);
         this.log.unshift(`${new Date().toLocaleTimeString([], { hour12: false })} ${name}${detail}`);
         if (this.log.length > this.size) this.log.length = this.size;
       });
@@ -1815,7 +2018,7 @@
       if (d.frame && d.frame.points) {
         const map = this._mapper(d.frame.w, d.frame.h, W, H, d.mirror);
         const pts = d.frame.points;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = this.panel ? 3 : 7; // a stick figure on its own is read from across the room
         for (const [a, b] of RE.CONNECTIONS) {
           const pa = pts[a], pb = pts[b];
           if (!pa || !pb) continue;
@@ -1829,11 +2032,12 @@
           if (!p) continue;
           const P = map(p);
           ctx.fillStyle = p.held ? 'rgba(255,170,60,.95)' : 'rgba(255,255,255,.95)';
-          ctx.beginPath(); ctx.arc(P.x, P.y, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(P.x, P.y, this.panel ? 4 : 8, 0, Math.PI * 2); ctx.fill();
         }
       }
 
       // panel
+      if (!this.panel) { ctx.restore(); this._prompt(d, W, H, dpr); return; }
       const s = d.signals;
       const pad = 10, bw = 150, rowH = 18;
       const lines = 3 + BARS.length + 1 + this.log.length;
@@ -1844,12 +2048,16 @@
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textBaseline = 'middle';
       let y = 8 + pad + rowH / 2;
+      // cut a line to the panel width (binary search: log lines can be long)
       const fit = (str) => {
         const max = panelW - pad * 2;
         if (ctx.measureText(str).width <= max) return str;
-        let s = str;
-        while (s.length > 1 && ctx.measureText(s + '…').width > max) s = s.slice(0, -1);
-        return s + '…';
+        let lo = 0, hi = Math.min(str.length, 200);
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (ctx.measureText(str.slice(0, mid) + '…').width <= max) lo = mid; else hi = mid - 1;
+        }
+        return str.slice(0, lo) + '…';
       };
       const text = (str, color = '#fff') => { ctx.fillStyle = color; ctx.fillText(fit(str), 8 + pad, y); y += rowH; };
       text(`${d.source} · ${d.fps ? d.fps.toFixed(0) + ' fps' : '-- fps'} · ${d.mode}`);
@@ -1881,9 +2089,13 @@
       text(d.calibration ? `calibration: ${d.calibration.state} · ${d.calibration.prompt}` : 'events:', '#ddd');
       for (const line of this.log) text(line, 'rgba(255,255,255,.85)');
       ctx.restore();
+      this._prompt(d, W, H, dpr);
+    }
 
-      // big centered calibration prompt
-      if (d.calibration && d.calibration.state !== 'done') {
+    // big centered calibration prompt
+    _prompt(d, W, H, dpr) {
+      const ctx = this.ctx;
+      if (this.prompt && d.calibration && d.calibration.state !== 'done') {
         ctx.save();
         ctx.scale(dpr, dpr);
         const msg = d.calibration.prompt;
@@ -1913,6 +2125,12 @@
     }
   }
   RE.DebugOverlay = DebugOverlay;
+
+  // One short line for the event log: numbers rounded, long values cut.
+  function logText(payload) {
+    const str = JSON.stringify(payload, (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v)) || '';
+    return (str.length > 80 ? str.slice(0, 80) + '…' : str).replace(/"/g, '');
+  }
 })(globalThis);
 
 // ---- engine/engine.js ----
@@ -1924,7 +2142,9 @@
 //   engine.on('step', ({ leg }) => ...);
 //   engine.set_movement({ rails: false }); // free movement, lean sets turn rate
 //   const s = engine.signals();       // per-frame snapshot
-//   const m = engine.locomotion();    // speed, facing, lateral, state
+//   const m = engine.locomotion();    // speed, facing, lateral, queued, state
+//   engine.capture_start('step', 1);  // warm-up: record step cues for round 1
+//   engine.capture_stop(); engine.apply_capture(); // tune step thresholds to the player
 (function (g) {
   'use strict';
   const RE = g.RepEngine;
@@ -1934,6 +2154,8 @@
     const cfg = RE.mergeConfig(RE.defaultConfig(), opts.config);
     const emitter = RE.createEmitter();
     const headless = !!opts.headless;
+    // opts.speech: false keeps the engine quiet (the game voices its own prompts)
+    const speech = opts.speech != null ? !!opts.speech : !headless;
 
     const st = {
       presetId: opts.preset && RE.presets[opts.preset] ? opts.preset : 'living_room',
@@ -1962,6 +2184,8 @@
       lowConfidence: false,
       snapshot: emptySnapshot(),
       session: { startedAt: null, frames: 0, counts: {} },
+      // warm-up capture: per leg, per cue, the peak value in each round
+      capture: { move: null, round: 0, peaks: { left: {}, right: {} } },
     };
 
     // Count every event for the session summary, feed the move test and the
@@ -2038,6 +2262,7 @@
         st.det = st.cal && points
           ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, holdVis: cfg.visibility.hold })
           : null;
+        if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
         const det = st.det;
         st.loco.update(raw.t, { cadence_spm: det ? det.cadence : 0, turn: det ? det.turn : 0 }, st.mode);
@@ -2077,12 +2302,15 @@
       if (status.state === 'move_test' && st.cal !== st.calibrator.result) setCal(st.calibrator.result);
       st.calStatus = status;
       emitter.emit('calibration', status);
-      if (!headless && status.prompt && status.prompt !== st.lastPrompt) {
+      if (speech && status.prompt && status.prompt !== st.lastPrompt) {
         st.lastPrompt = status.prompt;
         RE.speak(status.state === 'baseline' ? 'Good. Hold still.' : status.prompt);
       }
       if (status.state === 'done') {
         const cal = status.result;
+        // keep thresholds tuned in an earlier warm-up for this setup
+        const prev = RE.profiles.load(st.presetId, cal.orientation);
+        if (prev && prev.cues && !cal.cues) cal.cues = prev.cues;
         RE.profiles.save(cal);
         st.calibrator = null;
         if (st.cal !== cal) setCal(cal);
@@ -2090,6 +2318,27 @@
         emitter.emit('calibrated', { cal, fromProfile: false, skippedTests: status.skippedTests });
         if (st.calPromise) { st.calPromise.resolve(cal); st.calPromise = null; }
       }
+    }
+
+    function recordCues(cues) {
+      const r = st.capture.round;
+      for (const leg of ['left', 'right']) {
+        const vals = cues[leg];
+        if (!vals) continue;
+        for (const id of Object.keys(vals)) {
+          const v = vals[id];
+          if (v == null || !isFinite(v)) continue;
+          const byRound = st.capture.peaks[leg][id] || (st.capture.peaks[leg][id] = {});
+          byRound[r] = Math.max(byRound[r] == null ? -Infinity : byRound[r], v);
+        }
+      }
+    }
+
+    // Rounds where a cue reached seenFrac of its default: the move showed there.
+    function goodRounds(leg, id) {
+      const def = cfg.march.cues[id];
+      const byRound = st.capture.peaks[leg][id] || {};
+      return Object.values(byRound).filter((pk) => pk >= cfg.march.tune.seenFrac * def.on);
     }
 
     function stopSource() {
@@ -2187,11 +2436,63 @@
       },
 
       // Locomotion state: {state: idle | walk | run, speed, target_speed,
-      // facing (degrees), lateral (-1..1, rails only)}.
+      // facing (degrees), lateral (-1..1, rails only), queued (rails: the
+      // point waiting for the next intersection, 'left' | 'right' | null)}.
+      // Safe to call from the set_movement hooks: inside an update it returns
+      // the current snapshot without updating again.
       locomotion() {
-        if (st.source === 'demo') api.signals();
+        if (st.source === 'demo' && !st.loco.updating) api.signals();
         return st.loco.snapshot();
       },
+      // Point the player at a heading (degrees), e.g. at the start of a walk.
+      set_facing(deg) { st.loco.setFacing(deg); },
+
+      // Warm-up tuning, after Homecoming Hero. While capturing, the engine
+      // records each step cue's peak per leg and per round. apply_capture()
+      // sets each cue's on value to half the player's weakest round that still
+      // showed the move (bounded around the default), saves it with the
+      // profile, and returns {seen: {step}, cues}. Only 'step' for now.
+      capture_start(move = 'step', round = 0) {
+        if (move !== 'step') throw new Error('unknown capture move ' + move);
+        st.capture.move = move;
+        st.capture.round = round;
+      },
+      capture_stop() { st.capture.move = null; },
+      capture_reset() { st.capture = { move: null, round: 0, peaks: { left: {}, right: {} } }; },
+      // {step: true} once any step cue has shown the move in some round
+      moves_seen() {
+        const step = ['left', 'right'].some((leg) => Object.keys(cfg.march.cues).some((id) => goodRounds(leg, id).length > 0));
+        return { step };
+      },
+      apply_capture() {
+        const t = cfg.march.tune;
+        const cues = { left: {}, right: {} };
+        let seen = false;
+        for (const leg of ['left', 'right']) {
+          for (const id of Object.keys(cfg.march.cues)) {
+            const def = cfg.march.cues[id];
+            const good = goodRounds(leg, id);
+            if (!good.length) continue; // not seen: the default stays
+            seen = true;
+            const pk = Math.min(...good);
+            const on = RE.clamp(t.tuneFrac * pk, t.minFrac * def.on, t.maxFrac * def.on);
+            cues[leg][id] = { on, off: Math.min(0.25 * pk, 0.5 * on) };
+          }
+        }
+        if (seen && st.cal) {
+          st.cal.cues = cues;
+          RE.profiles.save(st.cal);
+        }
+        return { seen: { step: seen }, cues };
+      },
+      // Back to the default step thresholds for this profile.
+      clear_tuning() {
+        if (!st.cal) return;
+        delete st.cal.cues;
+        RE.profiles.save(st.cal);
+      },
+      // Which camera is running: {facing, lens, fallback, label} or null.
+      camera() { return st.sourceObj && st.sourceObj.info ? Object.assign({}, st.sourceObj.info) : null; },
       // Movement model, see locomotion.js: {rails, at_intersection(),
       // branch_bearing(side), target_bearing()}.
       set_movement(model) { st.loco.setModel(model || {}); },
@@ -2242,6 +2543,7 @@
           detectors: st.det,
           demo: st.demoInput,
           locomotion: st.loco.snapshot(),
+          capture: st.capture,
         };
       },
 
@@ -2295,7 +2597,7 @@
           <option value="phone_sideways">Phone sideways</option>
           <option value="tablet_upright">Tablet upright</option>
           <option value="tablet_sideways">Tablet sideways</option>
-          <option value="tv" disabled>TV, back camera (next engine update)</option>
+          <option value="tv">TV, back camera</option>
         </select>
       </label>
       <p id="modeHint" class="hint"></p>
@@ -2333,7 +2635,7 @@
     eyeHeight: 1.7,
     drawDistance: 520,
     arriveRadius: 30,
-    cornerWindow: 15,      // ?loco=engine: meters either side of a corner where a point takes that street
+    cornerWindow: 3,       // ?loco=engine: meters either side of a corner that count as at the intersection
   };
   // ?loco=engine runs movement on the engine's locomotion state machine (milestone 5 prototype)
   const ENGINE_LOCO = new URLSearchParams(location.search).get('loco') === 'engine';
@@ -2457,18 +2759,14 @@
   }
 
   // ---------- engine ----------
-  // headless: the engine stays quiet and the game voices setup prompts itself, with 2 s gaps (see say)
-  const engine = RE.create({ video: $('pip'), preset: 'living_room', headless: true });
+  // speech: false keeps the engine quiet; the game voices setup prompts itself, with 2 s gaps (see say)
+  const engine = RE.create({ video: $('pip'), preset: 'living_room', speech: false });
   engine.on('step', () => { if (G.state === 'walk') G.steps++; });
   engine.on('run_start', () => { P.running = true; });
   engine.on('run_end', () => { P.running = false; });
   engine.on('point', (e) => {
     if (G.state !== 'walk') return;
-    if (ENGINE_LOCO) {
-      // the engine takes the point only at a corner; say so when it lands mid-block
-      if (!atIntersection()) banner('Point at the corner to turn', 1800);
-      return;
-    }
+    if (ENGINE_LOCO) return; // the engine holds the point until the next corner
     // standing at a corner: turn right away; otherwise queue it for the next corner
     if (P.speed < 0.3 && P.t <= 0.01 && nextNode(P.ai, P.st, turnDir(P.dir, e.side))) {
       P.dir = turnDir(P.dir, e.side);
@@ -2490,9 +2788,9 @@
   }
 
   // ---------- engine locomotion (milestone 5 prototype) ----------
-  // Engine facing is degrees, + = right, starting wherever the last walk left it.
-  // Game bearing is dir * 90 (north 0, clockwise), so a walk records both at the start.
-  const L = { baseFacing: 0, baseDir: 1, facing: 0 };
+  // Engine facing is the game bearing in degrees (north 0, clockwise, so dir * 90): each walk
+  // sets it with set_facing. A point made mid-block waits in the engine (queued) for the corner.
+  const L = { facing: 0, queued: null };
   const toCorner = () => Math.max(0, edgeLen(P.ai, P.st, P.dir) - P.t);
   function atIntersection() {
     return G.state === 'walk' && (edgeLen(P.ai, P.st, P.dir) === 0 || P.t <= T.cornerWindow || toCorner() <= T.cornerWindow);
@@ -2504,11 +2802,9 @@
       rails: true,
       at_intersection: atIntersection,
       branch_bearing(side) {
-        // hooks run inside the engine's update: use the cached facing, never engine.locomotion()
         const c = turnCorner();
         const nd = turnDir(P.dir, side);
-        if (!nextNode(c.ai, c.st, nd)) return L.facing; // no street that way: keep going
-        return L.baseFacing + ((nd - L.baseDir + 4) % 4) * 90;
+        return nextNode(c.ai, c.st, nd) ? nd * 90 : null; // null: no street that way, keep going
       },
     });
   }
@@ -2516,6 +2812,7 @@
   function updateEngineLoco(dt, now) {
     const m = engine.locomotion();
     L.facing = m.facing;
+    L.queued = m.queued;
     P.running = m.state === 'run';
     P.speed = m.speed * T.speedScale;
     if (P.running && P.speed > 1) G.runMs += dt * 1000;
@@ -2523,7 +2820,7 @@
     P.cadence = engine.signals().cadence_spm || 0;
     steer(m.lateral, dt); // on rails the engine's lateral is the torso turn, -1..1
 
-    const want = (L.baseDir + Math.round((m.facing - L.baseFacing) / 90) + 400) % 4;
+    const want = (Math.round(m.facing / 90) + 400) % 4;
     const d = (want - P.dir + 4) % 4;
     if (d === 2) reverse();
     else if (d) {
@@ -2749,8 +3046,8 @@
     const toCorner = Math.max(0, len - P.t);
     if (w.next) line(`${w.next} in ${Math.round(toCorner)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
     else line('End of the grid: point left or right', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
-    if (queued) line(`Turning ${queued.side} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
-    else if (ENGINE_LOCO && atIntersection()) line('At the corner: point to turn', 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
+    const waiting = ENGINE_LOCO ? L.queued : queued && queued.side;
+    if (waiting) line(`Turning ${waiting} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
 
     // destination
     if (G.dest) {
@@ -2818,7 +3115,7 @@
   function startWalk() {
     Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, look: 0, speed: 0, yaw: Math.PI / 2, running: false, cadence: 0 });
     queued = null;
-    if (ENGINE_LOCO) { L.facing = L.baseFacing = engine.locomotion().facing; L.baseDir = P.dir; }
+    if (ENGINE_LOCO) { engine.set_facing(P.dir * 90); L.facing = P.dir * 90; L.queued = null; }
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
     pickDestination();
     show(null);
@@ -2865,7 +3162,6 @@
   // missed move never stalls setup), then a timed warm-up of the moves this game uses. Each move
   // gets big words, one line on how to do it, a timer bar, a looping figure and live feedback; the
   // engine's stick figure sits on the camera view. Anything missed after two rounds gets a third.
-  const LIFT_KEY = 'manhattan-miles:liftSource';
   const MOVES = {
     march: { big: 'March', small: 'In place, knees up toward hip height.', say: 'March in place.', event: 'step', need: 4 },
     turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1 },
@@ -2879,9 +3175,8 @@
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
     move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
   ];
-  const Warm = { setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null, overlay: null };
+  const Warm = { setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null, overlay: null };
 
-  try { const v = localStorage.getItem(LIFT_KEY); if (v === 'image' || v === 'auto') engine.cfg.march.liftSource = v; } catch (_) {}
 
   // Voice: the player stands 4 ft from a small screen, so every prompt and result is spoken.
   // iOS only lets a page speak after speech starts inside a tap, so primeVoice() runs in the click.
@@ -2974,10 +3269,11 @@
   });
 
   // ---------- setup modes ----------
-  // Front camera, knees-up framing. Turning the device the other way switches to the matching mode,
-  // so setup never blocks on orientation. The TV mode (back wide camera, screen mirrored to the TV)
-  // waits on an engine preset that opens the back camera.
+  // Knees-up framing. Front camera setups: turning the device the other way switches to the
+  // matching setup, so setup never blocks on orientation. TV: the engine's tv preset opens the back
+  // camera (ultra-wide when it can) while the screen is mirrored to the TV.
   const SETUPS = {
+    tv: { label: 'TV, back camera', device: 'tv', preset: 'tv', dist: '5 to 6 feet', place: 'Stand the phone sideways on your TV stand, back camera facing you, and mirror the screen to your TV.' },
     phone_upright: { label: 'Phone upright', device: 'phone', orient: 'portrait', dist: 'about 4 feet', place: 'Stand the phone upright at about waist height, screen facing you.' },
     phone_sideways: { label: 'Phone sideways', device: 'phone', orient: 'landscape', dist: '4 to 5 feet', place: 'Stand the phone sideways at about waist height, screen facing you.' },
     tablet_upright: { label: 'Tablet upright', device: 'tablet', orient: 'portrait', dist: 'about 4 feet', place: 'Stand the tablet upright at about waist height, screen facing you.' },
@@ -2999,8 +3295,23 @@
   // the chosen mode, turned to match how the device is standing right now
   function activeSetup() {
     const m = SETUPS[$('mode').value] || SETUPS.phone_upright;
+    if (m.device === 'tv') return Object.assign({ key: 'tv' }, m);
     const key = `${m.device}_${screenOrient() === 'landscape' ? 'sideways' : 'upright'}`;
-    return Object.assign({ key }, SETUPS[key]);
+    return Object.assign({ key, preset: 'living_room' }, SETUPS[key]);
+  }
+  // after the camera opens: say which camera the TV setup actually got
+  function cameraNote(m) {
+    const cam = engine.camera();
+    if (m.device !== 'tv' || !cam) return '';
+    if (cam.fallback) {
+      Object.assign(m, { dist: 'about 4 feet', place: 'Stand the phone facing you and watch the phone screen.' });
+      return 'The back camera is not available, so this uses the front camera.';
+    }
+    if (cam.lens === 'main') {
+      Object.assign(m, { dist: '6 to 7 feet' });
+      return 'The wide lens is not available, so stand a little farther back.';
+    }
+    return '';
   }
   function showModeHint() {
     const m = SETUPS[$('mode').value];
@@ -3020,22 +3331,32 @@
     $('pip').style.display = 'block';
     $('setupCancel').hidden = false;
     Warm.i = -1;
-    if (!Warm.overlay) Warm.overlay = new RE.DebugOverlay($('skel'), engine);
+    if (!Warm.overlay) Warm.overlay = new RE.DebugOverlay($('skel'), engine, { panel: false, prompt: false });
     else if (!Warm.overlay.visible) Warm.overlay.toggle();
+    Warm.overlay.panel = false;
+    Warm.overlay.prompt = false;
   }
   function exitSetup() {
     document.body.classList.remove('setup');
     $('warm').hidden = true;
     $('setupCancel').hidden = true;
-    if (Warm.overlay && Warm.overlay.visible) Warm.overlay.toggle(); // three-finger tap brings it back mid-walk
+    if (Warm.overlay) {
+      // mid-walk a three-finger tap brings it back with the signal panel, for checking tracking
+      if (Warm.overlay.visible) Warm.overlay.toggle();
+      Warm.overlay.panel = true;
+    }
+    if (engine.is_recording()) Warm.clip = engine.stop_recording();
+    engine.capture_stop();
     Warm.i = -1;
   }
 
+  // startSource(preset) starts the camera; tests pass one that replays a clip instead
   async function runCamera(startSource) {
     show(null);
     enterSetup();
+    const m = Warm.setup = activeSetup();
     try {
-      await startSource();
+      await startSource(m.preset);
     } catch (err) {
       exitSetup();
       $('pip').style.display = 'none';
@@ -3045,7 +3366,7 @@
       return;
     }
     // framing card: where to put the device, and what the framing check wants right now
-    const m = Warm.setup = activeSetup();
+    const camLine = cameraNote(m);
     $('warm').hidden = false;
     $('wStep').textContent = m.label;
     $('wBig').textContent = 'Get in frame';
@@ -3054,11 +3375,12 @@
     $('wLive').textContent = '';
     $('wFill').style.transform = 'scaleX(0)';
     drawFig($('fig'), '', 0);
-    say(`${m.label}. ${m.place} Then stand ${m.dist} away, so your knees are in view.`);
-    try { await engine.calibrate('living_room', { moveTest: false }); } catch (_) { return; } // cancelled
+    say(`${m.label}. ${camLine ? camLine + ' ' : ''}${m.place} Then stand ${m.dist} away, so your knees are in view.`);
+    try { await engine.calibrate(m.preset, { moveTest: false }); } catch (_) { return; } // cancelled
     if (G.state !== 'setup') return;
-    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null });
-    engine.start_recording({ game: 'manhattan-miles', warmup: true, setup: m.key, liftSource: engine.cfg.march.liftSource });
+    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null });
+    engine.capture_reset();
+    engine.start_recording({ game: 'manhattan-miles', warmup: true, setup: m.key, camera: engine.camera() });
     setStep(0);
   }
 
@@ -3068,6 +3390,7 @@
     Warm.left = Warm.len = c.secs;
     Warm.hits = 0;
     Warm.coached = false;
+    if (c.id === 'round' && Warm.retuned) { c.say += ' I tuned to your steps.'; c.small += ' Tuned to your steps.'; Warm.retuned = false; }
     $('wStep').textContent = c.round ? `Round ${c.round}` : '';
     $('wBig').textContent = c.big;
     $('wSmall').textContent = c.small;
@@ -3087,6 +3410,11 @@
     const c = Warm.plan[Warm.i];
     // a move's clock starts once its instruction has been said, so a waiting line never eats into it
     if (!Voice.q.length) Warm.left -= dt;
+    // record this march's step cues once its clock is running
+    if (c.id === 'march' && !Warm.capturing && Warm.left < Warm.len - 0.3) {
+      Warm.capturing = true;
+      engine.capture_start('step', c.round);
+    }
     // stop the clip before the recorder's own 30 s cutoff: its recording_done event carries the whole
     // clip, and the debug overlay stalls trying to print it in the event log
     if (engine.is_recording() && engine.recording_ms() > 28000) Warm.clip = engine.stop_recording();
@@ -3106,12 +3434,12 @@
       const ok = Warm.hits >= c.need;
       if (ok) Warm.seen[c.id] = true;
       if (c.id === 'march') {
-        if (ok) { try { localStorage.setItem(LIFT_KEY, engine.cfg.march.liftSource); } catch (_) {} }
-        else if (!Warm.switched) {
-          // no steps: read knee lift the other way (3D world landmarks or the 2D image) from here on
-          Warm.switched = true;
-          engine.cfg.march.liftSource = engine.cfg.march.liftSource === 'image' ? 'auto' : 'image';
-        }
+        // tune the step thresholds to every march captured so far (half the weakest round),
+        // so the next round counts the steps this one may have missed
+        engine.capture_stop();
+        Warm.capturing = false;
+        const tuned = engine.apply_capture();
+        if (!ok && tuned.seen.step) Warm.retuned = true;
       }
     }
     if (Warm.i + 1 >= Warm.plan.length && !Warm.extra) {
@@ -3197,7 +3525,7 @@
     x.restore();
   }
 
-  $('playCamera').addEventListener('click', () => { primeVoice(); runCamera(() => engine.start('living_room')); });
+  $('playCamera').addEventListener('click', () => { primeVoice(); runCamera((preset) => engine.start(preset)); });
   $('setupCancel').addEventListener('click', () => {
     engine.cancel_calibration();
     if (engine.is_recording()) Warm.clip = engine.stop_recording();

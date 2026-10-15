@@ -47,6 +47,31 @@
     };
   };
 
+  // Thigh angles in degrees from the calibrated vertical, from 3D world
+  // landmarks: 0 standing, about 90 with the thigh level. `up` is the
+  // calibrated hip-to-shoulder direction (world y points down), so a phone
+  // tilted back or sideways reads the same angles.
+  const v3 = (a, b) => ({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z });
+  RE.thighPitch = function (world, up) {
+    const down = { x: -up.x, y: -up.y, z: -up.z };
+    const angle = (hip, knee) => {
+      const d = v3(world[hip], world[knee]);
+      const n = Math.hypot(d.x, d.y, d.z);
+      if (!(n > 0)) return null;
+      return (Math.acos(RE.clamp((d.x * down.x + d.y * down.y + d.z * down.z) / n, -1, 1)) * 180) / Math.PI;
+    };
+    return { L: angle(L.L_HIP, L.L_KNEE), R: angle(L.R_HIP, L.R_KNEE) };
+  };
+  // Hip-to-shoulder unit vector in world landmarks (null if degenerate).
+  RE.worldUp = function (world) {
+    const sm = RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER]);
+    const hm = RE.mid3(world[L.L_HIP], world[L.R_HIP]);
+    const d = v3(hm, sm);
+    const n = Math.hypot(d.x, d.y, d.z);
+    return n > 0 ? { x: d.x / n, y: d.y / n, z: d.z / n } : null;
+  };
+  RE.mid3 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 });
+
   RE.computeSignals = function (points, cal, cfg, world) {
     const { confidence, missing } = RE.confidenceOf(points, cfg.visibility.hold);
     const out = { confidence, missing, calibrated: !!cal };
@@ -80,6 +105,14 @@
     const useWorld = cfg.march.liftSource !== 'image' && out.kneeLiftWL != null;
     out.stepLiftL = useWorld ? out.kneeLiftWL : out.kneeLiftL;
     out.stepLiftR = useWorld ? out.kneeLiftWR : out.kneeLiftR;
+    // thigh angle above standing, when this profile has a world vertical
+    out.pitchL = null;
+    out.pitchR = null;
+    if (world && cal.up) {
+      const p = RE.thighPitch(world, cal.up);
+      if (p.L != null) out.pitchL = p.L - (cal.pitchBaseL || 0);
+      if (p.R != null) out.pitchR = p.R - (cal.pitchBaseR || 0);
+    }
     // shoulder width and torso length now vs calibration. Both scale with
     // distance; only shoulder width shrinks when the torso turns, so torso
     // length tracks distance and their quotient tracks the turn.

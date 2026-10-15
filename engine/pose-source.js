@@ -9,6 +9,68 @@
 
   const pack = (list) => list.map((p) => [p.x, p.y, p.z, p.visibility == null ? 1 : p.visibility]);
 
+  // Opens the preset's camera. Front camera presets ask for facingMode 'user'.
+  // Back camera presets (TV) ask for the back camera, then with wideLens try
+  // the ultra-wide lens by its label, else zoom the main lens all the way out;
+  // with no back camera they fall back to the front one. Resolves with
+  // {stream, info: {facing, lens: 'front' | 'main' | 'ultrawide' | 'wide_zoom', fallback, label}}.
+  RE.openCamera = async function (preset, cfg, md) {
+    const get = (v) => md.getUserMedia({
+      audio: false,
+      video: Object.assign({ width: { ideal: cfg.camera.idealWidth }, height: { ideal: cfg.camera.idealHeight } }, v),
+    });
+    const stopStream = (st) => { if (st) st.getTracks().forEach((tr) => tr.stop()); };
+    const track = (st) => st.getVideoTracks()[0];
+    const front = async (fallback, reason) => {
+      const stream = await get({ facingMode: 'user' });
+      return { stream, info: { facing: 'user', lens: 'front', fallback, label: track(stream).label || '', reason } };
+    };
+    if (preset.facingMode !== 'environment') return front(false);
+    let s = null;
+    try {
+      s = await get({ facingMode: { ideal: 'environment' } });
+      let tr = track(s);
+      const settings = tr.getSettings ? tr.getSettings() : {};
+      if (/front|facetime/i.test(tr.label || '') || settings.facingMode === 'user') throw new Error('no back camera');
+      let lens = 'main';
+      if (preset.wideLens) {
+        if (/ultra ?wide/i.test(tr.label || '')) lens = 'ultrawide';
+        else {
+          const cams = (await md.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+          const uw = cams.find((d) => /ultra ?wide/i.test(d.label) && !/front/i.test(d.label));
+          if (uw) {
+            try {
+              const s2 = await get({ deviceId: { exact: uw.deviceId } });
+              stopStream(s);
+              s = s2;
+              tr = track(s);
+              lens = 'ultrawide';
+            } catch (_) {}
+          }
+          if (lens !== 'ultrawide' && (await widestZoom(tr))) lens = 'wide_zoom';
+        }
+      }
+      return { stream: s, info: { facing: 'environment', lens, fallback: false, label: tr.label || '' } };
+    } catch (err) {
+      stopStream(s);
+      return front(true, err.message);
+    }
+  };
+
+  // Zoom all the way out when the browser allows it (some back cameras reach
+  // the ultra-wide this way). True when the zoom went below 1.
+  async function widestZoom(tr) {
+    try {
+      const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+      const cur = tr.getSettings ? tr.getSettings().zoom : undefined;
+      if (caps.zoom && caps.zoom.min < (cur == null ? 1 : cur)) {
+        await tr.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
+        return caps.zoom.min < 1;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   // Live camera + MediaPipe Pose Landmarker (VIDEO mode, one pose).
   class CameraPoseSource {
     constructor(cfg) {
@@ -23,6 +85,7 @@
       this._fpsFrames = 0;
       this._fpsSince = 0;
       this.delegate = null;
+      this.info = null;
     }
 
     async start(video, preset, onFrame, onStatus = () => {}) {
@@ -37,14 +100,10 @@
       this.landmarker = await this._createLandmarker(vision, fileset);
 
       onStatus('Starting camera');
-      this.stream = await g.navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: preset.facingMode || 'user',
-          width: { ideal: this.cfg.camera.idealWidth },
-          height: { ideal: this.cfg.camera.idealHeight },
-        },
-      });
+      const opened = await RE.openCamera(preset, this.cfg, g.navigator.mediaDevices);
+      this.stream = opened.stream;
+      this.info = opened.info;
+      if (opened.info.fallback) onStatus('Back camera unavailable, using the front camera');
       video.srcObject = this.stream;
       video.muted = true;
       video.playsInline = true;

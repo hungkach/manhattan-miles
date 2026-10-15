@@ -6,7 +6,9 @@
 //   engine.on('step', ({ leg }) => ...);
 //   engine.set_movement({ rails: false }); // free movement, lean sets turn rate
 //   const s = engine.signals();       // per-frame snapshot
-//   const m = engine.locomotion();    // speed, facing, lateral, state
+//   const m = engine.locomotion();    // speed, facing, lateral, queued, state
+//   engine.capture_start('step', 1);  // warm-up: record step cues for round 1
+//   engine.capture_stop(); engine.apply_capture(); // tune step thresholds to the player
 (function (g) {
   'use strict';
   const RE = g.RepEngine;
@@ -16,6 +18,8 @@
     const cfg = RE.mergeConfig(RE.defaultConfig(), opts.config);
     const emitter = RE.createEmitter();
     const headless = !!opts.headless;
+    // opts.speech: false keeps the engine quiet (the game voices its own prompts)
+    const speech = opts.speech != null ? !!opts.speech : !headless;
 
     const st = {
       presetId: opts.preset && RE.presets[opts.preset] ? opts.preset : 'living_room',
@@ -44,6 +48,8 @@
       lowConfidence: false,
       snapshot: emptySnapshot(),
       session: { startedAt: null, frames: 0, counts: {} },
+      // warm-up capture: per leg, per cue, the peak value in each round
+      capture: { move: null, round: 0, peaks: { left: {}, right: {} } },
     };
 
     // Count every event for the session summary, feed the move test and the
@@ -120,6 +126,7 @@
         st.det = st.cal && points
           ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, holdVis: cfg.visibility.hold })
           : null;
+        if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
         const det = st.det;
         st.loco.update(raw.t, { cadence_spm: det ? det.cadence : 0, turn: det ? det.turn : 0 }, st.mode);
@@ -159,12 +166,15 @@
       if (status.state === 'move_test' && st.cal !== st.calibrator.result) setCal(st.calibrator.result);
       st.calStatus = status;
       emitter.emit('calibration', status);
-      if (!headless && status.prompt && status.prompt !== st.lastPrompt) {
+      if (speech && status.prompt && status.prompt !== st.lastPrompt) {
         st.lastPrompt = status.prompt;
         RE.speak(status.state === 'baseline' ? 'Good. Hold still.' : status.prompt);
       }
       if (status.state === 'done') {
         const cal = status.result;
+        // keep thresholds tuned in an earlier warm-up for this setup
+        const prev = RE.profiles.load(st.presetId, cal.orientation);
+        if (prev && prev.cues && !cal.cues) cal.cues = prev.cues;
         RE.profiles.save(cal);
         st.calibrator = null;
         if (st.cal !== cal) setCal(cal);
@@ -172,6 +182,27 @@
         emitter.emit('calibrated', { cal, fromProfile: false, skippedTests: status.skippedTests });
         if (st.calPromise) { st.calPromise.resolve(cal); st.calPromise = null; }
       }
+    }
+
+    function recordCues(cues) {
+      const r = st.capture.round;
+      for (const leg of ['left', 'right']) {
+        const vals = cues[leg];
+        if (!vals) continue;
+        for (const id of Object.keys(vals)) {
+          const v = vals[id];
+          if (v == null || !isFinite(v)) continue;
+          const byRound = st.capture.peaks[leg][id] || (st.capture.peaks[leg][id] = {});
+          byRound[r] = Math.max(byRound[r] == null ? -Infinity : byRound[r], v);
+        }
+      }
+    }
+
+    // Rounds where a cue reached seenFrac of its default: the move showed there.
+    function goodRounds(leg, id) {
+      const def = cfg.march.cues[id];
+      const byRound = st.capture.peaks[leg][id] || {};
+      return Object.values(byRound).filter((pk) => pk >= cfg.march.tune.seenFrac * def.on);
     }
 
     function stopSource() {
@@ -269,11 +300,63 @@
       },
 
       // Locomotion state: {state: idle | walk | run, speed, target_speed,
-      // facing (degrees), lateral (-1..1, rails only)}.
+      // facing (degrees), lateral (-1..1, rails only), queued (rails: the
+      // point waiting for the next intersection, 'left' | 'right' | null)}.
+      // Safe to call from the set_movement hooks: inside an update it returns
+      // the current snapshot without updating again.
       locomotion() {
-        if (st.source === 'demo') api.signals();
+        if (st.source === 'demo' && !st.loco.updating) api.signals();
         return st.loco.snapshot();
       },
+      // Point the player at a heading (degrees), e.g. at the start of a walk.
+      set_facing(deg) { st.loco.setFacing(deg); },
+
+      // Warm-up tuning, after Homecoming Hero. While capturing, the engine
+      // records each step cue's peak per leg and per round. apply_capture()
+      // sets each cue's on value to half the player's weakest round that still
+      // showed the move (bounded around the default), saves it with the
+      // profile, and returns {seen: {step}, cues}. Only 'step' for now.
+      capture_start(move = 'step', round = 0) {
+        if (move !== 'step') throw new Error('unknown capture move ' + move);
+        st.capture.move = move;
+        st.capture.round = round;
+      },
+      capture_stop() { st.capture.move = null; },
+      capture_reset() { st.capture = { move: null, round: 0, peaks: { left: {}, right: {} } }; },
+      // {step: true} once any step cue has shown the move in some round
+      moves_seen() {
+        const step = ['left', 'right'].some((leg) => Object.keys(cfg.march.cues).some((id) => goodRounds(leg, id).length > 0));
+        return { step };
+      },
+      apply_capture() {
+        const t = cfg.march.tune;
+        const cues = { left: {}, right: {} };
+        let seen = false;
+        for (const leg of ['left', 'right']) {
+          for (const id of Object.keys(cfg.march.cues)) {
+            const def = cfg.march.cues[id];
+            const good = goodRounds(leg, id);
+            if (!good.length) continue; // not seen: the default stays
+            seen = true;
+            const pk = Math.min(...good);
+            const on = RE.clamp(t.tuneFrac * pk, t.minFrac * def.on, t.maxFrac * def.on);
+            cues[leg][id] = { on, off: Math.min(0.25 * pk, 0.5 * on) };
+          }
+        }
+        if (seen && st.cal) {
+          st.cal.cues = cues;
+          RE.profiles.save(st.cal);
+        }
+        return { seen: { step: seen }, cues };
+      },
+      // Back to the default step thresholds for this profile.
+      clear_tuning() {
+        if (!st.cal) return;
+        delete st.cal.cues;
+        RE.profiles.save(st.cal);
+      },
+      // Which camera is running: {facing, lens, fallback, label} or null.
+      camera() { return st.sourceObj && st.sourceObj.info ? Object.assign({}, st.sourceObj.info) : null; },
       // Movement model, see locomotion.js: {rails, at_intersection(),
       // branch_bearing(side), target_bearing()}.
       set_movement(model) { st.loco.setModel(model || {}); },
@@ -324,6 +407,7 @@
           detectors: st.det,
           demo: st.demoInput,
           locomotion: st.loco.snapshot(),
+          capture: st.capture,
         };
       },
 

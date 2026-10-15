@@ -165,11 +165,23 @@
       // Knee baselines in body units, relative to the calibrated hip.
       cal.kneeBaseL = median(this.samples.map((s) => (cal.hipMidY - s.kneeLY) / cal.torsoLength));
       cal.kneeBaseR = median(this.samples.map((s) => (cal.hipMidY - s.kneeRY) / cal.torsoLength));
-      // World landmark knee baselines, when the source provides world landmarks.
+      // World landmark baselines, when the source provides world landmarks:
+      // knee heights, the vertical (hip to shoulder), and standing thigh angles.
       const ws = this.samples.filter((s) => s.world);
       if (ws.length >= this.samples.length / 2) {
         cal.kneeBaseWL = median(ws.map((s) => s.world.kneeL));
         cal.kneeBaseWR = median(ws.map((s) => s.world.kneeR));
+        const ups = ws.map((s) => s.up).filter(Boolean);
+        if (ups.length) {
+          const sum = ups.reduce((a, u) => ({ x: a.x + u.x, y: a.y + u.y, z: a.z + u.z }), { x: 0, y: 0, z: 0 });
+          const n = Math.hypot(sum.x, sum.y, sum.z);
+          if (n > 0) {
+            cal.up = { x: sum.x / n, y: sum.y / n, z: sum.z / n };
+            const pitches = ws.map((s) => RE.thighPitch(s.wl, cal.up));
+            cal.pitchBaseL = median(pitches.map((p) => p.L).filter((v) => v != null));
+            cal.pitchBaseR = median(pitches.map((p) => p.R).filter((v) => v != null));
+          }
+        }
       }
       return cal;
     }
@@ -188,12 +200,16 @@
       kneeLY: p[L.L_KNEE].y,
       kneeRY: p[L.R_KNEE].y,
       world: world ? RE.worldKneeHeights(world) : null,
+      up: world ? RE.worldUp(world) : null,
+      wl: world ? world.map((q) => (q ? { x: q.x, y: q.y, z: q.z } : q)) : null,
     };
   }
 
   // Saved player profiles, keyed by preset and orientation. Version 2 added
-  // the world landmark knee baselines; older profiles ask for recalibration.
-  RE.PROFILE_VERSION = 2;
+  // the world landmark knee baselines, version 3 the world vertical and thigh
+  // angles; older profiles ask for recalibration. A profile may also carry
+  // `cues`, step thresholds tuned from a warm-up (engine.apply_capture).
+  RE.PROFILE_VERSION = 3;
   RE.profiles = {
     key: (preset, orientation) => `rep-engine:profile:${preset}:${orientation}`,
     load(preset, orientation) {

@@ -101,7 +101,7 @@
           <option value="phone_sideways">Phone sideways</option>
           <option value="tablet_upright">Tablet upright</option>
           <option value="tablet_sideways">Tablet sideways</option>
-          <option value="tv" disabled>TV, back camera (next engine update)</option>
+          <option value="tv">TV, back camera</option>
         </select>
       </label>
       <p id="modeHint" class="hint"></p>
@@ -139,7 +139,7 @@
     eyeHeight: 1.7,
     drawDistance: 520,
     arriveRadius: 30,
-    cornerWindow: 15,      // ?loco=engine: meters either side of a corner where a point takes that street
+    cornerWindow: 3,       // ?loco=engine: meters either side of a corner that count as at the intersection
   };
   // ?loco=engine runs movement on the engine's locomotion state machine (milestone 5 prototype)
   const ENGINE_LOCO = new URLSearchParams(location.search).get('loco') === 'engine';
@@ -263,18 +263,14 @@
   }
 
   // ---------- engine ----------
-  // headless: the engine stays quiet and the game voices setup prompts itself, with 2 s gaps (see say)
-  const engine = RE.create({ video: $('pip'), preset: 'living_room', headless: true });
+  // speech: false keeps the engine quiet; the game voices setup prompts itself, with 2 s gaps (see say)
+  const engine = RE.create({ video: $('pip'), preset: 'living_room', speech: false });
   engine.on('step', () => { if (G.state === 'walk') G.steps++; });
   engine.on('run_start', () => { P.running = true; });
   engine.on('run_end', () => { P.running = false; });
   engine.on('point', (e) => {
     if (G.state !== 'walk') return;
-    if (ENGINE_LOCO) {
-      // the engine takes the point only at a corner; say so when it lands mid-block
-      if (!atIntersection()) banner('Point at the corner to turn', 1800);
-      return;
-    }
+    if (ENGINE_LOCO) return; // the engine holds the point until the next corner
     // standing at a corner: turn right away; otherwise queue it for the next corner
     if (P.speed < 0.3 && P.t <= 0.01 && nextNode(P.ai, P.st, turnDir(P.dir, e.side))) {
       P.dir = turnDir(P.dir, e.side);
@@ -296,9 +292,9 @@
   }
 
   // ---------- engine locomotion (milestone 5 prototype) ----------
-  // Engine facing is degrees, + = right, starting wherever the last walk left it.
-  // Game bearing is dir * 90 (north 0, clockwise), so a walk records both at the start.
-  const L = { baseFacing: 0, baseDir: 1, facing: 0 };
+  // Engine facing is the game bearing in degrees (north 0, clockwise, so dir * 90): each walk
+  // sets it with set_facing. A point made mid-block waits in the engine (queued) for the corner.
+  const L = { facing: 0, queued: null };
   const toCorner = () => Math.max(0, edgeLen(P.ai, P.st, P.dir) - P.t);
   function atIntersection() {
     return G.state === 'walk' && (edgeLen(P.ai, P.st, P.dir) === 0 || P.t <= T.cornerWindow || toCorner() <= T.cornerWindow);
@@ -310,11 +306,9 @@
       rails: true,
       at_intersection: atIntersection,
       branch_bearing(side) {
-        // hooks run inside the engine's update: use the cached facing, never engine.locomotion()
         const c = turnCorner();
         const nd = turnDir(P.dir, side);
-        if (!nextNode(c.ai, c.st, nd)) return L.facing; // no street that way: keep going
-        return L.baseFacing + ((nd - L.baseDir + 4) % 4) * 90;
+        return nextNode(c.ai, c.st, nd) ? nd * 90 : null; // null: no street that way, keep going
       },
     });
   }
@@ -322,6 +316,7 @@
   function updateEngineLoco(dt, now) {
     const m = engine.locomotion();
     L.facing = m.facing;
+    L.queued = m.queued;
     P.running = m.state === 'run';
     P.speed = m.speed * T.speedScale;
     if (P.running && P.speed > 1) G.runMs += dt * 1000;
@@ -329,7 +324,7 @@
     P.cadence = engine.signals().cadence_spm || 0;
     steer(m.lateral, dt); // on rails the engine's lateral is the torso turn, -1..1
 
-    const want = (L.baseDir + Math.round((m.facing - L.baseFacing) / 90) + 400) % 4;
+    const want = (Math.round(m.facing / 90) + 400) % 4;
     const d = (want - P.dir + 4) % 4;
     if (d === 2) reverse();
     else if (d) {
@@ -555,8 +550,8 @@
     const toCorner = Math.max(0, len - P.t);
     if (w.next) line(`${w.next} in ${Math.round(toCorner)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
     else line('End of the grid: point left or right', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
-    if (queued) line(`Turning ${queued.side} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
-    else if (ENGINE_LOCO && atIntersection()) line('At the corner: point to turn', 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
+    const waiting = ENGINE_LOCO ? L.queued : queued && queued.side;
+    if (waiting) line(`Turning ${waiting} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
 
     // destination
     if (G.dest) {
@@ -624,7 +619,7 @@
   function startWalk() {
     Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, look: 0, speed: 0, yaw: Math.PI / 2, running: false, cadence: 0 });
     queued = null;
-    if (ENGINE_LOCO) { L.facing = L.baseFacing = engine.locomotion().facing; L.baseDir = P.dir; }
+    if (ENGINE_LOCO) { engine.set_facing(P.dir * 90); L.facing = P.dir * 90; L.queued = null; }
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
     pickDestination();
     show(null);
@@ -671,7 +666,6 @@
   // missed move never stalls setup), then a timed warm-up of the moves this game uses. Each move
   // gets big words, one line on how to do it, a timer bar, a looping figure and live feedback; the
   // engine's stick figure sits on the camera view. Anything missed after two rounds gets a third.
-  const LIFT_KEY = 'manhattan-miles:liftSource';
   const MOVES = {
     march: { big: 'March', small: 'In place, knees up toward hip height.', say: 'March in place.', event: 'step', need: 4 },
     turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1 },
@@ -685,9 +679,8 @@
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
     move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
   ];
-  const Warm = { setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null, overlay: null };
+  const Warm = { setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null, overlay: null };
 
-  try { const v = localStorage.getItem(LIFT_KEY); if (v === 'image' || v === 'auto') engine.cfg.march.liftSource = v; } catch (_) {}
 
   // Voice: the player stands 4 ft from a small screen, so every prompt and result is spoken.
   // iOS only lets a page speak after speech starts inside a tap, so primeVoice() runs in the click.
@@ -780,10 +773,11 @@
   });
 
   // ---------- setup modes ----------
-  // Front camera, knees-up framing. Turning the device the other way switches to the matching mode,
-  // so setup never blocks on orientation. The TV mode (back wide camera, screen mirrored to the TV)
-  // waits on an engine preset that opens the back camera.
+  // Knees-up framing. Front camera setups: turning the device the other way switches to the
+  // matching setup, so setup never blocks on orientation. TV: the engine's tv preset opens the back
+  // camera (ultra-wide when it can) while the screen is mirrored to the TV.
   const SETUPS = {
+    tv: { label: 'TV, back camera', device: 'tv', preset: 'tv', dist: '5 to 6 feet', place: 'Stand the phone sideways on your TV stand, back camera facing you, and mirror the screen to your TV.' },
     phone_upright: { label: 'Phone upright', device: 'phone', orient: 'portrait', dist: 'about 4 feet', place: 'Stand the phone upright at about waist height, screen facing you.' },
     phone_sideways: { label: 'Phone sideways', device: 'phone', orient: 'landscape', dist: '4 to 5 feet', place: 'Stand the phone sideways at about waist height, screen facing you.' },
     tablet_upright: { label: 'Tablet upright', device: 'tablet', orient: 'portrait', dist: 'about 4 feet', place: 'Stand the tablet upright at about waist height, screen facing you.' },
@@ -805,8 +799,23 @@
   // the chosen mode, turned to match how the device is standing right now
   function activeSetup() {
     const m = SETUPS[$('mode').value] || SETUPS.phone_upright;
+    if (m.device === 'tv') return Object.assign({ key: 'tv' }, m);
     const key = `${m.device}_${screenOrient() === 'landscape' ? 'sideways' : 'upright'}`;
-    return Object.assign({ key }, SETUPS[key]);
+    return Object.assign({ key, preset: 'living_room' }, SETUPS[key]);
+  }
+  // after the camera opens: say which camera the TV setup actually got
+  function cameraNote(m) {
+    const cam = engine.camera();
+    if (m.device !== 'tv' || !cam) return '';
+    if (cam.fallback) {
+      Object.assign(m, { dist: 'about 4 feet', place: 'Stand the phone facing you and watch the phone screen.' });
+      return 'The back camera is not available, so this uses the front camera.';
+    }
+    if (cam.lens === 'main') {
+      Object.assign(m, { dist: '6 to 7 feet' });
+      return 'The wide lens is not available, so stand a little farther back.';
+    }
+    return '';
   }
   function showModeHint() {
     const m = SETUPS[$('mode').value];
@@ -826,22 +835,32 @@
     $('pip').style.display = 'block';
     $('setupCancel').hidden = false;
     Warm.i = -1;
-    if (!Warm.overlay) Warm.overlay = new RE.DebugOverlay($('skel'), engine);
+    if (!Warm.overlay) Warm.overlay = new RE.DebugOverlay($('skel'), engine, { panel: false, prompt: false });
     else if (!Warm.overlay.visible) Warm.overlay.toggle();
+    Warm.overlay.panel = false;
+    Warm.overlay.prompt = false;
   }
   function exitSetup() {
     document.body.classList.remove('setup');
     $('warm').hidden = true;
     $('setupCancel').hidden = true;
-    if (Warm.overlay && Warm.overlay.visible) Warm.overlay.toggle(); // three-finger tap brings it back mid-walk
+    if (Warm.overlay) {
+      // mid-walk a three-finger tap brings it back with the signal panel, for checking tracking
+      if (Warm.overlay.visible) Warm.overlay.toggle();
+      Warm.overlay.panel = true;
+    }
+    if (engine.is_recording()) Warm.clip = engine.stop_recording();
+    engine.capture_stop();
     Warm.i = -1;
   }
 
+  // startSource(preset) starts the camera; tests pass one that replays a clip instead
   async function runCamera(startSource) {
     show(null);
     enterSetup();
+    const m = Warm.setup = activeSetup();
     try {
-      await startSource();
+      await startSource(m.preset);
     } catch (err) {
       exitSetup();
       $('pip').style.display = 'none';
@@ -851,7 +870,7 @@
       return;
     }
     // framing card: where to put the device, and what the framing check wants right now
-    const m = Warm.setup = activeSetup();
+    const camLine = cameraNote(m);
     $('warm').hidden = false;
     $('wStep').textContent = m.label;
     $('wBig').textContent = 'Get in frame';
@@ -860,11 +879,12 @@
     $('wLive').textContent = '';
     $('wFill').style.transform = 'scaleX(0)';
     drawFig($('fig'), '', 0);
-    say(`${m.label}. ${m.place} Then stand ${m.dist} away, so your knees are in view.`);
-    try { await engine.calibrate('living_room', { moveTest: false }); } catch (_) { return; } // cancelled
+    say(`${m.label}. ${camLine ? camLine + ' ' : ''}${m.place} Then stand ${m.dist} away, so your knees are in view.`);
+    try { await engine.calibrate(m.preset, { moveTest: false }); } catch (_) { return; } // cancelled
     if (G.state !== 'setup') return;
-    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null });
-    engine.start_recording({ game: 'manhattan-miles', warmup: true, setup: m.key, liftSource: engine.cfg.march.liftSource });
+    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null });
+    engine.capture_reset();
+    engine.start_recording({ game: 'manhattan-miles', warmup: true, setup: m.key, camera: engine.camera() });
     setStep(0);
   }
 
@@ -874,6 +894,7 @@
     Warm.left = Warm.len = c.secs;
     Warm.hits = 0;
     Warm.coached = false;
+    if (c.id === 'round' && Warm.retuned) { c.say += ' I tuned to your steps.'; c.small += ' Tuned to your steps.'; Warm.retuned = false; }
     $('wStep').textContent = c.round ? `Round ${c.round}` : '';
     $('wBig').textContent = c.big;
     $('wSmall').textContent = c.small;
@@ -893,6 +914,11 @@
     const c = Warm.plan[Warm.i];
     // a move's clock starts once its instruction has been said, so a waiting line never eats into it
     if (!Voice.q.length) Warm.left -= dt;
+    // record this march's step cues once its clock is running
+    if (c.id === 'march' && !Warm.capturing && Warm.left < Warm.len - 0.3) {
+      Warm.capturing = true;
+      engine.capture_start('step', c.round);
+    }
     // stop the clip before the recorder's own 30 s cutoff: its recording_done event carries the whole
     // clip, and the debug overlay stalls trying to print it in the event log
     if (engine.is_recording() && engine.recording_ms() > 28000) Warm.clip = engine.stop_recording();
@@ -912,12 +938,12 @@
       const ok = Warm.hits >= c.need;
       if (ok) Warm.seen[c.id] = true;
       if (c.id === 'march') {
-        if (ok) { try { localStorage.setItem(LIFT_KEY, engine.cfg.march.liftSource); } catch (_) {} }
-        else if (!Warm.switched) {
-          // no steps: read knee lift the other way (3D world landmarks or the 2D image) from here on
-          Warm.switched = true;
-          engine.cfg.march.liftSource = engine.cfg.march.liftSource === 'image' ? 'auto' : 'image';
-        }
+        // tune the step thresholds to every march captured so far (half the weakest round),
+        // so the next round counts the steps this one may have missed
+        engine.capture_stop();
+        Warm.capturing = false;
+        const tuned = engine.apply_capture();
+        if (!ok && tuned.seen.step) Warm.retuned = true;
       }
     }
     if (Warm.i + 1 >= Warm.plan.length && !Warm.extra) {
@@ -1003,7 +1029,7 @@
     x.restore();
   }
 
-  $('playCamera').addEventListener('click', () => { primeVoice(); runCamera(() => engine.start('living_room')); });
+  $('playCamera').addEventListener('click', () => { primeVoice(); runCamera((preset) => engine.start(preset)); });
   $('setupCancel').addEventListener('click', () => {
     engine.cancel_calibration();
     if (engine.is_recording()) Warm.clip = engine.stop_recording();

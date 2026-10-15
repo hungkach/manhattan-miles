@@ -1,5 +1,9 @@
 // Debug overlay: skeleton, live signal bars, calibration prompt and the last
 // events. Toggle with a three-finger tap or the "d" key.
+//   opts.visible  start shown (default true)
+//   opts.panel    signal bars and event log (default true); false leaves just
+//                 the stick figure, for a player-facing camera view. Settable later.
+//   opts.prompt   the big calibration prompt (default true)
 (function (g) {
   'use strict';
   const RE = g.RepEngine;
@@ -21,6 +25,8 @@
       this.ctx = canvas.getContext('2d');
       this.engine = engine;
       this.visible = opts.visible !== false;
+      this.panel = opts.panel !== false;
+      this.prompt = opts.prompt !== false;
       this.log = [];
       this.size = engine.cfg.overlay.eventLogSize;
       this.raf = 0;
@@ -28,7 +34,8 @@
         if (name === 'frame' || name === 'calibration') return;
         let detail = '';
         if (name === 'calibrated' && payload && payload.cal) detail = ` ${payload.cal.orientation}${payload.fromProfile ? ' (saved)' : ''}`;
-        else if (payload && Object.keys(payload).length) detail = ' ' + JSON.stringify(payload).replace(/"/g, '');
+        else if (name === 'recording_done' && payload && payload.clip) detail = ` ${payload.clip.frames.length} frames`;
+        else if (payload && Object.keys(payload).length) detail = ' ' + logText(payload);
         this.log.unshift(`${new Date().toLocaleTimeString([], { hour12: false })} ${name}${detail}`);
         if (this.log.length > this.size) this.log.length = this.size;
       });
@@ -71,7 +78,7 @@
       if (d.frame && d.frame.points) {
         const map = this._mapper(d.frame.w, d.frame.h, W, H, d.mirror);
         const pts = d.frame.points;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = this.panel ? 3 : 7; // a stick figure on its own is read from across the room
         for (const [a, b] of RE.CONNECTIONS) {
           const pa = pts[a], pb = pts[b];
           if (!pa || !pb) continue;
@@ -85,11 +92,12 @@
           if (!p) continue;
           const P = map(p);
           ctx.fillStyle = p.held ? 'rgba(255,170,60,.95)' : 'rgba(255,255,255,.95)';
-          ctx.beginPath(); ctx.arc(P.x, P.y, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(P.x, P.y, this.panel ? 4 : 8, 0, Math.PI * 2); ctx.fill();
         }
       }
 
       // panel
+      if (!this.panel) { ctx.restore(); this._prompt(d, W, H, dpr); return; }
       const s = d.signals;
       const pad = 10, bw = 150, rowH = 18;
       const lines = 3 + BARS.length + 1 + this.log.length;
@@ -100,12 +108,16 @@
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textBaseline = 'middle';
       let y = 8 + pad + rowH / 2;
+      // cut a line to the panel width (binary search: log lines can be long)
       const fit = (str) => {
         const max = panelW - pad * 2;
         if (ctx.measureText(str).width <= max) return str;
-        let s = str;
-        while (s.length > 1 && ctx.measureText(s + '…').width > max) s = s.slice(0, -1);
-        return s + '…';
+        let lo = 0, hi = Math.min(str.length, 200);
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (ctx.measureText(str.slice(0, mid) + '…').width <= max) lo = mid; else hi = mid - 1;
+        }
+        return str.slice(0, lo) + '…';
       };
       const text = (str, color = '#fff') => { ctx.fillStyle = color; ctx.fillText(fit(str), 8 + pad, y); y += rowH; };
       text(`${d.source} · ${d.fps ? d.fps.toFixed(0) + ' fps' : '-- fps'} · ${d.mode}`);
@@ -137,9 +149,13 @@
       text(d.calibration ? `calibration: ${d.calibration.state} · ${d.calibration.prompt}` : 'events:', '#ddd');
       for (const line of this.log) text(line, 'rgba(255,255,255,.85)');
       ctx.restore();
+      this._prompt(d, W, H, dpr);
+    }
 
-      // big centered calibration prompt
-      if (d.calibration && d.calibration.state !== 'done') {
+    // big centered calibration prompt
+    _prompt(d, W, H, dpr) {
+      const ctx = this.ctx;
+      if (this.prompt && d.calibration && d.calibration.state !== 'done') {
         ctx.save();
         ctx.scale(dpr, dpr);
         const msg = d.calibration.prompt;
@@ -169,4 +185,10 @@
     }
   }
   RE.DebugOverlay = DebugOverlay;
+
+  // One short line for the event log: numbers rounded, long values cut.
+  function logText(payload) {
+    const str = JSON.stringify(payload, (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v)) || '';
+    return (str.length > 80 ? str.slice(0, 80) + '…' : str).replace(/"/g, '');
+  }
 })(globalThis);

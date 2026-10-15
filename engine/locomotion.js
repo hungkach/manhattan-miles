@@ -6,7 +6,12 @@
 //
 // The game describes its movement model with engine.set_movement():
 //   rails: true snaps movement to paths (manhattan-miles): turn slides you
-//          sideways, a point at an intersection takes that street
+//          sideways, a point takes the next intersection's street. A point
+//          made between intersections waits (snapshot.queued) until
+//          at_intersection() is true; pointing the other way replaces it and
+//          turn around clears it. branch_bearing(side) returns null when there
+//          is no street that way: the player goes straight and the point waits
+//          for the next intersection.
 //   rails: false is free movement (stomp-city): turn sets the turn rate
 //   at_intersection(), branch_bearing(side), target_bearing() are optional hooks
 (function (g) {
@@ -32,11 +37,14 @@
       this.lastStepAt = -Infinity;
       this.interval = Infinity;
       this.pending = { turnAround: false, point: null };
+      this.queued = null;  // rails: a point waiting for the next intersection
+      this.updating = false;
       this.t = null;
       this.stats = { activeMs: 0, runMs: 0, cadenceMs: 0, peakCadence: 0 };
     }
 
     setModel(model) { this.model = Object.assign({ rails: false }, model); }
+    setFacing(deg) { this.facing = wrap(deg); }
 
     onEvent(name, payload, t) {
       if (name === 'step') {
@@ -50,6 +58,11 @@
 
     // t in ms; sig: {cadence_spm, turn}; mode: explore | combat | transit
     update(t, sig, mode) {
+      this.updating = true;
+      try { this.step(t, sig, mode); } finally { this.updating = false; }
+    }
+
+    step(t, sig, mode) {
       const dt = this.t === null ? 0 : RE.clamp((t - this.t) / 1000, 0, 0.1);
       this.t = t;
       const c = this.c;
@@ -71,9 +84,9 @@
       } else if (turnAround) {
         // both hands overhead: the only way to reverse
         this.facing = wrap(this.facing + 180);
-      } else if (m.rails && point && m.at_intersection && m.at_intersection() && m.branch_bearing) {
-        // point an arm to take that street, like hailing a cab
-        this.facing = wrap(m.branch_bearing(point));
+        this.queued = null;
+      } else if (m.rails && (point || this.queued) && this.takeBranch(point)) {
+        // pointed an arm (now or earlier on the block) and took that street
       } else {
         // no step for stopAfterMs (or 1.5 step intervals at slow cadences,
         // counting intervals up to the slowest walking cadence): stop
@@ -116,8 +129,21 @@
       }
     }
 
+    // Rails: a new point replaces any waiting one; at an intersection with a
+    // street that way, take it. Returns true when the facing changed.
+    takeBranch(point) {
+      const m = this.model;
+      if (point) this.queued = point;
+      if (!m.at_intersection || !m.branch_bearing || !m.at_intersection()) return false;
+      const bearing = m.branch_bearing(this.queued);
+      if (bearing == null || !isFinite(bearing)) return false; // no street that way: keep it for the next one
+      this.facing = wrap(bearing);
+      this.queued = null;
+      return true;
+    }
+
     snapshot() {
-      return { state: this.state, speed: this.speed, target_speed: this.targetSpeed, facing: this.facing, lateral: this.lateral };
+      return { state: this.state, speed: this.speed, target_speed: this.targetSpeed, facing: this.facing, lateral: this.lateral, queued: this.queued };
     }
 
     summary() {

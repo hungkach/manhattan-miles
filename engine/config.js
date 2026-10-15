@@ -37,17 +37,32 @@
         squatFullDrop: 0.5, // hip drop (in T) that reads as squat_depth 1
       },
       // Lengths in body units: S = shoulder width, T = torso length.
+      // March steps: four cues per leg, after Homecoming Hero's step trigger.
+      // A leg steps when `need` of its known cues pass `on`, and re-arms when
+      // `need` drop below `off`; a cue whose landmarks are not visible is
+      // unknown and counts neither way. Two cues read 3D world landmarks and
+      // two read the 2D image, so either source can carry a step alone.
       march: {
-        liftOn: 0.15,        // knee lift (T) above the other knee that starts a step
-        liftOff: 0.08,       // lift (T) the knee must fall below before the next step
-        debounceMs: 150,     // per leg
+        cues: {
+          pitch: { on: 25, off: 12 },     // world: thigh angle from the calibrated vertical (degrees), above the other thigh's
+          lift: { on: 0.15, off: 0.08 },  // world: knee height above standing (T), above the other knee's
+          rise: { on: 0.16, off: 0.07 },  // image: knee height above its standing spot (T)
+          lead: { on: 0.14, off: 0.05 },  // image: this knee's rise minus the other knee's (T)
+        },
+        need: 2,
+        refractoryMs: 250,   // per leg, after it fires
         sameLegMinMs: 600,   // a same-leg repeat counts only after this gap (legs alternate)
+        // Warm-up tuning (engine.apply_capture): each cue's on is set to tuneFrac of
+        // the weakest captured round that reached seenFrac of the default on, kept
+        // within [minFrac, maxFrac] of the default; off goes to half of that.
+        tune: { tuneFrac: 0.5, seenFrac: 0.5, minFrac: 0.4, maxFrac: 1.5 },
         squatPauseDrop: 0.2, // squat beats march: hip drop (T) past this pauses stepping
         liftSource: 'auto',  // 'auto' uses world landmarks when the profile has them, 'image' forces 2D
         cadenceWindowMs: 3000,
       },
       run: {
         lift: 0.35,     // peak knee lift (T) of a high-knee step
+        pitch: 65,      // or peak thigh angle (degrees) of a high-knee step
         cadence: 150,   // steps per minute between high-knee steps
         startSteps: 2,  // consecutive high-knee steps that start a run
         exitMs: 600,    // run ends after this long with no high-knee step
@@ -129,6 +144,9 @@
     living_room: { id: 'living_room', label: 'Living room', facingMode: 'user', mirrorDisplay: true, distanceFt: 4 },
     garage: { id: 'garage', label: 'Garage', facingMode: 'user', mirrorDisplay: true, distanceFt: 6 },
     custom: { id: 'custom', label: 'Custom', facingMode: 'user', mirrorDisplay: true, distanceFt: null },
+    // Back camera, screen mirrored to a TV. Prefers the ultra-wide lens (or the
+    // widest zoom), falls back to the main back camera, then the front camera.
+    tv: { id: 'tv', label: 'TV, back camera', facingMode: 'environment', wideLens: true, mirrorDisplay: true, distanceFt: 6 },
   });
 
   // Deep merge for config overrides (plain objects only).

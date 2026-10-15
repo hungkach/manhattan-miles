@@ -14,13 +14,13 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 
 ## Camera mode
 
-Pick a camera setup on the title screen: phone or tablet, upright or sideways (auto-picked, remembered). Standing the device the other way switches to the matching setup. Each setup has its own placement line and distance. A TV setup (back wide camera, screen mirrored to the TV) is listed but waits on an engine preset that opens the back camera.
+Pick a camera setup on the title screen: phone or tablet, upright or sideways (auto-picked, remembered). Standing the device the other way switches to the matching setup. Each setup has its own placement line and distance. The TV setup uses the back camera (the ultra-wide lens when the browser offers it) with the screen mirrored to the TV; without a back camera it falls back to the front camera and says so.
 
 Every camera session starts with a one minute setup, like Homecoming Hero's:
 
 1. Framing check and a 3 second stand-still baseline, on the full camera view with the engine's stick figure on top.
 2. Warm-up, two rounds: march (8 s, then 6 s), turn your shoulders left, turn right. Each move shows big words, one line on how to do it, a timer bar, a looping figure (mirrored, so "left" moves to your left) and live feedback (steps seen, turn percent). Anything still missed gets a short third round, then the walk starts by itself.
-3. If round 1 sees no marching, knee lift switches from 3D world landmarks to the 2D image for the rest of the warm-up, and the choice that worked is remembered. The 2D image only works with the phone low (about knee height).
+3. Each march round tunes the engine's step thresholds to your own steps (half of your weakest round), so if round 1 counts nothing, round 2 usually does; you hear "I tuned to your steps". The tuning is saved for this setup.
 
 Spoken instructions wait their turn and leave 2 s between lines, so you have time to move the phone or step back; a move's timer starts once its instruction has been said. Everything is spoken, since the screen is hard to read from 4 ft: each move, a count of detected steps (one, two, three, got it), a nudge when nothing registers (knees higher, turn further), "step back" whenever the camera loses your knees (also during the walk), and a full result at the end.
 

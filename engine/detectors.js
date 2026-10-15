@@ -48,11 +48,23 @@
     }
   }
 
-  // March steps and high knees. A step fires on the rising edge of one knee
-  // lifting above the other, so squats (both knees) never count, and legs
-  // must alternate. High knees: startSteps consecutive steps with a peak
-  // lift of run.lift T, spaced at run.cadence or faster, start a run; the run
-  // ends after run.exitMs with no such step.
+  // March steps and high knees, after Homecoming Hero's step trigger, which
+  // holds up on real phones. Each leg has four cues (cfg.march.cues): thigh
+  // angle and knee height from 3D world landmarks, knee rise and knee lead
+  // from the 2D image. A leg steps when `need` of its known cues pass their
+  // on values and re-arms when `need` drop below off; a cue whose knee is not
+  // tracked is unknown and counts neither way, so one hidden or badly read
+  // source never blocks the other. Thigh angle and knee height count above
+  // the other leg's and lead is one knee's rise minus the other's, so a squat
+  // (both legs together) never steps. Legs alternate. Thresholds come from
+  // the profile's tuned cues (engine.apply_capture) when it has them.
+  // High knees: startSteps consecutive steps whose peak thigh angle reaches
+  // run.pitch, or whose peak knee lift reaches run.lift, spaced at
+  // run.cadence or faster, start a run; it ends after run.exitMs without one.
+  const STEP_CUES = ['pitch', 'lift', 'rise', 'lead'];
+  const LEGS = { left: { knee: L.L_KNEE, other: 'right', k: 'L', o: 'R' }, right: { knee: L.R_KNEE, other: 'left', k: 'R', o: 'L' } };
+  const above = (v, other) => (v == null ? null : v - Math.max(0, other == null ? 0 : other));
+
   class StepDetector {
     constructor(cfg) {
       this.m = cfg.march;
@@ -65,10 +77,33 @@
       this.lastHighAt = -Infinity;
       this.running = false;
       this.peaks = [];
-      this.legs = {
-        left: { up: true, counted: false, peak: 0, lastStep: -Infinity, interval: Infinity },
-        right: { up: true, counted: false, peak: 0, lastStep: -Infinity, interval: Infinity },
-      };
+      // legs start held, so nothing fires until the knee is seen down
+      const leg = () => ({ active: true, lastFire: -Infinity, lastStep: -Infinity, counted: false, interval: Infinity, peakPitch: 0, peakLift: 0 });
+      this.legs = { left: leg(), right: leg() };
+    }
+
+    // This frame's cue values per leg, null for a cue that cannot be read.
+    cues(ctx) {
+      const s = ctx.sig;
+      const kneeSeen = { left: seen(ctx, L.L_KNEE), right: seen(ctx, L.R_KNEE) };
+      const out = {};
+      for (const name of ['left', 'right']) {
+        const g = LEGS[name];
+        if (!kneeSeen[name]) { out[name] = { pitch: null, lift: null, rise: null, lead: null }; continue; }
+        const other = kneeSeen[g.other];
+        out[name] = {
+          pitch: above(s['pitch' + g.k], other ? s['pitch' + g.o] : null),
+          lift: above(s['kneeLiftW' + g.k], other ? s['kneeLiftW' + g.o] : null),
+          rise: s['kneeLift' + g.k],
+          lead: other ? s['kneeLift' + g.k] - s['kneeLift' + g.o] : null,
+        };
+      }
+      return out;
+    }
+
+    threshold(ctx, name, id) {
+      const tuned = ctx.cal.cues && ctx.cal.cues[name] && ctx.cal.cues[name][id];
+      return tuned || this.m.cues[id];
     }
 
     update(ctx, out) {
@@ -79,18 +114,11 @@
         this.highCount = 0;
         out.events.push(['run_end', {}]);
       }
-      const paused = ctx.low || s.hipDrop > this.m.squatPauseDrop || s.stepLiftL == null;
-      if (paused) {
-        // a knee must come back down before it can count again
-        this.legs.left.up = this.legs.right.up = true;
-        this.legs.left.counted = this.legs.right.counted = false;
-      } else {
-        const lifts = {
-          left: s.stepLiftL - Math.max(0, s.stepLiftR),
-          right: s.stepLiftR - Math.max(0, s.stepLiftL),
-        };
-        for (const name of ['left', 'right']) this.updateLeg(name, lifts[name], t, out);
-      }
+      // squat beats march: a deep hip drop holds both legs
+      const paused = s.hipDrop > this.m.squatPauseDrop;
+      const vals = paused ? null : this.cues(ctx);
+      out.stepCues = vals;
+      for (const name of ['left', 'right']) this.updateLeg(ctx, name, vals && vals[name], t, out);
       out.cadence = RE.cadenceFromSteps(this.steps, t, this.m.cadenceWindowMs);
       out.running = this.running;
       out.kneeLift = this.peaks.length ? this.peaks.reduce((a, b) => a + b, 0) / this.peaks.length : 0;
@@ -100,36 +128,52 @@
         : 0;
     }
 
-    updateLeg(name, lift, t, out) {
+    updateLeg(ctx, name, v, t, out) {
       const leg = this.legs[name];
-      if (!leg.up) {
-        if (lift < this.m.liftOn) return;
-        leg.up = true;
-        leg.peak = lift;
-        leg.counted = false;
-        const sinceLeg = t - leg.lastStep;
-        const alternates = this.lastLeg !== name || sinceLeg >= this.m.sameLegMinMs;
-        if (sinceLeg >= this.m.debounceMs && alternates) {
-          leg.counted = true;
-          leg.interval = t - this.lastStepAt;
-          leg.lastStep = t;
-          this.lastLeg = name;
-          this.lastStepAt = t;
-          this.steps.push(t);
-          if (this.steps.length > 64) this.steps.shift();
-          out.events.push(['step', { leg: name }]);
-        }
+      if (!v) { leg.active = true; leg.counted = false; return; }
+      let on = 0, off = 0;
+      for (const id of STEP_CUES) {
+        const x = v[id];
+        if (x == null || !isFinite(x)) continue;
+        const th = this.threshold(ctx, name, id);
+        if (x >= th.on) on++;
+        if (x <= th.off) off++;
+      }
+      const g = LEGS[name];
+      const s = ctx.sig;
+      if (leg.counted) {
+        // peaks of this step, for high knees and effort
+        if (s['pitch' + g.k] != null) leg.peakPitch = Math.max(leg.peakPitch, s['pitch' + g.k]);
+        const lift = above(s['stepLift' + g.k], s['stepLift' + g.o]);
+        if (lift != null) leg.peakLift = Math.max(leg.peakLift, lift);
+        if (v.rise != null) leg.peakLift = Math.max(leg.peakLift, v.rise);
+      }
+      if (!leg.active) {
+        if (on < this.m.need || t - leg.lastFire < this.m.refractoryMs) return;
+        leg.active = true;
+        leg.lastFire = t;
+        const alternates = this.lastLeg !== name || t - leg.lastStep >= this.m.sameLegMinMs;
+        if (!alternates) return;
+        leg.counted = true;
+        leg.peakPitch = 0;
+        leg.peakLift = 0;
+        leg.interval = t - this.lastStepAt;
+        leg.lastStep = t;
+        this.lastLeg = name;
+        this.lastStepAt = t;
+        this.steps.push(t);
+        if (this.steps.length > 64) this.steps.shift();
+        out.events.push(['step', { leg: name }]);
         return;
       }
-      if (lift > leg.peak) leg.peak = lift;
-      if (lift >= this.m.liftOff) return;
+      if (off < this.m.need) return;
       // knee back down: the step is complete, judge it for high knees
-      leg.up = false;
+      leg.active = false;
       if (!leg.counted) return;
       leg.counted = false;
-      this.peaks.push(leg.peak);
+      this.peaks.push(leg.peakLift);
       if (this.peaks.length > 4) this.peaks.shift();
-      const high = leg.peak >= this.r.lift;
+      const high = leg.peakLift >= this.r.lift || leg.peakPitch >= this.r.pitch;
       const fast = leg.interval <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }
       this.highCount++;
