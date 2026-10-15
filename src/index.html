@@ -41,6 +41,7 @@
   #fig { height: calc(var(--warmH) - 40px); aspect-ratio: 3 / 4; border-radius: 12px; background: rgba(255,255,255,.06); }
   #warm h2 { margin: 2px 0; font-size: clamp(28px, 5vh, 56px); line-height: 1; color: var(--accent); white-space: nowrap; }
   #warm p { margin: 4px 0; color: var(--muted); font-size: clamp(14px, 2vh, 20px); line-height: 1.25; }
+  .wtext { min-width: 0; }
   .wstep { font-size: 13px; letter-spacing: .05em; color: var(--muted); }
   .wlive { font: 800 clamp(18px, 3vh, 28px) system-ui, sans-serif; min-height: 1.2em; font-variant-numeric: tabular-nums; }
   .wbar { height: 8px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; margin-top: 6px; }
@@ -62,7 +63,7 @@
 <button id="setupCancel" hidden>Use touch instead</button>
 <div id="warm" hidden>
   <canvas id="fig" width="240" height="320"></canvas>
-  <div>
+  <div class="wtext">
     <div id="wStep" class="wstep"></div>
     <h2 id="wBig"></h2>
     <p id="wSmall"></p>
@@ -650,12 +651,52 @@
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
     move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
   ];
-  const Warm = { plan: [], i: -1, left: 0, len: 1, hits: 0, seen: {}, extra: false, done: false, switched: false, clip: null, overlay: null };
+  const Warm = { plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null, overlay: null };
 
   try { const v = localStorage.getItem(LIFT_KEY); if (v === 'image' || v === 'auto') engine.cfg.march.liftSource = v; } catch (_) {}
-  for (const ev of ['step', 'turn_left', 'turn_right']) {
-    engine.on(ev, () => { const c = Warm.plan[Warm.i]; if (G.state === 'setup' && c && c.event === ev) Warm.hits++; });
+
+  // Voice: the player stands 4 ft from a small screen, so every prompt and result is spoken.
+  // iOS only lets a page speak after speech starts inside a tap, so primeVoice() runs in the click.
+  function primeVoice() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
+    try { speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (_) {}
   }
+  // interrupt: false skips the line while something else is being said
+  function say(text, interrupt = true) {
+    const synth = window.speechSynthesis;
+    if (!synth || typeof SpeechSynthesisUtterance !== 'function') return;
+    try {
+      if (!interrupt && (synth.speaking || synth.pending)) return;
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05;
+      synth.speak(u);
+    } catch (_) {}
+  }
+
+  // count steps aloud up to "got it", so you hear right away whether marching registers
+  const COUNT = ['', 'One', 'Two', 'Three'];
+  for (const ev of ['step', 'turn_left', 'turn_right']) {
+    engine.on(ev, () => {
+      const c = Warm.plan[Warm.i];
+      if (G.state !== 'setup' || !c || c.event !== ev) return;
+      Warm.hits++;
+      if (Warm.hits === c.need) say('Got it');
+      else if (Warm.hits < c.need) say(COUNT[Warm.hits] || String(Warm.hits));
+    });
+  }
+  // knees or shoulders out of view pause the detectors: say so, in the warm-up and on the walk
+  let lowSaidAt = -Infinity;
+  engine.on('low_confidence', (e) => {
+    const t = performance.now();
+    if (!(G.state === 'setup' && Warm.i >= 0) && G.state !== 'walk') return;
+    if (t - lowSaidAt < 6000) return;
+    lowSaidAt = t;
+    Warm.lowCount++;
+    const knees = (e.missing || []).some((n) => n.includes('knee'));
+    say(knees ? 'Step back. I can\'t see your knees.' : 'Face the camera. I lost you.');
+    if (G.state === 'walk') banner(knees ? 'Step back: knees out of view' : 'Face the camera', 2500);
+  });
 
   function enterSetup() {
     G.state = 'setup';
@@ -689,7 +730,7 @@
     }
     try { await engine.calibrate('living_room', { moveTest: false }); } catch (_) { return; } // cancelled
     if (G.state !== 'setup') return;
-    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, switched: false, clip: null });
+    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null });
     engine.start_recording({ game: 'manhattan-miles', warmup: true, liftSource: engine.cfg.march.liftSource });
     $('warm').hidden = false;
     setStep(0);
@@ -700,11 +741,19 @@
     Warm.i = i;
     Warm.left = Warm.len = c.secs;
     Warm.hits = 0;
+    Warm.coached = false;
     $('wStep').textContent = c.round ? `Round ${c.round}` : '';
     $('wBig').textContent = c.big;
     $('wSmall').textContent = c.small;
-    $('wLive').textContent = c.results || '';
-    RE.speak(c.say);
+    $('wLive').textContent = '';
+    fitText($('wBig'));
+    say(c.say);
+  }
+  // shrink a one-line heading until it fits its column
+  function fitText(el) {
+    el.style.fontSize = '';
+    let size = parseFloat(getComputedStyle(el).fontSize);
+    while (el.scrollWidth > el.clientWidth && size > 18) { size -= 2; el.style.fontSize = size + 'px'; }
   }
 
   function updateWarm(dt, now) {
@@ -717,7 +766,14 @@
     $('wFill').style.transform = `scaleX(${Math.max(0, Warm.left / Warm.len)})`;
     if (c.event) $('wLive').textContent = liveText(c);
     drawFig($('fig'), c.id, now / 1000);
+    // nothing registered halfway through a move: one spoken nudge
+    if (c.event && !Warm.coached && Warm.hits === 0 && Warm.left < Warm.len * 0.5) {
+      Warm.coached = true;
+      say(c.id === 'march' ? 'Knees higher.' : 'Turn further.', false);
+    }
     if (Warm.left > 0) return;
+    // let the closing line finish before the walk starts
+    if (c.id === 'done' && window.speechSynthesis && speechSynthesis.speaking && Warm.left > -8) return;
 
     if (c.event) {
       const ok = Warm.hits >= c.need;
@@ -742,13 +798,16 @@
     if (Warm.i + 1 >= Warm.plan.length && !Warm.done) {
       Warm.done = true;
       if (engine.is_recording()) Warm.clip = engine.stop_recording();
-      const marched = !!Warm.seen.march;
+      const marched = !!Warm.seen.march, turned = Warm.seen.turnL && Warm.seen.turnR;
+      const lines = [marched ? 'Warm-up done. Marching works.' : 'Warm-up done. The camera did not pick up your marching.'];
+      lines.push(turned ? 'Turns work.' : Warm.seen.turnL || Warm.seen.turnR ? 'One of your turns was missed.' : 'Turns were missed.');
+      if (Warm.lowCount) lines.push('The camera lost your knees at times. Stand a little farther back.');
+      lines.push(marched ? 'Start marching to walk.' : 'Walk anyway, and when you finish, tap save warm-up clip and send it to Claude.');
       Warm.plan.push({
         id: 'done', secs: 3,
-        big: marched ? 'Warm-up done' : 'Marching not seen',
-        small: marched ? 'Start marching to walk.' : 'Walk anyway. Three-finger tap shows the stick figure. Save the clip on the end screen so the engine can be tuned.',
-        say: marched ? 'Warm-up done. Start marching.' : 'The camera did not see your marching.',
-        results: ['march', 'turnL', 'turnR'].map((id) => `${MOVES[id].big} ${Warm.seen[id] ? '\u2713' : '\u2717'}`).join('   '),
+        big: marched ? 'Warm-up done' : 'No steps seen',
+        small: ['march', 'turnL', 'turnR'].map((id) => `${MOVES[id].big} ${Warm.seen[id] ? '\u2713' : '\u2717'}`).join(' \u00b7 '),
+        say: lines.join(' '),
       });
     }
     if (Warm.i + 1 < Warm.plan.length) { setStep(Warm.i + 1); return; }
@@ -811,7 +870,7 @@
     x.restore();
   }
 
-  $('playCamera').addEventListener('click', () => runCamera(() => engine.start('living_room')));
+  $('playCamera').addEventListener('click', () => { primeVoice(); runCamera(() => engine.start('living_room')); });
   $('setupCancel').addEventListener('click', () => {
     engine.cancel_calibration();
     if (engine.is_recording()) Warm.clip = engine.stop_recording();

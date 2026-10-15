@@ -20,6 +20,8 @@ Every camera session starts with a one minute setup, like Homecoming Hero's:
 2. Warm-up, two rounds: march (8 s, then 6 s), turn your shoulders left, turn right. Each move shows big words, one line on how to do it, a timer bar, a looping figure (mirrored, so "left" moves to your left) and live feedback (steps seen, turn percent). Anything still missed gets a short third round, then the walk starts by itself.
 3. If round 1 sees no marching, knee lift switches from 3D world landmarks to the 2D image for the rest of the warm-up, and the choice that worked is remembered. The 2D image only works with the phone low (about knee height).
 
+Everything is spoken, since the screen is hard to read from 4 ft: each move, a count of detected steps (one, two, three, got it), a nudge when nothing registers (knees higher, turn further), "step back" whenever the camera loses your knees (also during the walk), and a full result at the end.
+
 The warm-up records up to 28 s of camera landmarks. After the walk, "Save warm-up clip" downloads it so the engine can be tuned on real data. During the walk, a three-finger tap shows the stick figure again.
 
 Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and torso turn drift all work on camera.
