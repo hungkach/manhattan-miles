@@ -2279,7 +2279,10 @@
     eyeHeight: 1.7,
     drawDistance: 520,
     arriveRadius: 30,
+    cornerWindow: 15,      // ?loco=engine: meters either side of a corner where a point takes that street
   };
+  // ?loco=engine runs movement on the engine's locomotion state machine (milestone 5 prototype)
+  const ENGINE_LOCO = new URLSearchParams(location.search).get('loco') === 'engine';
 
   // ---------- Midtown grid: avenues west to east (x), streets south to north (z) ----------
   // Spacing follows Manhattan's real proportions: long crosstown blocks, short uptown blocks.
@@ -2406,6 +2409,11 @@
   engine.on('run_end', () => { P.running = false; });
   engine.on('point', (e) => {
     if (G.state !== 'walk') return;
+    if (ENGINE_LOCO) {
+      // the engine takes the point only at a corner; say so when it lands mid-block
+      if (!atIntersection()) banner('Point at the corner to turn', 1800);
+      return;
+    }
     // standing at a corner: turn right away; otherwise queue it for the next corner
     if (P.speed < 0.3 && P.t <= 0.01 && nextNode(P.ai, P.st, turnDir(P.dir, e.side))) {
       P.dir = turnDir(P.dir, e.side);
@@ -2415,17 +2423,72 @@
     queued = { side: e.side, at: performance.now() };
   });
   engine.on('turn_around', () => {
-    if (G.state !== 'walk') return;
+    if (G.state !== 'walk' || ENGINE_LOCO) return;
+    reverse();
+  });
+  function reverse() {
     const n = nextNode(P.ai, P.st, P.dir);
     const len = edgeLen(P.ai, P.st, P.dir);
     if (n && P.t > 0) { P.ai = n.ai; P.st = n.st; P.t = len - P.t; }
     P.dir = (P.dir + 2) % 4;
     queued = null;
-  });
+  }
+
+  // ---------- engine locomotion (milestone 5 prototype) ----------
+  // Engine facing is degrees, + = right, starting wherever the last walk left it.
+  // Game bearing is dir * 90 (north 0, clockwise), so a walk records both at the start.
+  const L = { baseFacing: 0, baseDir: 1, facing: 0 };
+  const toCorner = () => Math.max(0, edgeLen(P.ai, P.st, P.dir) - P.t);
+  function atIntersection() {
+    return G.state === 'walk' && (edgeLen(P.ai, P.st, P.dir) === 0 || P.t <= T.cornerWindow || toCorner() <= T.cornerWindow);
+  }
+  // the corner a turn happens at: the one just passed, or the one just ahead
+  const turnCorner = () => (P.t <= T.cornerWindow || !nextNode(P.ai, P.st, P.dir) ? { ai: P.ai, st: P.st } : nextNode(P.ai, P.st, P.dir));
+  if (ENGINE_LOCO) {
+    engine.set_movement({
+      rails: true,
+      at_intersection: atIntersection,
+      branch_bearing(side) {
+        // hooks run inside the engine's update: use the cached facing, never engine.locomotion()
+        const c = turnCorner();
+        const nd = turnDir(P.dir, side);
+        if (!nextNode(c.ai, c.st, nd)) return L.facing; // no street that way: keep going
+        return L.baseFacing + ((nd - L.baseDir + 4) % 4) * 90;
+      },
+    });
+  }
+
+  function updateEngineLoco(dt, now) {
+    const m = engine.locomotion();
+    L.facing = m.facing;
+    P.running = m.state === 'run';
+    P.speed = m.speed * T.speedScale;
+    if (P.running && P.speed > 1) G.runMs += dt * 1000;
+    G.peakCadence = Math.max(G.peakCadence, engine.signals().cadence_spm || 0);
+    P.lateral += (m.lateral * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
+
+    const want = (L.baseDir + Math.round((m.facing - L.baseFacing) / 90) + 400) % 4;
+    const d = (want - P.dir + 4) % 4;
+    if (d === 2) reverse();
+    else if (d) {
+      // a point at a corner: snap onto that corner and take the street
+      if (P.t > T.cornerWindow && nextNode(P.ai, P.st, P.dir)) {
+        const room = toCorner();
+        const n = nextNode(P.ai, P.st, P.dir);
+        G.meters += room; G.blocks++;
+        P.ai = n.ai; P.st = n.st;
+        if (G.dest && P.ai === G.dest.ai && P.st === G.dest.st) arrive(now);
+      }
+      P.t = 0;
+      P.dir = want;
+    }
+    advance(P.speed * dt, now);
+  }
 
   // ---------- update ----------
   function update(dt, now) {
     if (G.state !== 'walk') return;
+    if (ENGINE_LOCO) { updateEngineLoco(dt, now); easeYaw(dt); return; }
     const s = engine.signals();
     const cadence = s.cadence_spm || 0;
     G.peakCadence = Math.max(G.peakCadence, cadence);
@@ -2440,7 +2503,12 @@
     const turn = s.turn || 0;
     P.lateral += (turn * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
 
-    let move = P.speed * dt;
+    advance(P.speed * dt, now);
+    easeYaw(dt);
+  }
+
+  // walk the rails: along the edge, through corners, taking a queued turn there
+  function advance(move, now) {
     while (move > 0) {
       const len = edgeLen(P.ai, P.st, P.dir);
       if (len === 0) {
@@ -2465,8 +2533,10 @@
       }
       if (G.dest && P.ai === G.dest.ai && P.st === G.dest.st) arrive(now);
     }
+  }
 
-    // ease the view toward the walking direction
+  // ease the view toward the walking direction
+  function easeYaw(dt) {
     let dy = dirYaw(P.dir) - P.yaw;
     while (dy > Math.PI) dy -= 2 * Math.PI;
     while (dy < -Math.PI) dy += 2 * Math.PI;
@@ -2475,9 +2545,12 @@
 
   function arrive(now) {
     G.arrived++;
-    G.banner = `Arrived at ${G.dest.name}`;
-    G.bannerUntil = now + 3500;
+    banner(`Arrived at ${G.dest.name}`, 3500, now);
     pickDestination();
+  }
+  function banner(text, ms, now = performance.now()) {
+    G.banner = text;
+    G.bannerUntil = now + ms;
   }
 
   // ---------- rendering ----------
@@ -2614,6 +2687,7 @@
     if (w.next) line(`${w.next} in ${Math.round(toCorner)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
     else line('End of the grid: point left or right', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
     if (queued) line(`Turning ${queued.side} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
+    else if (ENGINE_LOCO && atIntersection()) line('At the corner: point to turn', 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
 
     // destination
     if (G.dest) {
@@ -2678,6 +2752,7 @@
   function startWalk() {
     Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, speed: 0, yaw: Math.PI / 2, running: false });
     queued = null;
+    if (ENGINE_LOCO) { L.facing = L.baseFacing = engine.locomotion().facing; L.baseDir = P.dir; }
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
     pickDestination();
     show(null);
@@ -2751,7 +2826,7 @@
   requestAnimationFrame(frame);
 
   // test hook for automated checks
-  window.__game = { G, P, T, whereAmI, get queued() { return queued; } };
+  window.__game = { G, P, T, whereAmI, engineLoco: ENGINE_LOCO, get queued() { return queued; } };
 })();
 </script>
 </body>

@@ -16,6 +16,8 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 
 Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and torso turn drift all work on camera.
 
+Add `?loco=engine` to the URL to try the milestone 5 prototype: movement runs on the engine's locomotion state machine, and you point at the corner itself (within 15 m) instead of anywhere on the block.
+
 ## Not built yet
 
 - The existing street-by-street Manhattan map (swap in for the generated grid).
