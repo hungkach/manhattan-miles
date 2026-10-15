@@ -13,7 +13,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'slip', 'stance']) RE.detectors.add(name);
+  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -229,35 +229,55 @@
     }
   }
 
-  // Level changes: 'squat' when the level (sig.levelDrop: the hips, or the
-  // shoulders when the hips are hidden) drops past level.squat (with how fast
-  // it got there), re-armed above level.reset; 'drive_up' when it comes back
-  // up by level.rise within level.driveMs of the bottom of a squat. Knees are
-  // not needed: a squat in knees-up framing pushes them out of the frame.
+  // Level changes, from sig.levelDrop (the hips, or the shoulders when the
+  // hips are hidden; knees are not needed, a squat in knees-up framing pushes
+  // them out of the frame):
+  //   'squat'     the level drops past level.squat (payload: how fast), re-armed
+  //               above level.reset
+  //   'drive_up'  from a squat, the level comes back up by level.rise within
+  //               level.driveMs, however long the squat was held (payload:
+  //               rise speed in T/s); once per squat
+  //   'jump'      the level rises level.jump above standing (a hop off the
+  //               floor), re-armed back near standing
+  // out.levelLow says the squat is being held.
   class LevelDetector {
-    constructor(cfg) { this.c = cfg.combat.level; this.armed = true; this.hist = []; this.bottom = null; }
+    constructor(cfg) { this.c = cfg.combat.level; this.armed = true; this.hist = []; this.win = []; this.lowAt = -Infinity; this.driven = true; this.jumpArmed = true; }
     update(ctx, out) {
       const t = ctx.t;
       const drop = ctx.sig.levelDrop;
+      out.levelLow = false;
       if (drop == null) return;
+      const c = this.c;
       this.hist.push({ t, drop });
-      while (this.hist.length && t - this.hist[0].t > this.c.speedMs) this.hist.shift();
-      if (this.armed && drop >= this.c.squat) {
+      while (this.hist.length && t - this.hist[0].t > c.speedMs) this.hist.shift();
+      this.win.push({ t, drop });
+      while (this.win.length && t - this.win[0].t > c.driveMs) this.win.shift();
+      if (this.armed && drop >= c.squat) {
         this.armed = false;
+        this.driven = false;
         const start = this.hist[0];
         const speed = (drop - start.drop) / Math.max(0.05, (t - start.t) / 1000);
-        this.bottom = { t, drop };
         out.events.push(['squat', { depth: ctx.sig.squatDepth, speed }]);
       }
-      if (this.bottom) {
-        if (drop > this.bottom.drop) this.bottom = { t, drop };
-        if (this.bottom.drop - drop >= this.c.rise) {
-          const ms = t - this.bottom.t;
-          if (ms <= this.c.driveMs) out.events.push(['drive_up', { depth: this.bottom.drop, speed: (this.bottom.drop - drop) / Math.max(0.05, ms / 1000) }]);
-          this.bottom = null;
+      if (drop >= c.squat * c.holdFrac) this.lowAt = t;
+      out.levelLow = !this.armed && drop >= c.squat * c.holdFrac;
+      // the drive: the deepest point in the last driveMs against now, allowed
+      // until driveMs after the level left the squat
+      if (!this.driven && t - this.lowAt <= c.driveMs) {
+        let top = this.win[0];
+        for (const s of this.win) if (s.drop > top.drop) top = s;
+        if (top.drop - drop >= c.rise) {
+          this.driven = true;
+          // speed over the rise itself: from the last moment still at the bottom
+          // (within 0.03 T of it), not from the start of a held squat
+          let from = top;
+          for (const s of this.win) if (s.t >= top.t && s.drop >= top.drop - 0.03) from = s;
+          out.events.push(['drive_up', { depth: top.drop, speed: (from.drop - drop) / Math.max(0.05, (t - from.t) / 1000) }]);
         }
       }
-      if (!this.armed && drop < this.c.reset) { this.armed = true; this.bottom = null; }
+      if (!this.armed && drop < c.reset) this.armed = true;
+      if (this.jumpArmed && drop <= -c.jump) { this.jumpArmed = false; out.events.push(['jump', { height: -drop }]); }
+      else if (!this.jumpArmed && drop > -c.jump * 0.4) this.jumpArmed = true;
     }
   }
 
@@ -279,28 +299,58 @@
   // run after the locomotion detectors (stance reads the turn detector's yaw)
   RE.makeCombatDetectors = (cfg) => [new ArmPose(), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
 
-  // Fight state machine (spec update_combat). Runs only in combat mode.
-  // target: {bearing(), shooting(), open()} from enter_combat; all optional.
-  //   standing  squat while the target shoots: 'sprawl'; squat otherwise
-  //             (when the target is open): 'shot'
-  //   shot      drive_up within shotMs: 'takedown' and top; too slow: 'stuffed'
-  //   top       strikes become 'down_strike'; rise out of the crouch for
-  //             scrambleMs: 'scramble' and back to standing
+  // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
+  // camera test). Runs only in combat mode. target, from enter_combat, all
+  // optional: {bearing(), open(), shooting(), shot({power, speed, jumped})}.
+  //   standing  holding a squat (or squatting) while the target shoots:
+  //             'sprawl', once per shot. A drive up out of a squat while the
+  //             target is open: 'shot' and the drive phase
+  //   drive     waits up to fight.jumpWaitMs for a 'jump' off the drive, then
+  //             resolves the shot. power = rise speed / fight.refRise (clamped)
+  //             plus fight.jumpBonus for a jump. target.shot(...) decides:
+  //             {takedown: false} is 'stuffed'; {takedown: true, topMs} (or no
+  //             shot callback) is 'takedown' and top for topMs, by default
+  //             fight.gnpMs scaled by power
+  //   top       a timed ground and pound burst: strikes become 'down_strike';
+  //             when the time is up, 'scramble' and back to standing
   // Anywhere: running (high knees) for escapeMs: 'escape' (the engine then
   // leaves combat mode).
   class Combat {
     constructor(cfg) { this.c = cfg.combat.fight; this.reset(); }
-    reset() { this.phase = 'standing'; this.shotAt = null; this.highSince = null; this.runSince = null; this.target = null; }
+    reset() { this.phase = 'standing'; this.drive = null; this.topUntil = 0; this.runSince = null; this.target = null; this.sprawled = false; }
     enter(target) { this.reset(); this.target = target || null; }
+    gnpMs(power) {
+      const [lo, hi] = this.c.gnpMs;
+      return Math.round(lo + (hi - lo) * RE.clamp((power - 0.5) / 1.0, 0, 1));
+    }
+    resolve(t) {
+      const d = this.drive;
+      this.drive = null;
+      const power = RE.clamp(d.speed / this.c.refRise, 0.3, 1.2) + (d.jumped ? this.c.jumpBonus : 0);
+      const info = { power, speed: d.speed, jumped: d.jumped };
+      const tg = this.target || {};
+      const r = (tg.shot && tg.shot(info)) || { takedown: true };
+      if (!r.takedown) { this.phase = 'standing'; return [['stuffed', info]]; }
+      const topMs = r.topMs || this.gnpMs(power);
+      this.phase = 'top';
+      this.topUntil = t + topMs;
+      return [['takedown', Object.assign(info, { topMs })]];
+    }
     // returns events to emit: [[name, payload]]
     onEvent(name, payload, t) {
       const out = [];
       const tg = this.target || {};
       if (name === 'squat' && this.phase === 'standing') {
-        if (tg.shooting && tg.shooting()) out.push(['sprawl', payload]);
-        else if (!tg.open || tg.open()) { this.phase = 'shot'; this.shotAt = t; out.push(['shot', payload]); }
-      } else if (name === 'drive_up' && this.phase === 'shot') {
-        if (t - this.shotAt <= this.c.shotMs) { this.phase = 'top'; this.highSince = null; out.push(['takedown', payload]); }
+        if (tg.shooting && tg.shooting() && !this.sprawled) { this.sprawled = true; out.push(['sprawl', payload]); }
+      } else if (name === 'drive_up' && this.phase === 'standing') {
+        if (!(tg.shooting && tg.shooting()) && (!tg.open || tg.open())) {
+          this.phase = 'drive';
+          this.drive = { t, speed: payload.speed || 0, jumped: false };
+          out.push(['shot', { speed: payload.speed || 0 }]);
+        }
+      } else if (name === 'jump' && this.phase === 'drive') {
+        this.drive.jumped = true;
+        out.push(...this.resolve(t));
       } else if (name === 'strike' && this.phase === 'top') {
         out.push(['down_strike', { hand: payload.hand, power: payload.power }]);
       } else if (name === 'run_start') {
@@ -310,20 +360,20 @@
       }
       return out;
     }
+    // sig: the engine snapshot (level_low: a squat being held)
     update(t, sig) {
+      this.lastT = t;
       const out = [];
-      if (this.phase === 'shot' && t - this.shotAt > this.c.shotMs) { this.phase = 'standing'; out.push(['stuffed', {}]); }
-      if (this.phase === 'top') {
-        // the top position is a half squat hold: stand up and they scramble free
-        if ((sig.squat_depth || 0) < this.c.topDepth) {
-          if (this.highSince === null) this.highSince = t;
-          if (t - this.highSince >= this.c.scrambleMs) { this.phase = 'standing'; out.push(['scramble', {}]); }
-        } else this.highSince = null;
-      }
+      const tg = this.target || {};
+      const shooting = !!(tg.shooting && tg.shooting());
+      if (!shooting) this.sprawled = false;
+      else if (this.phase === 'standing' && sig.level_low && !this.sprawled) { this.sprawled = true; out.push(['sprawl', { held: true }]); }
+      if (this.phase === 'drive' && t - this.drive.t >= this.c.jumpWaitMs) out.push(...this.resolve(t));
+      if (this.phase === 'top' && t >= this.topUntil) { this.phase = 'standing'; out.push(['scramble', {}]); }
       if (this.runSince !== null && t - this.runSince >= this.c.escapeMs) { this.runSince = null; out.push(['escape', {}]); }
       return out;
     }
-    snapshot() { return { phase: this.phase }; }
+    snapshot() { return { phase: this.phase, top_ms_left: this.phase === 'top' ? Math.max(0, this.topUntil - (this.lastT || 0)) : 0 }; }
   }
   RE.Combat = Combat;
   RE.GuardDetector = GuardDetector;

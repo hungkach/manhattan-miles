@@ -358,11 +358,19 @@
     // punch: the hand re-arms once it comes back `rearm` from its furthest point. An engine strike
     // from the same hand within pairMs is the same punch.
     hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3 },
+    // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
+    // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
+    // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
+    // timed into their wind-up, a hurt or a broken guard earns a longer ground and pound.
+    td: { braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 1.3, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
+    // guard breaks: blocked punches wear the guard down (guardHp, raw damage); at 0 the hands drop
+    // for brokenMs and take openBonus damage. It refills by regen a second when they are not covering.
+    guard: { hp: 4, regen: 0.4, brokenMs: 1600 },
   };
   const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
     armTilt: 0, impacts: [], clip: null, recording: false };
-  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
@@ -401,7 +409,7 @@
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]));
-      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3] });
+      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp });
     }
     say(n > 1 ? 'Two of them ahead.' : 'Someone ahead. Get ready.', 'feedback');
     banner(n > 1 ? 'Two opponents ahead' : 'Opponent ahead', 2000);
@@ -416,10 +424,13 @@
     Fight.active = { start: now, foe, range: 'in' };
     Fight.hp = FT.playerHp;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
+    foe.guardHp = FT.guard.hp;
+    Fight.lowSince = null;
     engine.enter_combat({
       bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
-      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover'].includes(Fight.active.foe.state),
+      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover', 'brace', 'broken'].includes(Fight.active.foe.state),
       shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
+      shot: resolveShot,
     });
     if (isDemo()) setTouchButtons('fight');
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', fight: true, camera: engine.camera() }); Fight.recording = true; }
@@ -470,10 +481,22 @@
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
     if (where === 'body') dmg *= FT.hit.body;
-    // hooks, uppercuts and body shots go around a high guard
-    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') dmg *= FT.coverFactor;
+    // hooks, uppercuts and body shots go around a high guard; the rest wear it down until it breaks
+    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') {
+      foe.guardHp -= dmg;
+      dmg *= FT.coverFactor;
+      if (foe.guardHp <= 0) {
+        foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = FT.guard.hp;
+        Fight.openUntil = now + FT.guard.brokenMs;
+        Fight.stats.guardBreaks++;
+        say('Guard broken!', 'feedback'); fightMsg('Guard broken!', 1100);
+      }
+    }
     impact(foe, hand, where, power, now);
-    if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
+    // an uppercut catches them changing levels: shooting at you, or braced for your shot
+    const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
+    if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
+    else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
     foe.hp -= dmg;
     Fight.stats.landed++;
@@ -500,32 +523,52 @@
     if (claim(e.hand, now)) landed(e.type, e.power, now, e.hand, null);
   });
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
-  engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot! Drive up', 900); } });
-  // a level change the fight machine did not take as a shot or a sprawl: say why
-  engine.on('squat', () => {
+  engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
+  // a drive up the fight machine did not take as a shot: say why
+  engine.on('drive_up', () => {
     if (!Fight.active) return;
     setTimeout(() => {
       const a = Fight.active;
-      if (!a || engine.combat().phase !== 'standing' || a.foe.state === 'stuffed') return;
+      if (!a || engine.combat().phase !== 'standing') return;
       if (a.range === 'out' || a.foe.state === 'out') fightMsg('Too far to shoot');
-      else if (a.foe.state === 'down' || a.foe.state === 'ko') return;
-      else fightMsg('Level change');
     }, 0);
   });
-  engine.on('takedown', () => {
+  // the engine asks the game how a shot goes (engine target.shot): a braced opponent stuffs a weak
+  // one; a shot timed into their wind-up, a hurt or a broken guard is a longer ground and pound
+  function resolveShot({ power }) {
+    const a = Fight.active;
+    if (!a) return { takedown: false };
+    const foe = a.foe;
+    if (foe.state === 'brace' && power < FT.td.beatBrace) return { takedown: false, braced: true };
+    const timed = ['windup', 'hurt', 'broken', 'stuffed'].includes(foe.state);
+    const q = Math.max(0, Math.min(1, (power + (timed ? FT.td.timedBonus : 0) - 0.5) / 1.0));
+    return { takedown: true, topMs: Math.round(FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q), timed };
+  }
+  engine.on('takedown', (e) => {
     const a = Fight.active;
     if (!a) return;
+    const now = performance.now();
     a.foe.state = 'down'; a.foe.until = Infinity;
+    Fight.gnpStart = now; Fight.gnpMs = e.topMs || FT.td.gnpMs[0];
     Fight.stats.takedowns++;
-    say('Takedown! Stay low and strike.', 'feedback');
-    fightMsg('Takedown', 1200);
+    const big = e.jumped || Fight.gnpMs >= 4000;
+    say(big ? 'Big takedown! Ground and pound.' : 'Takedown! Ground and pound.', 'feedback');
+    fightMsg(big ? 'Big takedown!' : 'Takedown', 1200);
   });
-  engine.on('stuffed', () => { if (Fight.active) { fightMsg('Stuffed'); say('Stuffed. Drive up faster.', 'feedback'); } });
+  engine.on('stuffed', () => {
+    const a = Fight.active;
+    if (!a) return;
+    Fight.stats.stuffed++;
+    fightMsg('Stuffed');
+    if (a.foe.state === 'brace') say('Stuffed. They saw it coming: jump into it, or uppercut.', 'feedback');
+    else say('Stuffed. Drive up faster.', 'feedback');
+    a.foe.state = 'guard'; a.foe.until = performance.now() + 800;
+  });
   engine.on('scramble', () => {
     const a = Fight.active;
     if (!a || a.foe.state !== 'down') return;
     a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
-    fightMsg('They scrambled up');
+    fightMsg('Back up');
   });
   engine.on('sprawl', () => {
     const a = Fight.active;
@@ -545,16 +588,21 @@
     if (foe.state === 'ko') {
       if (now >= foe.until) {
         const next = Fight.foes.find((f) => f.state !== 'ko');
-        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; a.range = 'in'; say('Next one!', 'feedback'); }
+        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; next.guardHp = FT.guard.hp; a.range = 'in'; say('Next one!', 'feedback'); }
         else endFight('won', now);
       }
       return;
     }
-    if (foe.state === 'down' || now < foe.until) {
-      if (foe.state === 'windup' || foe.state === 'shoot') return;
-      if (foe.state === 'down') return;
-      return;
+    if (foe.state !== 'cover') foe.guardHp = Math.min(FT.guard.hp, (foe.guardHp ?? FT.guard.hp) + FT.guard.regen * (now - (foe.thinkAt || now)) / 1000);
+    foe.thinkAt = now;
+    // they read a held crouch: braced for the double, hands low and level dropped
+    if (s.level_low) { if (Fight.lowSince === null) Fight.lowSince = now; } else Fight.lowSince = null;
+    if (foe.state === 'guard' && Fight.lowSince !== null && now - Fight.lowSince >= FT.td.braceAfterMs && !foe.bracedFor) {
+      foe.bracedFor = Fight.lowSince;
+      if (Math.random() < FT.td.braceChance) { foe.state = 'brace'; foe.until = now + FT.td.braceMs; fightMsg('They read it', 800); return; }
     }
+    if (Fight.lowSince === null) foe.bracedFor = null;
+    if (foe.state === 'down' || now < foe.until) return;
     // a state just ran out
     if (foe.state === 'windup') {
       // the punch lands now unless you covered or slipped it (a little grace for camera lag)
@@ -577,6 +625,8 @@
     if (foe.state === 'out') { a.range = 'in'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
     // choose the next move from guard (or after hurt, stuffed, cover)
     const elapsed = now - a.start;
+    // some opponents just cover up: beat the guard with body shots, hooks and uppercuts, or wear it down
+    if (Math.random() < (foe.turtle || 0)) { foe.state = 'cover'; foe.until = now + rand(1600, 2600); return; }
     const r = Math.random();
     if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
@@ -711,6 +761,19 @@
     }
     if (st === 'cover') {
       p.fiL = [-0.07, 1.67, 0.2]; p.fiR = [0.07, 1.67, 0.2]; p.elL = [-0.13, 1.32, 0.24]; p.elR = [0.13, 1.32, 0.24];
+    }
+    if (st === 'brace') {
+      // braced for your shot: level dropped, hips back, hands low and out to catch you
+      for (const k of ['pelvis', 'hipL', 'hipR']) { p[k][1] -= 0.2; p[k][2] -= 0.1; }
+      for (const k of ['chest', 'neck', 'head', 'shL', 'shR']) { p[k][1] -= 0.28; p[k][2] += 0.12; }
+      p.knL = [-0.2, 0.42, 0.2]; p.knR = [0.2, 0.42, 0.02];
+      p.elL = [-0.28, 0.98, 0.3]; p.elR = [0.28, 0.98, 0.3]; p.fiL = [-0.2, 0.86, 0.5]; p.fiR = [0.2, 0.86, 0.5];
+    }
+    if (st === 'broken') {
+      // guard broken: hands dropped, head back, a stagger
+      const k = Math.sin(t * 9) * 0.04;
+      p.elL = [-0.26, 1.12, 0.06]; p.elR = [0.26, 1.12, 0.06]; p.fiL = [-0.3, 0.92, 0.14 + k]; p.fiR = [0.3, 0.92, 0.14 - k];
+      p.head = [k, 1.6, -0.08]; p.neck = [k * 0.5, 1.48, -0.03]; p.chest[2] -= 0.05;
     }
     if (st === 'hurt' || now < f.hurtUntil) {
       p.head = [p.head[0], 1.6, -0.06]; p.neck = [p.neck[0], 1.48, -0.02]; p.chest[2] -= 0.04;
@@ -967,7 +1030,8 @@
       lat = (s.slip || 0) * 0.3;
       roll = (s.slip || 0) * 0.07;
       dy = -Math.min(1, s.squat_depth || 0) * 0.6;
-      if (phase === 'shot') { fwd = 0.6; dy = Math.min(dy, -0.55); }
+      if (phase === 'drive') { fwd = 0.6; dy = Math.min(dy, -0.55); }
+      if (phase === 'top') dy = Math.min(dy, -0.45);
     }
     pv.lat += (lat - pv.lat) * 0.3; pv.dy += (dy - pv.dy) * 0.3; pv.fwd += (fwd - pv.fwd) * 0.3; pv.roll += (roll - pv.roll) * 0.3;
     return pv;
@@ -986,7 +1050,15 @@
     bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     const s = engine.signals();
     const phase = engine.combat().phase;
-    const tag = phase === 'top' ? 'On top: stay low, strike down' : a.range === 'out' ? 'Out of range' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    // their guard, while it is worn down
+    const gh = a.foe.guardHp ?? FT.guard.hp;
+    if (gh < FT.guard.hp - 0.05) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / FT.guard.hp), '#9fb4c8', 'Guard');
+    // the ground and pound burst counting down
+    if (phase === 'top' && Fight.gnpMs) {
+      const left = Math.max(0, 1 - (now - Fight.gnpStart) / Fight.gnpMs);
+      bar(W / 2 - w / 2, 92, w, 16, left, '#ffcf3f', `${((left * Fight.gnpMs) / 1000).toFixed(1)} s`);
+    }
     ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
     ctx.strokeText(tag, W / 2, 68); ctx.fillText(tag, W / 2, 68);
@@ -1239,11 +1311,11 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 glove hitbox, level changes with knees out of view, notes';
+  const BUILD = '2026-10-15 \u00b7 takedown rework, guard breaks';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],
-    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up'],
+    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up', 'jump'],
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
@@ -1282,7 +1354,7 @@
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
       ['Blocks', G.blocks], ['Destinations reached', G.arrived], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
-      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', Fight.stats.takedowns], ['Fight time', fmt(Fight.stats.ms)]] : []),
+      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
     if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);

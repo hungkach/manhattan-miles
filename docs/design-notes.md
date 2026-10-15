@@ -11,7 +11,7 @@ Mark's notes from play sessions, sorted into a backlog. Newest session first. No
 
 ### Fight changes
 
-**Takedowns: split the squat into defend and attack.** Today a takedown needs a fast drive up and then a held half squat, which feels strange. New model:
+**Takedowns: split the squat into defend and attack.** Done 10/15 (engine 0.5.1 and the game's `resolveShot`), including the brace read and the uppercut bonus on a level change. Today a takedown needs a fast drive up and then a held half squat, which feels strange. New model:
 
 ```python
 # the squat is the level change; what you do from it decides the outcome
@@ -46,7 +46,7 @@ else:
 - Hooks: more power, shorter range. This needs a middle range band, not just in or out.
 - Uppercuts: land to the body, with bonus damage when the opponent is level changing.
 
-**Guards can break.** An opponent who covers up the whole time can be beaten by volume: guard damage builds up until the guard breaks. That's the fitness point: there's an efficient way (body shots, uppercuts, timing) and a brute-force way (sheer work rate), and both pay off.
+**Guards can break.** Done 10/15 (`FT.guard`, turtle opponents). An opponent who covers up the whole time can be beaten by volume: guard damage builds up until the guard breaks. That's the fitness point: there's an efficient way (body shots, uppercuts, timing) and a brute-force way (sheer work rate), and both pay off.
 
 **Fight aftermath**
 

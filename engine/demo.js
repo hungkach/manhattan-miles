@@ -4,7 +4,8 @@
 //                    Double-tap and hold = run.
 //   Right thumb zone: drag sideways = turn.
 //   Buttons: point L/R, turn around, jab, cross, hook, uppercut, guard
-//            (hold), slip L/R, stance (orthodox / southpaw), squat, drive up,
+//            (hold), slip L/R, stance (orthodox / southpaw), squat (held
+//            1.5 s), drive up, jump (an explosive drive up off the floor),
 //            stomp. Jab and hook throw the lead hand, cross and uppercut the rear.
 (function (g) {
   'use strict';
@@ -20,7 +21,6 @@
       this.turn = 0;
       this.guard = false;
       this.squatUntil = 0;
-      this.topUntil = 0; // after a drive up: the half squat hold of the top position
       this.running = false;
       this.runTimer = 0;
       this.lastTapAt = -Infinity;
@@ -99,10 +99,12 @@
           this.stance = this.stance === 'orthodox' ? 'southpaw' : 'orthodox';
           this.emit('stance', { stance: this.stance });
           break;
-        case 'squat': this.squatUntil = now + 600; this.topUntil = 0; this.emit('squat', { depth: 1, speed: 1 }); break;
-        // a drive up lands you on top in a half squat, held a few seconds (a
-        // touch screen cannot hold a crouch), long enough for the down strikes
-        case 'drive_up': this.squatUntil = 0; this.topUntil = now + this.cfg.topHoldMs; this.emit('drive_up', { depth: 1, speed: 1 }); break;
+        // a squat is held a moment (a touch screen cannot hold a crouch): long
+        // enough to sprawl on a shot or to drive out of
+        case 'squat': this.squatUntil = now + this.cfg.squatHoldMs; this.emit('squat', { depth: 1, speed: 1 }); break;
+        case 'drive_up': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 1.5 }); break;
+        // a jump: an explosive drive up that leaves the floor (the strongest shot)
+        case 'jump': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 2 }); this.emit('jump', { height: 0.2 }); break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
         default: break;
       }
@@ -115,7 +117,8 @@
         speed: 0, // the engine fills this in from the locomotion state machine
         turn: this.turn,
         lean: 0,
-        squat_depth: now < this.squatUntil ? 1 : now < this.topUntil ? 0.5 : 0,
+        squat_depth: now < this.squatUntil ? 1 : 0,
+        level_low: now < this.squatUntil,
         guard_up: this.guard,
         stance: this.stance,
         slip: now < this.slipUntil ? this.slip : 0,
@@ -130,7 +133,7 @@
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'],
     ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
-    ['squat', 'Squat'], ['drive_up', 'Drive up'], ['stomp', 'Stomp'],
+    ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
   ];
   RE.DEMO_BUTTONS = Object.freeze(BUTTONS.map(([action]) => action));
 

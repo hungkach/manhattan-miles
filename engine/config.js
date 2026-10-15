@@ -165,12 +165,15 @@
           reset: 0.15,     // T: re-arms above this (spec)
           speedMs: 400,    // squat speed measured over this long
           rise: 0.2,       // T the level comes back up for a drive up
-          driveMs: 600,    // within this long of the bottom (spec: 0.35 T in 400 ms)
+          driveMs: 400,    // within this long (spec: 0.35 T in 400 ms), however long the squat was held; a slow stand is not a drive
+          holdFrac: 0.8,   // a squat counts as held while the level stays past this share of squat
+          jump: 0.12,      // T above standing that is a jump (hops off the floor)
         },
         fight: {
-          shotMs: 1000,      // drive up within this long of the shot (spec 800)
-          topDepth: 0.2,     // squat depth that holds the top position (spec)
-          scrambleMs: 300,   // standing out of it this long lets them scramble
+          jumpWaitMs: 300,   // after a drive up, how long a jump can still add to the shot
+          refRise: 2.0,      // T/s of drive up speed that is shot power 1 (a 0.4 s rise out of a 0.6 T squat is about 1.8)
+          jumpBonus: 0.5,    // shot power a jump off the drive adds
+          gnpMs: [2000, 5000], // the ground and pound burst, weakest to strongest takedown
           escapeMs: 3000,    // high knees this long escapes the fight (spec)
         },
       },
@@ -192,7 +195,7 @@
         runHoldMs: 250,
         runCadence: 170,
         cadenceWindowMs: 3000,
-        topHoldMs: 6000,   // after a drive up, the demo holds a half squat this long
+        squatHoldMs: 1500, // the demo squat button holds a squat this long (touch cannot hold a crouch)
       },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },

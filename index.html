@@ -64,7 +64,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.4.2 from hungkach/body-arcade@67aa3d8, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.5.1 from hungkach/body-arcade@8dd9d7e, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -73,7 +73,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.4.2';
+  RE.version = '0.5.1';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -340,12 +340,15 @@
           reset: 0.15,     // T: re-arms above this (spec)
           speedMs: 400,    // squat speed measured over this long
           rise: 0.2,       // T the level comes back up for a drive up
-          driveMs: 600,    // within this long of the bottom (spec: 0.35 T in 400 ms)
+          driveMs: 400,    // within this long (spec: 0.35 T in 400 ms), however long the squat was held; a slow stand is not a drive
+          holdFrac: 0.8,   // a squat counts as held while the level stays past this share of squat
+          jump: 0.12,      // T above standing that is a jump (hops off the floor)
         },
         fight: {
-          shotMs: 1000,      // drive up within this long of the shot (spec 800)
-          topDepth: 0.2,     // squat depth that holds the top position (spec)
-          scrambleMs: 300,   // standing out of it this long lets them scramble
+          jumpWaitMs: 300,   // after a drive up, how long a jump can still add to the shot
+          refRise: 2.0,      // T/s of drive up speed that is shot power 1 (a 0.4 s rise out of a 0.6 T squat is about 1.8)
+          jumpBonus: 0.5,    // shot power a jump off the drive adds
+          gnpMs: [2000, 5000], // the ground and pound burst, weakest to strongest takedown
           escapeMs: 3000,    // high knees this long escapes the fight (spec)
         },
       },
@@ -367,7 +370,7 @@
         runHoldMs: 250,
         runCadence: 170,
         cadenceWindowMs: 3000,
-        topHoldMs: 6000,   // after a drive up, the demo holds a half squat this long
+        squatHoldMs: 1500, // the demo squat button holds a squat this long (touch cannot hold a crouch)
       },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
@@ -1302,7 +1305,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'slip', 'stance']) RE.detectors.add(name);
+  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -1518,35 +1521,55 @@
     }
   }
 
-  // Level changes: 'squat' when the level (sig.levelDrop: the hips, or the
-  // shoulders when the hips are hidden) drops past level.squat (with how fast
-  // it got there), re-armed above level.reset; 'drive_up' when it comes back
-  // up by level.rise within level.driveMs of the bottom of a squat. Knees are
-  // not needed: a squat in knees-up framing pushes them out of the frame.
+  // Level changes, from sig.levelDrop (the hips, or the shoulders when the
+  // hips are hidden; knees are not needed, a squat in knees-up framing pushes
+  // them out of the frame):
+  //   'squat'     the level drops past level.squat (payload: how fast), re-armed
+  //               above level.reset
+  //   'drive_up'  from a squat, the level comes back up by level.rise within
+  //               level.driveMs, however long the squat was held (payload:
+  //               rise speed in T/s); once per squat
+  //   'jump'      the level rises level.jump above standing (a hop off the
+  //               floor), re-armed back near standing
+  // out.levelLow says the squat is being held.
   class LevelDetector {
-    constructor(cfg) { this.c = cfg.combat.level; this.armed = true; this.hist = []; this.bottom = null; }
+    constructor(cfg) { this.c = cfg.combat.level; this.armed = true; this.hist = []; this.win = []; this.lowAt = -Infinity; this.driven = true; this.jumpArmed = true; }
     update(ctx, out) {
       const t = ctx.t;
       const drop = ctx.sig.levelDrop;
+      out.levelLow = false;
       if (drop == null) return;
+      const c = this.c;
       this.hist.push({ t, drop });
-      while (this.hist.length && t - this.hist[0].t > this.c.speedMs) this.hist.shift();
-      if (this.armed && drop >= this.c.squat) {
+      while (this.hist.length && t - this.hist[0].t > c.speedMs) this.hist.shift();
+      this.win.push({ t, drop });
+      while (this.win.length && t - this.win[0].t > c.driveMs) this.win.shift();
+      if (this.armed && drop >= c.squat) {
         this.armed = false;
+        this.driven = false;
         const start = this.hist[0];
         const speed = (drop - start.drop) / Math.max(0.05, (t - start.t) / 1000);
-        this.bottom = { t, drop };
         out.events.push(['squat', { depth: ctx.sig.squatDepth, speed }]);
       }
-      if (this.bottom) {
-        if (drop > this.bottom.drop) this.bottom = { t, drop };
-        if (this.bottom.drop - drop >= this.c.rise) {
-          const ms = t - this.bottom.t;
-          if (ms <= this.c.driveMs) out.events.push(['drive_up', { depth: this.bottom.drop, speed: (this.bottom.drop - drop) / Math.max(0.05, ms / 1000) }]);
-          this.bottom = null;
+      if (drop >= c.squat * c.holdFrac) this.lowAt = t;
+      out.levelLow = !this.armed && drop >= c.squat * c.holdFrac;
+      // the drive: the deepest point in the last driveMs against now, allowed
+      // until driveMs after the level left the squat
+      if (!this.driven && t - this.lowAt <= c.driveMs) {
+        let top = this.win[0];
+        for (const s of this.win) if (s.drop > top.drop) top = s;
+        if (top.drop - drop >= c.rise) {
+          this.driven = true;
+          // speed over the rise itself: from the last moment still at the bottom
+          // (within 0.03 T of it), not from the start of a held squat
+          let from = top;
+          for (const s of this.win) if (s.t >= top.t && s.drop >= top.drop - 0.03) from = s;
+          out.events.push(['drive_up', { depth: top.drop, speed: (from.drop - drop) / Math.max(0.05, (t - from.t) / 1000) }]);
         }
       }
-      if (!this.armed && drop < this.c.reset) { this.armed = true; this.bottom = null; }
+      if (!this.armed && drop < c.reset) this.armed = true;
+      if (this.jumpArmed && drop <= -c.jump) { this.jumpArmed = false; out.events.push(['jump', { height: -drop }]); }
+      else if (!this.jumpArmed && drop > -c.jump * 0.4) this.jumpArmed = true;
     }
   }
 
@@ -1568,28 +1591,58 @@
   // run after the locomotion detectors (stance reads the turn detector's yaw)
   RE.makeCombatDetectors = (cfg) => [new ArmPose(), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
 
-  // Fight state machine (spec update_combat). Runs only in combat mode.
-  // target: {bearing(), shooting(), open()} from enter_combat; all optional.
-  //   standing  squat while the target shoots: 'sprawl'; squat otherwise
-  //             (when the target is open): 'shot'
-  //   shot      drive_up within shotMs: 'takedown' and top; too slow: 'stuffed'
-  //   top       strikes become 'down_strike'; rise out of the crouch for
-  //             scrambleMs: 'scramble' and back to standing
+  // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
+  // camera test). Runs only in combat mode. target, from enter_combat, all
+  // optional: {bearing(), open(), shooting(), shot({power, speed, jumped})}.
+  //   standing  holding a squat (or squatting) while the target shoots:
+  //             'sprawl', once per shot. A drive up out of a squat while the
+  //             target is open: 'shot' and the drive phase
+  //   drive     waits up to fight.jumpWaitMs for a 'jump' off the drive, then
+  //             resolves the shot. power = rise speed / fight.refRise (clamped)
+  //             plus fight.jumpBonus for a jump. target.shot(...) decides:
+  //             {takedown: false} is 'stuffed'; {takedown: true, topMs} (or no
+  //             shot callback) is 'takedown' and top for topMs, by default
+  //             fight.gnpMs scaled by power
+  //   top       a timed ground and pound burst: strikes become 'down_strike';
+  //             when the time is up, 'scramble' and back to standing
   // Anywhere: running (high knees) for escapeMs: 'escape' (the engine then
   // leaves combat mode).
   class Combat {
     constructor(cfg) { this.c = cfg.combat.fight; this.reset(); }
-    reset() { this.phase = 'standing'; this.shotAt = null; this.highSince = null; this.runSince = null; this.target = null; }
+    reset() { this.phase = 'standing'; this.drive = null; this.topUntil = 0; this.runSince = null; this.target = null; this.sprawled = false; }
     enter(target) { this.reset(); this.target = target || null; }
+    gnpMs(power) {
+      const [lo, hi] = this.c.gnpMs;
+      return Math.round(lo + (hi - lo) * RE.clamp((power - 0.5) / 1.0, 0, 1));
+    }
+    resolve(t) {
+      const d = this.drive;
+      this.drive = null;
+      const power = RE.clamp(d.speed / this.c.refRise, 0.3, 1.2) + (d.jumped ? this.c.jumpBonus : 0);
+      const info = { power, speed: d.speed, jumped: d.jumped };
+      const tg = this.target || {};
+      const r = (tg.shot && tg.shot(info)) || { takedown: true };
+      if (!r.takedown) { this.phase = 'standing'; return [['stuffed', info]]; }
+      const topMs = r.topMs || this.gnpMs(power);
+      this.phase = 'top';
+      this.topUntil = t + topMs;
+      return [['takedown', Object.assign(info, { topMs })]];
+    }
     // returns events to emit: [[name, payload]]
     onEvent(name, payload, t) {
       const out = [];
       const tg = this.target || {};
       if (name === 'squat' && this.phase === 'standing') {
-        if (tg.shooting && tg.shooting()) out.push(['sprawl', payload]);
-        else if (!tg.open || tg.open()) { this.phase = 'shot'; this.shotAt = t; out.push(['shot', payload]); }
-      } else if (name === 'drive_up' && this.phase === 'shot') {
-        if (t - this.shotAt <= this.c.shotMs) { this.phase = 'top'; this.highSince = null; out.push(['takedown', payload]); }
+        if (tg.shooting && tg.shooting() && !this.sprawled) { this.sprawled = true; out.push(['sprawl', payload]); }
+      } else if (name === 'drive_up' && this.phase === 'standing') {
+        if (!(tg.shooting && tg.shooting()) && (!tg.open || tg.open())) {
+          this.phase = 'drive';
+          this.drive = { t, speed: payload.speed || 0, jumped: false };
+          out.push(['shot', { speed: payload.speed || 0 }]);
+        }
+      } else if (name === 'jump' && this.phase === 'drive') {
+        this.drive.jumped = true;
+        out.push(...this.resolve(t));
       } else if (name === 'strike' && this.phase === 'top') {
         out.push(['down_strike', { hand: payload.hand, power: payload.power }]);
       } else if (name === 'run_start') {
@@ -1599,20 +1652,20 @@
       }
       return out;
     }
+    // sig: the engine snapshot (level_low: a squat being held)
     update(t, sig) {
+      this.lastT = t;
       const out = [];
-      if (this.phase === 'shot' && t - this.shotAt > this.c.shotMs) { this.phase = 'standing'; out.push(['stuffed', {}]); }
-      if (this.phase === 'top') {
-        // the top position is a half squat hold: stand up and they scramble free
-        if ((sig.squat_depth || 0) < this.c.topDepth) {
-          if (this.highSince === null) this.highSince = t;
-          if (t - this.highSince >= this.c.scrambleMs) { this.phase = 'standing'; out.push(['scramble', {}]); }
-        } else this.highSince = null;
-      }
+      const tg = this.target || {};
+      const shooting = !!(tg.shooting && tg.shooting());
+      if (!shooting) this.sprawled = false;
+      else if (this.phase === 'standing' && sig.level_low && !this.sprawled) { this.sprawled = true; out.push(['sprawl', { held: true }]); }
+      if (this.phase === 'drive' && t - this.drive.t >= this.c.jumpWaitMs) out.push(...this.resolve(t));
+      if (this.phase === 'top' && t >= this.topUntil) { this.phase = 'standing'; out.push(['scramble', {}]); }
       if (this.runSince !== null && t - this.runSince >= this.c.escapeMs) { this.runSince = null; out.push(['escape', {}]); }
       return out;
     }
-    snapshot() { return { phase: this.phase }; }
+    snapshot() { return { phase: this.phase, top_ms_left: this.phase === 'top' ? Math.max(0, this.topUntil - (this.lastT || 0)) : 0 }; }
   }
   RE.Combat = Combat;
   RE.GuardDetector = GuardDetector;
@@ -2187,7 +2240,8 @@
 //                    Double-tap and hold = run.
 //   Right thumb zone: drag sideways = turn.
 //   Buttons: point L/R, turn around, jab, cross, hook, uppercut, guard
-//            (hold), slip L/R, stance (orthodox / southpaw), squat, drive up,
+//            (hold), slip L/R, stance (orthodox / southpaw), squat (held
+//            1.5 s), drive up, jump (an explosive drive up off the floor),
 //            stomp. Jab and hook throw the lead hand, cross and uppercut the rear.
 (function (g) {
   'use strict';
@@ -2203,7 +2257,6 @@
       this.turn = 0;
       this.guard = false;
       this.squatUntil = 0;
-      this.topUntil = 0; // after a drive up: the half squat hold of the top position
       this.running = false;
       this.runTimer = 0;
       this.lastTapAt = -Infinity;
@@ -2282,10 +2335,12 @@
           this.stance = this.stance === 'orthodox' ? 'southpaw' : 'orthodox';
           this.emit('stance', { stance: this.stance });
           break;
-        case 'squat': this.squatUntil = now + 600; this.topUntil = 0; this.emit('squat', { depth: 1, speed: 1 }); break;
-        // a drive up lands you on top in a half squat, held a few seconds (a
-        // touch screen cannot hold a crouch), long enough for the down strikes
-        case 'drive_up': this.squatUntil = 0; this.topUntil = now + this.cfg.topHoldMs; this.emit('drive_up', { depth: 1, speed: 1 }); break;
+        // a squat is held a moment (a touch screen cannot hold a crouch): long
+        // enough to sprawl on a shot or to drive out of
+        case 'squat': this.squatUntil = now + this.cfg.squatHoldMs; this.emit('squat', { depth: 1, speed: 1 }); break;
+        case 'drive_up': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 1.5 }); break;
+        // a jump: an explosive drive up that leaves the floor (the strongest shot)
+        case 'jump': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 2 }); this.emit('jump', { height: 0.2 }); break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
         default: break;
       }
@@ -2298,7 +2353,8 @@
         speed: 0, // the engine fills this in from the locomotion state machine
         turn: this.turn,
         lean: 0,
-        squat_depth: now < this.squatUntil ? 1 : now < this.topUntil ? 0.5 : 0,
+        squat_depth: now < this.squatUntil ? 1 : 0,
+        level_low: now < this.squatUntil,
         guard_up: this.guard,
         stance: this.stance,
         slip: now < this.slipUntil ? this.slip : 0,
@@ -2313,7 +2369,7 @@
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'],
     ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
-    ['squat', 'Squat'], ['drive_up', 'Drive up'], ['stomp', 'Stomp'],
+    ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
   ];
   RE.DEMO_BUTTONS = Object.freeze(BUTTONS.map(([action]) => action));
 
@@ -2756,6 +2812,7 @@
           guard_up: det ? det.guard : false,
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
+          level_low: det ? !!det.levelLow : false,
           confidence: sig.confidence,
         });
         combatTick(raw.t);
@@ -3060,7 +3117,7 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, level_low: false, confidence: 0 };
   }
 })(globalThis);
 </script>
@@ -3358,11 +3415,19 @@
     // punch: the hand re-arms once it comes back `rearm` from its furthest point. An engine strike
     // from the same hand within pairMs is the same punch.
     hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3 },
+    // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
+    // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
+    // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
+    // timed into their wind-up, a hurt or a broken guard earns a longer ground and pound.
+    td: { braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 1.3, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
+    // guard breaks: blocked punches wear the guard down (guardHp, raw damage); at 0 the hands drop
+    // for brokenMs and take openBonus damage. It refills by regen a second when they are not covering.
+    guard: { hp: 4, regen: 0.4, brokenMs: 1600 },
   };
   const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
     armTilt: 0, impacts: [], clip: null, recording: false };
-  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
@@ -3401,7 +3466,7 @@
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]));
-      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3] });
+      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp });
     }
     say(n > 1 ? 'Two of them ahead.' : 'Someone ahead. Get ready.', 'feedback');
     banner(n > 1 ? 'Two opponents ahead' : 'Opponent ahead', 2000);
@@ -3416,10 +3481,13 @@
     Fight.active = { start: now, foe, range: 'in' };
     Fight.hp = FT.playerHp;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
+    foe.guardHp = FT.guard.hp;
+    Fight.lowSince = null;
     engine.enter_combat({
       bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
-      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover'].includes(Fight.active.foe.state),
+      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover', 'brace', 'broken'].includes(Fight.active.foe.state),
       shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
+      shot: resolveShot,
     });
     if (isDemo()) setTouchButtons('fight');
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', fight: true, camera: engine.camera() }); Fight.recording = true; }
@@ -3470,10 +3538,22 @@
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
     if (where === 'body') dmg *= FT.hit.body;
-    // hooks, uppercuts and body shots go around a high guard
-    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') dmg *= FT.coverFactor;
+    // hooks, uppercuts and body shots go around a high guard; the rest wear it down until it breaks
+    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') {
+      foe.guardHp -= dmg;
+      dmg *= FT.coverFactor;
+      if (foe.guardHp <= 0) {
+        foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = FT.guard.hp;
+        Fight.openUntil = now + FT.guard.brokenMs;
+        Fight.stats.guardBreaks++;
+        say('Guard broken!', 'feedback'); fightMsg('Guard broken!', 1100);
+      }
+    }
     impact(foe, hand, where, power, now);
-    if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
+    // an uppercut catches them changing levels: shooting at you, or braced for your shot
+    const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
+    if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
+    else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
     foe.hp -= dmg;
     Fight.stats.landed++;
@@ -3500,32 +3580,52 @@
     if (claim(e.hand, now)) landed(e.type, e.power, now, e.hand, null);
   });
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
-  engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot! Drive up', 900); } });
-  // a level change the fight machine did not take as a shot or a sprawl: say why
-  engine.on('squat', () => {
+  engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
+  // a drive up the fight machine did not take as a shot: say why
+  engine.on('drive_up', () => {
     if (!Fight.active) return;
     setTimeout(() => {
       const a = Fight.active;
-      if (!a || engine.combat().phase !== 'standing' || a.foe.state === 'stuffed') return;
+      if (!a || engine.combat().phase !== 'standing') return;
       if (a.range === 'out' || a.foe.state === 'out') fightMsg('Too far to shoot');
-      else if (a.foe.state === 'down' || a.foe.state === 'ko') return;
-      else fightMsg('Level change');
     }, 0);
   });
-  engine.on('takedown', () => {
+  // the engine asks the game how a shot goes (engine target.shot): a braced opponent stuffs a weak
+  // one; a shot timed into their wind-up, a hurt or a broken guard is a longer ground and pound
+  function resolveShot({ power }) {
+    const a = Fight.active;
+    if (!a) return { takedown: false };
+    const foe = a.foe;
+    if (foe.state === 'brace' && power < FT.td.beatBrace) return { takedown: false, braced: true };
+    const timed = ['windup', 'hurt', 'broken', 'stuffed'].includes(foe.state);
+    const q = Math.max(0, Math.min(1, (power + (timed ? FT.td.timedBonus : 0) - 0.5) / 1.0));
+    return { takedown: true, topMs: Math.round(FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q), timed };
+  }
+  engine.on('takedown', (e) => {
     const a = Fight.active;
     if (!a) return;
+    const now = performance.now();
     a.foe.state = 'down'; a.foe.until = Infinity;
+    Fight.gnpStart = now; Fight.gnpMs = e.topMs || FT.td.gnpMs[0];
     Fight.stats.takedowns++;
-    say('Takedown! Stay low and strike.', 'feedback');
-    fightMsg('Takedown', 1200);
+    const big = e.jumped || Fight.gnpMs >= 4000;
+    say(big ? 'Big takedown! Ground and pound.' : 'Takedown! Ground and pound.', 'feedback');
+    fightMsg(big ? 'Big takedown!' : 'Takedown', 1200);
   });
-  engine.on('stuffed', () => { if (Fight.active) { fightMsg('Stuffed'); say('Stuffed. Drive up faster.', 'feedback'); } });
+  engine.on('stuffed', () => {
+    const a = Fight.active;
+    if (!a) return;
+    Fight.stats.stuffed++;
+    fightMsg('Stuffed');
+    if (a.foe.state === 'brace') say('Stuffed. They saw it coming: jump into it, or uppercut.', 'feedback');
+    else say('Stuffed. Drive up faster.', 'feedback');
+    a.foe.state = 'guard'; a.foe.until = performance.now() + 800;
+  });
   engine.on('scramble', () => {
     const a = Fight.active;
     if (!a || a.foe.state !== 'down') return;
     a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
-    fightMsg('They scrambled up');
+    fightMsg('Back up');
   });
   engine.on('sprawl', () => {
     const a = Fight.active;
@@ -3545,16 +3645,21 @@
     if (foe.state === 'ko') {
       if (now >= foe.until) {
         const next = Fight.foes.find((f) => f.state !== 'ko');
-        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; a.range = 'in'; say('Next one!', 'feedback'); }
+        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; next.guardHp = FT.guard.hp; a.range = 'in'; say('Next one!', 'feedback'); }
         else endFight('won', now);
       }
       return;
     }
-    if (foe.state === 'down' || now < foe.until) {
-      if (foe.state === 'windup' || foe.state === 'shoot') return;
-      if (foe.state === 'down') return;
-      return;
+    if (foe.state !== 'cover') foe.guardHp = Math.min(FT.guard.hp, (foe.guardHp ?? FT.guard.hp) + FT.guard.regen * (now - (foe.thinkAt || now)) / 1000);
+    foe.thinkAt = now;
+    // they read a held crouch: braced for the double, hands low and level dropped
+    if (s.level_low) { if (Fight.lowSince === null) Fight.lowSince = now; } else Fight.lowSince = null;
+    if (foe.state === 'guard' && Fight.lowSince !== null && now - Fight.lowSince >= FT.td.braceAfterMs && !foe.bracedFor) {
+      foe.bracedFor = Fight.lowSince;
+      if (Math.random() < FT.td.braceChance) { foe.state = 'brace'; foe.until = now + FT.td.braceMs; fightMsg('They read it', 800); return; }
     }
+    if (Fight.lowSince === null) foe.bracedFor = null;
+    if (foe.state === 'down' || now < foe.until) return;
     // a state just ran out
     if (foe.state === 'windup') {
       // the punch lands now unless you covered or slipped it (a little grace for camera lag)
@@ -3577,6 +3682,8 @@
     if (foe.state === 'out') { a.range = 'in'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
     // choose the next move from guard (or after hurt, stuffed, cover)
     const elapsed = now - a.start;
+    // some opponents just cover up: beat the guard with body shots, hooks and uppercuts, or wear it down
+    if (Math.random() < (foe.turtle || 0)) { foe.state = 'cover'; foe.until = now + rand(1600, 2600); return; }
     const r = Math.random();
     if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
@@ -3711,6 +3818,19 @@
     }
     if (st === 'cover') {
       p.fiL = [-0.07, 1.67, 0.2]; p.fiR = [0.07, 1.67, 0.2]; p.elL = [-0.13, 1.32, 0.24]; p.elR = [0.13, 1.32, 0.24];
+    }
+    if (st === 'brace') {
+      // braced for your shot: level dropped, hips back, hands low and out to catch you
+      for (const k of ['pelvis', 'hipL', 'hipR']) { p[k][1] -= 0.2; p[k][2] -= 0.1; }
+      for (const k of ['chest', 'neck', 'head', 'shL', 'shR']) { p[k][1] -= 0.28; p[k][2] += 0.12; }
+      p.knL = [-0.2, 0.42, 0.2]; p.knR = [0.2, 0.42, 0.02];
+      p.elL = [-0.28, 0.98, 0.3]; p.elR = [0.28, 0.98, 0.3]; p.fiL = [-0.2, 0.86, 0.5]; p.fiR = [0.2, 0.86, 0.5];
+    }
+    if (st === 'broken') {
+      // guard broken: hands dropped, head back, a stagger
+      const k = Math.sin(t * 9) * 0.04;
+      p.elL = [-0.26, 1.12, 0.06]; p.elR = [0.26, 1.12, 0.06]; p.fiL = [-0.3, 0.92, 0.14 + k]; p.fiR = [0.3, 0.92, 0.14 - k];
+      p.head = [k, 1.6, -0.08]; p.neck = [k * 0.5, 1.48, -0.03]; p.chest[2] -= 0.05;
     }
     if (st === 'hurt' || now < f.hurtUntil) {
       p.head = [p.head[0], 1.6, -0.06]; p.neck = [p.neck[0], 1.48, -0.02]; p.chest[2] -= 0.04;
@@ -3967,7 +4087,8 @@
       lat = (s.slip || 0) * 0.3;
       roll = (s.slip || 0) * 0.07;
       dy = -Math.min(1, s.squat_depth || 0) * 0.6;
-      if (phase === 'shot') { fwd = 0.6; dy = Math.min(dy, -0.55); }
+      if (phase === 'drive') { fwd = 0.6; dy = Math.min(dy, -0.55); }
+      if (phase === 'top') dy = Math.min(dy, -0.45);
     }
     pv.lat += (lat - pv.lat) * 0.3; pv.dy += (dy - pv.dy) * 0.3; pv.fwd += (fwd - pv.fwd) * 0.3; pv.roll += (roll - pv.roll) * 0.3;
     return pv;
@@ -3986,7 +4107,15 @@
     bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     const s = engine.signals();
     const phase = engine.combat().phase;
-    const tag = phase === 'top' ? 'On top: stay low, strike down' : a.range === 'out' ? 'Out of range' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    // their guard, while it is worn down
+    const gh = a.foe.guardHp ?? FT.guard.hp;
+    if (gh < FT.guard.hp - 0.05) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / FT.guard.hp), '#9fb4c8', 'Guard');
+    // the ground and pound burst counting down
+    if (phase === 'top' && Fight.gnpMs) {
+      const left = Math.max(0, 1 - (now - Fight.gnpStart) / Fight.gnpMs);
+      bar(W / 2 - w / 2, 92, w, 16, left, '#ffcf3f', `${((left * Fight.gnpMs) / 1000).toFixed(1)} s`);
+    }
     ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
     ctx.strokeText(tag, W / 2, 68); ctx.fillText(tag, W / 2, 68);
@@ -4239,11 +4368,11 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 glove hitbox, level changes with knees out of view, notes';
+  const BUILD = '2026-10-15 \u00b7 takedown rework, guard breaks';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],
-    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up'],
+    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up', 'jump'],
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
@@ -4282,7 +4411,7 @@
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
       ['Blocks', G.blocks], ['Destinations reached', G.arrived], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
-      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', Fight.stats.takedowns], ['Fight time', fmt(Fight.stats.ms)]] : []),
+      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
     if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);

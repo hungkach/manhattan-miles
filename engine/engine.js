@@ -151,6 +151,7 @@
           guard_up: det ? det.guard : false,
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
+          level_low: det ? !!det.levelLow : false,
           confidence: sig.confidence,
         });
         combatTick(raw.t);
@@ -455,6 +456,6 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, level_low: false, confidence: 0 };
   }
 })(globalThis);
