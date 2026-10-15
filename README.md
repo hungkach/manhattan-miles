@@ -12,6 +12,19 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 - Movement runs at 3x real walking pace so blocks pass at a game pace; distance in the summary is city distance.
 - Summary names the S&C payoff: aerobic base from marching, intervals from high knees.
 
+## Fights
+
+Every minute and a half or so of walking, an opponent (later sometimes two) waits on the street ahead. Walk up to them and the fight starts: you lock on, they manage the range.
+
+- Punch for real: jab, cross, hook, uppercut. Your gloves on screen follow your actual fists.
+- Guard up (fists by your face) blocks. Slip your head off the center line to dodge a straight and land a counter.
+- When they shoot for your legs (they glow low and you hear "Sprawl"), squat to sprawl, then hit them while they recover.
+- When they step back, march in place to close in.
+- Squat then drive up fast for a double leg takedown, then stay low and strike down. Stand up and they scramble free.
+- Three seconds of high knees escapes.
+
+Fights run about 20 to 40 seconds; the walking between them is the active recovery. Touch play swaps to fight buttons during a fight.
+
 ## Camera mode
 
 Pick a camera setup on the title screen: phone or tablet, upright or sideways (auto-picked, remembered). Standing the device the other way switches to the matching setup. Each setup has its own placement line and distance. The TV setup uses the back camera (the ultra-wide lens when the browser offers it) with the screen mirrored to the TV; without a back camera it falls back to the front camera and says so.

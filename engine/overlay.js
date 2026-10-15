@@ -16,6 +16,7 @@
     ['cadence', (s) => s.cadence_spm, 0, 220],
     ['effort', (s) => s.effort, 0, 1],
     ['speed', (s) => s.speed, 0, 3.5],
+    ['slip', (s) => s.slip, -1, 1],
     ['conf', (s) => s.confidence, 0, 1],
   ];
 
@@ -100,7 +101,7 @@
       if (!this.panel) { ctx.restore(); this._prompt(d, W, H, dpr); return; }
       const s = d.signals;
       const pad = 10, bw = 150, rowH = 18;
-      const lines = 3 + BARS.length + 1 + this.log.length;
+      const lines = 4 + BARS.length + 1 + this.log.length;
       const panelH = pad * 2 + lines * rowH;
       const panelW = Math.min(W - 16, 300);
       ctx.fillStyle = 'rgba(0,0,0,.6)';
@@ -124,6 +125,7 @@
       text(d.cal ? `cal ${d.cal.orientation} · S ${d.cal.shoulderWidth.toFixed(0)}px T ${d.cal.torsoLength.toFixed(0)}px` : 'not calibrated', d.cal ? '#cfe' : '#fc8');
       const m = d.locomotion;
       text(m ? `${m.state} · facing ${m.facing.toFixed(0)}° · lateral ${m.lateral.toFixed(2)}` : '', '#cfe');
+      text(`${s && s.guard_up ? 'guard up' : 'guard down'} · ${s ? s.stance : ''} · ${d.mode}${d.combat ? ' ' + d.combat.phase : ''}`, '#cfe');
       for (const [label, get, lo, hi] of BARS) {
         const v = s ? get(s) : null;
         ctx.fillStyle = '#fff';

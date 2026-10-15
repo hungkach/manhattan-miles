@@ -74,7 +74,11 @@
         }
         if (outW && world[i]) {
           const w = world[i];
-          if (w.v < this.hold && this.lastW.has(i)) {
+          // most points hold their last good value when unsure; the arm points in
+          // cfg.worldFollow keep following MediaPipe's estimate, because a fist
+          // punched at the camera often leaves the frame and a rough estimate
+          // still mirrors it better than a frozen one
+          if (w.v < this.hold && this.lastW.has(i) && !(this.cfg.worldFollow && this.cfg.worldFollow.includes(i))) {
             outW[i] = Object.assign({}, this.lastW.get(i), { v: w.v, held: true });
           } else {
             const [a, b, c] = this._filters(this.wl, i, 3);

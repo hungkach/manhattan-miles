@@ -1,6 +1,6 @@
 {
   "name": "rep-engine",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "files": [
     "core.js",
     "config.js",
@@ -9,6 +9,7 @@
     "signals.js",
     "detectors.js",
     "locomotion.js",
+    "combat.js",
     "calibration.js",
     "pose-source.js",
     "recorder.js",

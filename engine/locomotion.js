@@ -45,6 +45,7 @@
 
     setModel(model) { this.model = Object.assign({ rails: false }, model); }
     setFacing(deg) { this.facing = wrap(deg); }
+    setCombatBearing(fn) { this.combatBearing = fn || null; }
 
     onEvent(name, payload, t) {
       if (name === 'step') {
@@ -80,7 +81,8 @@
         // the combat module owns the body; face the target
         this.targetSpeed = 0;
         this.speed = 0;
-        if (m.target_bearing) this.facing = m.target_bearing();
+        const tb = this.combatBearing || m.target_bearing;
+        if (tb) this.facing = wrap(tb());
       } else if (turnAround) {
         // both hands overhead: the only way to reverse
         this.facing = wrap(this.facing + 180);

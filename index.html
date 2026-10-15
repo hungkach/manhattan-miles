@@ -11,6 +11,7 @@
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
+  body.fighting #demo .re-demo { height: 34%; }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
   #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 190px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
@@ -62,7 +63,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.3.0 from hungkach/body-arcade@3887e1d, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.4.1 from hungkach/body-arcade@a5dd011, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -71,7 +72,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.3.0';
+  RE.version = '0.4.1';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -194,7 +195,7 @@
       // One Euro in body units (S per second). beta 2 keeps lag near 50 ms on a
       // marching knee with rest jitter about the same as beta 0.02 (which lagged
       // 100 to 140 ms); fast wrists get a higher cutoff still, so strikes lag less.
-      smoothing: { minCutoff: 1.0, beta: 2.0, dCutoff: 1.0, worldUnit: 0.4 },
+      smoothing: { minCutoff: 1.0, beta: 2.0, dCutoff: 1.0, worldUnit: 0.4, worldFollow: [13, 14, 15, 16] },
       visibility: {
         hold: 0.5,    // below this a landmark holds its last value
         framing: 0.6, // required landmarks must beat this to pass framing
@@ -287,6 +288,66 @@
         fullCadence: 170, // cadence that reads as full effort
         fullLift: 0.6,    // knee lift (T) that reads as full effort
       },
+      // Combat module (combat.js). Distances in meters unless marked S or T.
+      combat: {
+        guard: {
+          near: 0.85,      // S, each wrist this close to the nose (2D, T scaled to S)
+          below: 0.35,     // T, and no lower than this under the shoulder line
+          holdMs: 150,     // both hands there this long raises the guard
+          release: 1.35,   // a hand must leave near * release to count as away
+          punchMs: 700,    // a hand away this briefly (a punch) keeps the guard up
+        },
+        stance: {
+          minYaw: 10,      // degrees of torso turn that blade the stance
+          handLead: 0.25,  // S, with a square torso, lead hand this far in front decides
+          holdMs: 500,
+        },
+        strike: {
+          windowMs: 350,     // history a strike is judged over
+          velMs: 100,        // velocity over this long
+          refractoryMs: 200, // per hand (spec: 200 ms jab/cross)
+          guardLeadMs: 120,  // the hand was at the guard at least this long before the strike fires (within the window)
+          rearm: 130,        // degrees: after a straight the elbow must bend below this again
+          straightOn: 150,   // degrees: straight punch ends with the elbow this straight
+          bentMax: 115,      // degrees: having been this bent inside the window
+          reach: 0.55,       // fist in front of its shoulder by this share of arm length
+          fwdGain: 0.18,     // m the fist travelled toward the camera inside the window
+          bentMax2: 135,     // degrees: hooks and uppercuts keep the elbow bent
+          hookHeight: 0.3,   // m from shoulder height
+          hookFront: 0.1,    // m in front of the shoulder
+          hookSpeed: 1.8,    // m/s along the arc, sweeping inward
+          hookTravel: 0.15,  // m inward inside the window
+          hookElbow: 0.15,   // m: the elbow no lower than this under the shoulder
+          hookElbowOut: 0.05, // m: and out to the side of it
+          afterStraightMs: 400, // no hook or uppercut from a hand pulling a straight back
+          upperSpeed: 2.0,   // m/s upward
+          upperFrom: 0.25,   // m below the shoulder at the start
+          upperTo: 0.15,     // m below the shoulder or higher at the end
+          downDrop: 0.15,    // T hip drop: crouched, for down strikes
+          downBelow: 0.3,    // m below the shoulder
+          downSpeed: 1.2,    // m/s downward
+          refSpeed: 5,       // m/s of fist speed that is power 1
+        },
+        slip: {
+          deadzone: 0.25,  // S, nose off the hip midpoint
+          full: 0.55,
+          eventLevel: 0.5,
+          eventReset: 0.2,
+        },
+        level: {
+          squat: 0.35,     // T hip drop that is a squat (spec)
+          reset: 0.15,     // T: re-arms above this (spec)
+          speedMs: 400,    // squat speed measured over this long
+          rise: 0.25,      // T the hips come back up for a drive up
+          driveMs: 400,    // within this long of the bottom (spec: 0.35 T in 400 ms)
+        },
+        fight: {
+          shotMs: 800,       // drive up within this long of the shot (spec)
+          topDepth: 0.2,     // squat depth that holds the top position (spec)
+          scrambleMs: 300,   // standing out of it this long lets them scramble
+          escapeMs: 3000,    // high knees this long escapes the fight (spec)
+        },
+      },
       // Speeds are in world units per second; games scale them to their world.
       locomotion: {
         walkSpeed: 1.4,
@@ -305,6 +366,7 @@
         runHoldMs: 250,
         runCadence: 170,
         cadenceWindowMs: 3000,
+        topHoldMs: 6000,   // after a drive up, the demo holds a half squat this long
       },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
@@ -414,7 +476,11 @@
         }
         if (outW && world[i]) {
           const w = world[i];
-          if (w.v < this.hold && this.lastW.has(i)) {
+          // most points hold their last good value when unsure; the arm points in
+          // cfg.worldFollow keep following MediaPipe's estimate, because a fist
+          // punched at the camera often leaves the frame and a rough estimate
+          // still mirrors it better than a frozen one
+          if (w.v < this.hold && this.lastW.has(i) && !(this.cfg.worldFollow && this.cfg.worldFollow.includes(i))) {
             outW[i] = Object.assign({}, this.lastW.get(i), { v: w.v, held: true });
           } else {
             const [a, b, c] = this._filters(this.wl, i, 3);
@@ -1029,9 +1095,10 @@
   RE.LocomotionDetectors = class LocomotionDetectors {
     constructor(cfg) {
       this.list = [new WristSpeed(), new StepDetector(cfg), new LeanDetector(cfg), new TurnDetector(cfg), new TurnAroundDetector(cfg), new PointDetector(cfg), new WaveDetector(cfg)];
+      if (RE.makeCombatDetectors) this.list.push(...RE.makeCombatDetectors(cfg));
     }
     update(ctx) {
-      const out = { events: [], turn: 0, yaw: 0, lean: 0, steerSuppressed: false, cadence: 0, running: false, effort: 0, kneeLift: 0, handsOverhead: false, wristSpeedL: 0, wristSpeedR: 0 };
+      const out = { events: [], turn: 0, yaw: 0, lean: 0, steerSuppressed: false, cadence: 0, running: false, effort: 0, kneeLift: 0, handsOverhead: false, wristSpeedL: 0, wristSpeedR: 0, arms: null, guard: false, stance: 'square', slip: 0 };
       for (const d of this.list) d.update(ctx, out);
       return out;
     }
@@ -1087,6 +1154,7 @@
 
     setModel(model) { this.model = Object.assign({ rails: false }, model); }
     setFacing(deg) { this.facing = wrap(deg); }
+    setCombatBearing(fn) { this.combatBearing = fn || null; }
 
     onEvent(name, payload, t) {
       if (name === 'step') {
@@ -1122,7 +1190,8 @@
         // the combat module owns the body; face the target
         this.targetSpeed = 0;
         this.speed = 0;
-        if (m.target_bearing) this.facing = m.target_bearing();
+        const tb = this.combatBearing || m.target_bearing;
+        if (tb) this.facing = wrap(tb());
       } else if (turnAround) {
         // both hands overhead: the only way to reverse
         this.facing = wrap(this.facing + 180);
@@ -1205,6 +1274,337 @@
   }
 
   RE.Locomotion = Locomotion;
+})(globalThis);
+
+// ---- engine/combat.js ----
+// Combat module (spec: "Combat mode", milestone 4). Detectors for guard,
+// stance, strikes, slip and level changes, the arm pose games mirror, and
+// the fight state machine (standing -> shot -> top) that turns them into
+// takedowns and down strikes. Kicks are out of scope: knees-up framing
+// cannot see the feet.
+//
+// Frames: strikes and the arm pose use 3D world landmarks in a camera-facing
+// frame learned at calibration (cal.frame: right, up, fwd, where fwd points
+// at the camera), so a punch toward the screen reads as reach, not as an
+// image the camera cannot see the depth of. Guard and slip use 2D body units.
+(function (g) {
+  'use strict';
+  const RE = g.RepEngine;
+  const L = RE.LM;
+
+  for (const name of ['strike', 'squat', 'drive_up', 'slip', 'stance']) RE.detectors.add(name);
+
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+  const len = (a) => Math.hypot(a.x, a.y, a.z);
+  const norm = (a) => { const n = len(a); return n > 0 ? { x: a.x / n, y: a.y / n, z: a.z / n } : null; };
+  const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+
+  // Camera-facing frame from world landmarks: right from the shoulders (so
+  // mirroring never flips it), up from hip to shoulder, fwd toward the camera.
+  RE.bodyFrame = function (world, up) {
+    const right0 = norm(sub(world[L.R_SHOULDER], world[L.L_SHOULDER]));
+    const u = up || RE.worldUp(world);
+    if (!right0 || !u) return null;
+    const fwd = norm(cross(u, right0));
+    if (!fwd) return null;
+    return { right: norm(cross(fwd, u)), up: u, fwd };
+  };
+
+  // The frame to measure arms in: calibrated (stays facing the camera when
+  // the torso turns into a stance), else this frame's torso.
+  function frameOf(ctx) {
+    return (ctx.cal && ctx.cal.frame) || (ctx.world ? RE.bodyFrame(ctx.world, ctx.cal && ctx.cal.up) : null);
+  }
+
+  // Arm pose in that frame, relative to the shoulder midpoint, in calibrated
+  // shoulder widths: x = player's right, y = up, z = toward the camera.
+  // Per arm: shoulder, elbow, wrist, extension (0 at a 90 degree elbow, 1
+  // straight) and reach (wrist distance in front of its shoulder over arm length).
+  RE.armPose = function (world, frame, sw) {
+    if (!world || !frame) return null;
+    const sm = RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER]);
+    const unit = sw > 0 ? sw : len(sub(world[L.R_SHOULDER], world[L.L_SHOULDER])) || 0.4;
+    const at = (p) => { const d = sub(p, sm); return { x: dot(d, frame.right) / unit, y: dot(d, frame.up) / unit, z: dot(d, frame.fwd) / unit }; };
+    const arm = (sh, el, wr) => {
+      const s = world[sh], e = world[el], w = world[wr];
+      const armLen = len(sub(e, s)) + len(sub(w, e));
+      const angle = RE.jointAngle(s, e, w);
+      return {
+        shoulder: at(s), elbow: at(e), wrist: at(w), angle,
+        extension: RE.clamp((angle - 90) / 90, 0, 1),
+        reach: armLen > 0 ? RE.clamp(dot(sub(w, s), frame.fwd) / armLen, -1, 1) : 0,
+      };
+    };
+    return { left: arm(L.L_SHOULDER, L.L_ELBOW, L.L_WRIST), right: arm(L.R_SHOULDER, L.R_ELBOW, L.R_WRIST) };
+  };
+
+  // Guard: both wrists near the face, held a moment; drops when either leaves.
+  // Also records when each hand was last at the guard, which gates strikes.
+  class GuardDetector {
+    constructor(cfg) { this.c = cfg.combat.guard; this.since = null; this.up = false; this.lastNear = { left: -Infinity, right: -Infinity }; }
+    update(ctx, out) {
+      const t = ctx.t;
+      const b = ctx.sig.body;
+      const ratio = ctx.cal.torsoLength / ctx.cal.shoulderWidth; // T in S
+      const dist = (w) => Math.hypot(w.x - b.nose.x, (w.y - b.nose.y) * ratio);
+      const near = (w, lim) => dist(w) <= lim && w.y >= b.sMid.y - this.c.below;
+      const ok = (i) => { const p = ctx.points[i]; return p && !p.held && p.v >= ctx.holdVis; };
+      const nl = !ctx.low && ok(L.L_WRIST) && near(b.lw, this.c.near);
+      const nr = !ctx.low && ok(L.R_WRIST) && near(b.rw, this.c.near);
+      if (nl) this.lastNear.left = t;
+      if (nr) this.lastNear.right = t;
+      out.handNearAt = { left: this.lastNear.left, right: this.lastNear.right };
+      if (!this.up) {
+        if (nl && nr) {
+          if (this.since === null) this.since = t;
+          if (t - this.since >= this.c.holdMs) this.up = true;
+        } else this.since = null;
+      } else {
+        const keep = (w, i) => ok(i) && near(w, this.c.near * this.c.release);
+        // a hand out on a punch keeps the guard: only both hands down, or one away too long, drop it
+        const l = keep(b.lw, L.L_WRIST) || t - this.lastNear.left < this.c.punchMs;
+        const r = keep(b.rw, L.R_WRIST) || t - this.lastNear.right < this.c.punchMs;
+        if (ctx.low || !(l && r)) { this.up = false; this.since = null; }
+      }
+      out.guard = this.up;
+    }
+  }
+
+  // Stance: which shoulder leads (nearer the camera). Torso yaw from the turn
+  // detector gives it; with a square torso, a hand clearly in front decides.
+  // Held stanceMs before it changes; fires 'stance' on a change.
+  class StanceDetector {
+    constructor(cfg) { this.c = cfg.combat.stance; this.stance = 'square'; this.cand = 'square'; this.since = 0; }
+    update(ctx, out) {
+      const t = ctx.t;
+      let now = 'square';
+      if (out.yaw >= this.c.minYaw) now = 'orthodox';
+      else if (out.yaw <= -this.c.minYaw) now = 'southpaw';
+      else if (out.arms) {
+        const d = out.arms.left.wrist.z - out.arms.right.wrist.z;
+        if (d >= this.c.handLead) now = 'orthodox';
+        else if (d <= -this.c.handLead) now = 'southpaw';
+      }
+      if (now !== this.cand) { this.cand = now; this.since = t; }
+      if (this.cand !== this.stance && t - this.since >= this.c.holdMs) {
+        this.stance = this.cand;
+        out.events.push(['stance', { stance: this.stance }]);
+      }
+      out.stance = this.stance;
+    }
+  }
+
+  // Strikes, per hand, from the arm pose over the last few hundred ms:
+  //   straight  the elbow snaps from bent to straight with the fist going
+  //             toward the camera: jab with the lead hand, cross with the rear
+  //   hook      bent elbow, fist sweeping inward at shoulder height
+  //   uppercut  bent elbow, fist driving up from below the shoulder
+  //   down      from a crouch, the elbow straightens with the fist going down
+  // A hand must have been at the guard just before (fighters punch from the
+  // guard), so marching arm swing or pumping arms on high knees never strike.
+  // Power is peak fist speed over refSpeed, clamped 0.5 to 1.5 (spec).
+  class StrikeDetector {
+    constructor(cfg) {
+      this.c = cfg.combat.strike;
+      this.hands = { left: { hist: [], last: -Infinity, lastStraight: -Infinity, armed: true }, right: { hist: [], last: -Infinity, lastStraight: -Infinity, armed: true } };
+    }
+    update(ctx, out) {
+      const t = ctx.t;
+      const arms = out.arms;
+      if (!arms) return;
+      const sw = arms.unitM;
+      for (const hand of ['left', 'right']) {
+        const h = this.hands[hand];
+        const a = arms[hand];
+        const p = a.wrist;
+        const q = arms.torso[hand];
+        // camera frame (x, y, z) for straights; torso frame (tx) for hooks
+        h.hist.push({ t, near: out.handNearAt[hand] === t, angle: a.angle, x: p.x * sw, y: (p.y - a.shoulder.y) * sw, z: (p.z - a.shoulder.z) * sw, tx: q.wrist.x * sw, tz: (q.wrist.z - q.shoulder.z) * sw });
+        while (h.hist.length && t - h.hist[0].t > this.c.windowMs) h.hist.shift();
+        if (a.angle < this.c.rearm) h.armed = true;
+        if (h.hist.length < 3 || t - h.last < this.c.refractoryMs) continue;
+        if (ctx.low) continue;
+        const type = this.classify(ctx, hand, a, h.hist, out);
+        if (!type) continue;
+        h.last = t;
+        if (type === 'jab' || type === 'cross' || type === 'down') { h.armed = false; h.lastStraight = t; }
+        const speed = this.peakSpeed(h.hist);
+        out.events.push(['strike', { hand, type, power: RE.clamp(speed / this.c.refSpeed, 0.5, 1.5), speed }]);
+      }
+    }
+
+    peakSpeed(hist) {
+      let best = 0;
+      for (let i = 1; i < hist.length; i++) {
+        const a = hist[i - 1], b = hist[i];
+        const dt = (b.t - a.t) / 1000;
+        if (dt > 0) best = Math.max(best, Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) / dt);
+      }
+      return best;
+    }
+
+    classify(ctx, hand, a, hist, out) {
+      const c = this.c;
+      const now = hist[hist.length - 1];
+      const first = hist[0];
+      const minAngle = Math.min(...hist.map((s) => s.angle));
+      const inward = hand === 'left' ? 1 : -1; // inward is toward the player's right for the left hand
+      // thrown from the guard: the hand was at the guard when this motion began
+      // (raising the hands into a guard ends there, it does not start there)
+      const fromGuard = hist.some((s) => s.near && now.t - s.t >= c.guardLeadMs);
+      // velocity over the last ~100 ms
+      let back = hist.length - 1;
+      while (back > 0 && now.t - hist[back].t < c.velMs) back--;
+      const v0 = hist[back];
+      const dt = (now.t - v0.t) / 1000 || 1;
+      const vx = (now.tx - v0.tx) / dt, vy = (now.y - v0.y) / dt;
+      const vArc = Math.hypot(now.tx - v0.tx, now.tz - v0.tz) / dt; // a hook travels an arc in the horizontal plane
+      const lowStance = ctx.sig.hipDrop >= c.downDrop;
+
+      if (a.angle >= c.straightOn && minAngle <= c.bentMax && this.hands[hand].armed) {
+        const fwdGain = now.z - Math.min(...hist.map((s) => s.z));
+        if (lowStance && now.y <= -c.downBelow && vy <= -c.downSpeed) return 'down';
+        if (!fromGuard) return null;
+        if (now.z >= c.reach * armLen(a, out.arms.unitM) && fwdGain >= c.fwdGain && now.z > Math.abs(now.x - first.x) && now.y > -c.downBelow) {
+          const lead = out.stance === 'southpaw' ? 'right' : 'left';
+          return hand === lead ? 'jab' : 'cross';
+        }
+        return null;
+      }
+      if (!fromGuard || a.angle > c.bentMax2 || ctx.t - this.hands[hand].lastStraight < c.afterStraightMs) return null;
+      // a hook swings with the elbow up and out to the side; raising the guard
+      // or pulling a punch back keeps the elbow down or in front
+      const elbowUp = (a.elbow.y - a.shoulder.y) * out.arms.unitM >= -c.hookElbow;
+      const ta = out.arms.torso[hand];
+      const elbowOut = inward * (ta.shoulder.x - ta.elbow.x) * out.arms.unitM >= c.hookElbowOut;
+      if (elbowUp && elbowOut && Math.abs(now.y) <= c.hookHeight && now.tz >= c.hookFront && inward * vx > 0 && vArc >= c.hookSpeed && inward * now.tx - Math.min(...hist.map((q) => inward * q.tx)) >= c.hookTravel) return 'hook';
+      const lowest = Math.min(...hist.map((s) => s.y));
+      if (vy >= c.upperSpeed && lowest <= -c.upperFrom && now.y >= -c.upperTo && now.z >= c.hookFront) return 'uppercut';
+      return null;
+    }
+  }
+  // arm length in meters (pose positions are in shoulder widths of unitM meters)
+  const armLen = (a, unitM) => (len(sub(a.elbow, a.shoulder)) + len(sub(a.wrist, a.elbow))) * unitM;
+
+  // Slip: head off the center line, nose against the hip midpoint (2D body
+  // units), through a deadzone to -1..1; fires 'slip' at slip.eventLevel.
+  class SlipDetector {
+    constructor(cfg) { this.c = cfg.combat.slip; this.armed = { left: true, right: true }; }
+    update(ctx, out) {
+      const b = ctx.sig.body;
+      let slip = 0;
+      if (!ctx.low) {
+        const off = b.nose.x - b.hMid.x;
+        const k = (Math.abs(off) - this.c.deadzone) / (this.c.full - this.c.deadzone);
+        if (k > 0) slip = Math.sign(off) * Math.min(k, 1);
+      }
+      out.slip = slip;
+      for (const side of ['left', 'right']) {
+        const level = side === 'left' ? -slip : slip;
+        if (this.armed[side] && level >= this.c.eventLevel) { this.armed[side] = false; out.events.push(['slip', { side }]); }
+        else if (!this.armed[side] && level < this.c.eventReset) this.armed[side] = true;
+      }
+    }
+  }
+
+  // Level changes: 'squat' when the hips drop past squat.drop (with how fast
+  // they got there), re-armed above squat.reset; 'drive_up' when the hips
+  // come back up by drive.rise within drive.ms of the bottom of a squat.
+  class LevelDetector {
+    constructor(cfg) { this.c = cfg.combat.level; this.armed = true; this.hist = []; this.bottom = null; }
+    update(ctx, out) {
+      const t = ctx.t;
+      const drop = ctx.sig.hipDrop;
+      if (drop == null || ctx.low) return;
+      this.hist.push({ t, drop });
+      while (this.hist.length && t - this.hist[0].t > this.c.speedMs) this.hist.shift();
+      if (this.armed && drop >= this.c.squat) {
+        this.armed = false;
+        const start = this.hist[0];
+        const speed = (drop - start.drop) / Math.max(0.05, (t - start.t) / 1000);
+        this.bottom = { t, drop };
+        out.events.push(['squat', { depth: ctx.sig.squatDepth, speed }]);
+      }
+      if (this.bottom) {
+        if (drop > this.bottom.drop) this.bottom = { t, drop };
+        if (this.bottom.drop - drop >= this.c.rise) {
+          const ms = t - this.bottom.t;
+          if (ms <= this.c.driveMs) out.events.push(['drive_up', { depth: this.bottom.drop, speed: (this.bottom.drop - drop) / Math.max(0.05, ms / 1000) }]);
+          this.bottom = null;
+        }
+      }
+      if (!this.armed && drop < this.c.reset) { this.armed = true; this.bottom = null; }
+    }
+  }
+
+  // The arm pose for this frame, shared by the strike and stance detectors.
+  class ArmPose {
+    update(ctx, out) {
+      out.arms = null;
+      const frame = frameOf(ctx);
+      const pose = RE.armPose(ctx.world, frame, ctx.cal.shoulderWidthW);
+      if (!pose) return;
+      pose.unitM = ctx.cal.shoulderWidthW || len(sub(ctx.world[L.R_SHOULDER], ctx.world[L.L_SHOULDER])) || 0.4;
+      // the same arms in the torso's own frame (turns with the shoulders): hooks
+      // sweep around the body, so a bladed stance must not tilt them toward the camera
+      pose.torso = RE.armPose(ctx.world, RE.bodyFrame(ctx.world, ctx.cal.up) || frame, ctx.cal.shoulderWidthW);
+      out.arms = pose;
+    }
+  }
+
+  // run after the locomotion detectors (stance reads the turn detector's yaw)
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
+
+  // Fight state machine (spec update_combat). Runs only in combat mode.
+  // target: {bearing(), shooting(), open()} from enter_combat; all optional.
+  //   standing  squat while the target shoots: 'sprawl'; squat otherwise
+  //             (when the target is open): 'shot'
+  //   shot      drive_up within shotMs: 'takedown' and top; too slow: 'stuffed'
+  //   top       strikes become 'down_strike'; rise out of the crouch for
+  //             scrambleMs: 'scramble' and back to standing
+  // Anywhere: running (high knees) for escapeMs: 'escape' (the engine then
+  // leaves combat mode).
+  class Combat {
+    constructor(cfg) { this.c = cfg.combat.fight; this.reset(); }
+    reset() { this.phase = 'standing'; this.shotAt = null; this.highSince = null; this.runSince = null; this.target = null; }
+    enter(target) { this.reset(); this.target = target || null; }
+    // returns events to emit: [[name, payload]]
+    onEvent(name, payload, t) {
+      const out = [];
+      const tg = this.target || {};
+      if (name === 'squat' && this.phase === 'standing') {
+        if (tg.shooting && tg.shooting()) out.push(['sprawl', payload]);
+        else if (!tg.open || tg.open()) { this.phase = 'shot'; this.shotAt = t; out.push(['shot', payload]); }
+      } else if (name === 'drive_up' && this.phase === 'shot') {
+        if (t - this.shotAt <= this.c.shotMs) { this.phase = 'top'; this.highSince = null; out.push(['takedown', payload]); }
+      } else if (name === 'strike' && this.phase === 'top') {
+        out.push(['down_strike', { hand: payload.hand, power: payload.power }]);
+      } else if (name === 'run_start') {
+        this.runSince = t;
+      } else if (name === 'run_end') {
+        this.runSince = null;
+      }
+      return out;
+    }
+    update(t, sig) {
+      const out = [];
+      if (this.phase === 'shot' && t - this.shotAt > this.c.shotMs) { this.phase = 'standing'; out.push(['stuffed', {}]); }
+      if (this.phase === 'top') {
+        // the top position is a half squat hold: stand up and they scramble free
+        if ((sig.squat_depth || 0) < this.c.topDepth) {
+          if (this.highSince === null) this.highSince = t;
+          if (t - this.highSince >= this.c.scrambleMs) { this.phase = 'standing'; out.push(['scramble', {}]); }
+        } else this.highSince = null;
+      }
+      if (this.runSince !== null && t - this.runSince >= this.c.escapeMs) { this.runSince = null; out.push(['escape', {}]); }
+      return out;
+    }
+    snapshot() { return { phase: this.phase }; }
+  }
+  RE.Combat = Combat;
+  RE.GuardDetector = GuardDetector;
+  RE.StrikeDetector = StrikeDetector;
 })(globalThis);
 
 // ---- engine/calibration.js ----
@@ -1390,6 +1790,19 @@
             const pitches = ws.map((s) => RE.thighPitch(s.wl, cal.up));
             cal.pitchBaseL = median(pitches.map((p) => p.L).filter((v) => v != null));
             cal.pitchBaseR = median(pitches.map((p) => p.R).filter((v) => v != null));
+            // the camera-facing frame strikes and the arm pose are measured in,
+            // and the shoulder width in meters
+            const rights = ws.map((s) => RE.bodyFrame(s.wl, cal.up)).filter(Boolean).map((f) => f.right);
+            if (rights.length) {
+              const r = rights.reduce((a, u) => ({ x: a.x + u.x, y: a.y + u.y, z: a.z + u.z }), { x: 0, y: 0, z: 0 });
+              const avg = [];
+              avg[L.L_SHOULDER] = { x: 0, y: 0, z: 0 };
+              avg[L.R_SHOULDER] = r;
+              avg[L.L_HIP] = { x: -cal.up.x, y: -cal.up.y, z: -cal.up.z };
+              avg[L.R_HIP] = avg[L.L_HIP];
+              cal.frame = RE.bodyFrame(avg, cal.up);
+            }
+            cal.shoulderWidthW = median(ws.map((s) => Math.hypot(s.wl[L.R_SHOULDER].x - s.wl[L.L_SHOULDER].x, s.wl[L.R_SHOULDER].y - s.wl[L.L_SHOULDER].y, s.wl[L.R_SHOULDER].z - s.wl[L.L_SHOULDER].z)));
           }
         }
       }
@@ -1757,8 +2170,9 @@
 //   Left thumb zone: tap in rhythm = march (tap speed sets cadence).
 //                    Double-tap and hold = run.
 //   Right thumb zone: drag sideways = turn.
-//   Buttons: point L/R, turn around, jab, cross, hook, guard (hold),
-//            squat, drive up, stomp.
+//   Buttons: point L/R, turn around, jab, cross, hook, uppercut, guard
+//            (hold), slip L/R, stance (orthodox / southpaw), squat, drive up,
+//            stomp. Jab and hook throw the lead hand, cross and uppercut the rear.
 (function (g) {
   'use strict';
   const RE = g.RepEngine;
@@ -1773,10 +2187,30 @@
       this.turn = 0;
       this.guard = false;
       this.squatUntil = 0;
+      this.topUntil = 0; // after a drive up: the half squat hold of the top position
       this.running = false;
       this.runTimer = 0;
       this.lastTapAt = -Infinity;
       this.holdTimer = 0;
+      this.stance = 'orthodox';
+      this.slip = 0;
+      this.slipUntil = 0;
+      this.lastStrike = { left: -Infinity, right: -Infinity };
+    }
+    lead() { return this.stance === 'southpaw' ? 'right' : 'left'; }
+    rear() { return this.stance === 'southpaw' ? 'left' : 'right'; }
+    // A plain arm pose for games that draw fists: guard or hands down, with a
+    // hand out for 250 ms after it strikes (shoulder widths, as engine.arms()).
+    arms(now) {
+      const arm = (side) => {
+        const sx = side === 'left' ? -0.5 : 0.5;
+        const out = now - this.lastStrike[side] < 250;
+        const up = this.guard || out;
+        const wrist = out ? { x: sx * 0.4, y: 0, z: 1.6 } : up ? { x: sx * 0.6, y: 0.35, z: 0.6 } : { x: sx * 1.1, y: -1.4, z: 0.1 };
+        const elbow = out ? { x: sx * 0.8, y: -0.05, z: 0.8 } : up ? { x: sx * 1.0, y: -0.45, z: 0.4 } : { x: sx * 1.2, y: -0.7, z: 0 };
+        return { shoulder: { x: sx, y: 0, z: 0 }, elbow, wrist, angle: out ? 170 : up ? 50 : 165, extension: out ? 0.9 : up ? 0 : 0.8, reach: out ? 0.9 : up ? 0.3 : 0 };
+      };
+      return { left: arm('left'), right: arm('right') };
     }
     step(now) {
       this.steps.push(now);
@@ -1812,16 +2246,30 @@
     }
     setTurn(v) { this.turn = RE.clamp(v, -1, 1); }
     press(action, now) {
-      const strike = (hand, type) => this.emit('strike', { hand, type, power: 1 });
+      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); };
       switch (action) {
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
         case 'turn_around': this.emit('turn_around', {}); break;
-        case 'jab': strike('left', 'jab'); break;
-        case 'cross': strike('right', 'cross'); break;
-        case 'hook': strike('left', 'hook'); break;
-        case 'squat': this.squatUntil = now + 600; this.emit('squat', { depth: 1, speed: 1 }); break;
-        case 'drive_up': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 1 }); break;
+        case 'jab': strike(this.lead(), 'jab'); break;
+        case 'cross': strike(this.rear(), 'cross'); break;
+        case 'hook': strike(this.lead(), 'hook'); break;
+        case 'uppercut': strike(this.rear(), 'uppercut'); break;
+        case 'slip_left': case 'slip_right': {
+          const side = action === 'slip_left' ? 'left' : 'right';
+          this.slip = side === 'left' ? -1 : 1;
+          this.slipUntil = now + 500;
+          this.emit('slip', { side });
+          break;
+        }
+        case 'stance':
+          this.stance = this.stance === 'orthodox' ? 'southpaw' : 'orthodox';
+          this.emit('stance', { stance: this.stance });
+          break;
+        case 'squat': this.squatUntil = now + 600; this.topUntil = 0; this.emit('squat', { depth: 1, speed: 1 }); break;
+        // a drive up lands you on top in a half squat, held a few seconds (a
+        // touch screen cannot hold a crouch), long enough for the down strikes
+        case 'drive_up': this.squatUntil = 0; this.topUntil = now + this.cfg.topHoldMs; this.emit('drive_up', { depth: 1, speed: 1 }); break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
         default: break;
       }
@@ -1834,8 +2282,10 @@
         speed: 0, // the engine fills this in from the locomotion state machine
         turn: this.turn,
         lean: 0,
-        squat_depth: now < this.squatUntil ? 1 : 0,
+        squat_depth: now < this.squatUntil ? 1 : now < this.topUntil ? 0.5 : 0,
         guard_up: this.guard,
+        stance: this.stance,
+        slip: now < this.slipUntil ? this.slip : 0,
         confidence: 1,
       };
     }
@@ -1845,8 +2295,9 @@
 
   const BUTTONS = [
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'],
-    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'],
-    ['guard', 'Guard'], ['squat', 'Squat'], ['drive_up', 'Drive up'], ['stomp', 'Stomp'],
+    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
+    ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
+    ['squat', 'Squat'], ['drive_up', 'Drive up'], ['stomp', 'Stomp'],
   ];
   RE.DEMO_BUTTONS = Object.freeze(BUTTONS.map(([action]) => action));
 
@@ -1956,6 +2407,7 @@
     ['cadence', (s) => s.cadence_spm, 0, 220],
     ['effort', (s) => s.effort, 0, 1],
     ['speed', (s) => s.speed, 0, 3.5],
+    ['slip', (s) => s.slip, -1, 1],
     ['conf', (s) => s.confidence, 0, 1],
   ];
 
@@ -2040,7 +2492,7 @@
       if (!this.panel) { ctx.restore(); this._prompt(d, W, H, dpr); return; }
       const s = d.signals;
       const pad = 10, bw = 150, rowH = 18;
-      const lines = 3 + BARS.length + 1 + this.log.length;
+      const lines = 4 + BARS.length + 1 + this.log.length;
       const panelH = pad * 2 + lines * rowH;
       const panelW = Math.min(W - 16, 300);
       ctx.fillStyle = 'rgba(0,0,0,.6)';
@@ -2064,6 +2516,7 @@
       text(d.cal ? `cal ${d.cal.orientation} · S ${d.cal.shoulderWidth.toFixed(0)}px T ${d.cal.torsoLength.toFixed(0)}px` : 'not calibrated', d.cal ? '#cfe' : '#fc8');
       const m = d.locomotion;
       text(m ? `${m.state} · facing ${m.facing.toFixed(0)}° · lateral ${m.lateral.toFixed(2)}` : '', '#cfe');
+      text(`${s && s.guard_up ? 'guard up' : 'guard down'} · ${s ? s.stance : ''} · ${d.mode}${d.combat ? ' ' + d.combat.phase : ''}`, '#cfe');
       for (const [label, get, lo, hi] of BARS) {
         const v = s ? get(s) : null;
         ctx.fillStyle = '#fff';
@@ -2176,6 +2629,7 @@
       detectors: new RE.LocomotionDetectors(cfg),
       det: null,
       loco: new RE.Locomotion(cfg),
+      combat: new RE.Combat(cfg),
       demoInput: null,
       demoUi: null,
       frame: null,
@@ -2195,7 +2649,17 @@
       st.session.counts[name] = (st.session.counts[name] || 0) + 1;
       if (st.calibrator) st.calibrator.onEvent(name, payload);
       st.loco.onEvent(name, payload, clock());
+      if (st.mode === 'combat') for (const [n, p] of st.combat.onEvent(name, payload, clock())) emitter.emit(n, p);
     });
+
+    // fight state machine tick: shot timeouts, scrambles, escape
+    function combatTick(t) {
+      if (st.mode !== 'combat') return;
+      for (const [n, p] of st.combat.update(t, st.snapshot)) {
+        emitter.emit(n, p);
+        if (n === 'escape') api.exit_combat();
+      }
+    }
 
     // Event time: frame time for camera and replay, wall clock for demo.
     function clock() {
@@ -2273,8 +2737,12 @@
           turn: det ? det.turn : 0,
           lean: det ? det.lean : 0,
           squat_depth: sig.squatDepth != null && !low ? sig.squatDepth : 0,
+          guard_up: det ? det.guard : false,
+          stance: det ? det.stance : 'square',
+          slip: det ? det.slip : 0,
           confidence: sig.confidence,
         });
+        combatTick(raw.t);
       }
       emitter.emit('frame', st.snapshot);
     }
@@ -2431,6 +2899,7 @@
           st.loco.update(now, s, st.mode);
           s.speed = st.loco.speed;
           st.snapshot = s;
+          combatTick(now);
         }
         return Object.assign({}, st.snapshot);
       },
@@ -2504,8 +2973,28 @@
         if (mode !== 'combat') st.combatTarget = null;
         emitter.emit('mode', { mode });
       },
-      enter_combat(target) { st.combatTarget = target || null; api.set_mode('combat'); },
-      exit_combat() { api.set_mode('explore'); },
+      // target: {bearing() (degrees, the player faces it), shooting(), open()}, all optional
+      enter_combat(target) {
+        st.combatTarget = target || null;
+        st.combat.enter(target);
+        st.loco.setCombatBearing(target && target.bearing ? () => target.bearing() : null);
+        api.set_mode('combat');
+      },
+      exit_combat() { st.combat.enter(null); st.loco.setCombatBearing(null); api.set_mode('explore'); },
+      // Fight state: {phase: standing | shot | top, stance, guard}
+      combat() {
+        const s = api.signals();
+        return Object.assign(st.combat.snapshot(), { stance: s.stance, guard: s.guard_up, mode: st.mode });
+      },
+      // Arm pose to mirror: {left, right}, each {shoulder, elbow, wrist} in
+      // shoulder widths from the shoulder midpoint (x = player's right, y = up,
+      // z = toward the camera), plus angle, extension (0..1) and reach (-1..1).
+      // null when the arms are not tracked.
+      arms() {
+        if (st.source === 'demo' && st.demoInput) return st.demoInput.arms(RE.now());
+        const a = st.det && st.det.arms;
+        return a ? { left: a.left, right: a.right } : null;
+      },
       mode: () => st.mode,
 
       start_recording(meta) { st.recorder.start(Object.assign({ preset: st.presetId }, meta)); },
@@ -2543,6 +3032,7 @@
           detectors: st.det,
           demo: st.demoInput,
           locomotion: st.loco.snapshot(),
+          combat: st.mode === 'combat' ? st.combat.snapshot() : null,
           capture: st.capture,
         };
       },
@@ -2554,7 +3044,7 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, confidence: 0 };
   }
 })(globalThis);
 </script>
@@ -2587,6 +3077,7 @@
       <li>Point left or right for a quick turn onto the cross street</li>
       <li>Turn your shoulders to steer, like a steering wheel; face front to go straight</li>
       <li>Both hands overhead to turn around</li>
+      <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape</li>
     </ul>
     <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
     <div class="btns">
@@ -2748,7 +3239,7 @@
   }
 
   // ---------- session ----------
-  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0 };
+  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0, fightsDone: 0 };
 
   function pickDestination() {
     const here = { ai: nearestAve(P.x), st: nearestSt(P.z) };
@@ -2777,6 +3268,7 @@
   // ---------- update ----------
   function update(dt, now) {
     if (G.state !== 'walk') return;
+    if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
     const s = engine.signals();
     P.cadence = s.cadence_spm || 0;
@@ -2807,8 +3299,12 @@
     if (P.cell !== null && cell !== P.cell) G.blocks++;
     P.cell = cell;
     if (G.dest && Math.hypot(P.x - aveX(G.dest.ai), P.z - stZ(G.dest.st)) < T.arriveRadius) arrive(now);
+    updateEncounters(dt, now);
+    easeView(dt);
+  }
 
-    // the view follows the heading; a point or turn around swings it over smoothly
+  // the view follows the heading; a point, turn around or lock-on swings it over smoothly
+  function easeView(dt) {
     let dy = P.yaw - P.view;
     while (dy > Math.PI) dy -= 2 * Math.PI;
     while (dy < -Math.PI) dy += 2 * Math.PI;
@@ -2823,6 +3319,348 @@
   function banner(text, ms, now = performance.now()) {
     G.banner = text;
     G.bannerUntil = now + ms;
+  }
+
+  // ---------- fights (rep-engine combat module) ----------
+  // Every 75 to 110 s of walking an opponent (later sometimes two) waits on the street ahead. Walk
+  // up to them and the fight starts: the engine's combat mode stops your walking and locks you on,
+  // and opponents keep the range themselves. You punch for real (your gloves mirror engine.arms()),
+  // guard or slip their punches, sprawl their shots, march in when they step back, and squat then
+  // drive up for the double leg and strike down from the top. Knock them out, or escape with 3 s
+  // of high knees. Fights run 20 to 40 s; the walking between is the active recovery.
+  const FT = {
+    firstAfterS: 45, everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
+    rangeIn: 1.9, rangeOut: 3.4, pressSteps: 3,
+    hp: [12, 16], playerHp: 10,
+    windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, outMs: 4500,
+    damage: { jab: 0.8, cross: 1.1, hook: 1.2, uppercut: 1.2, down: 1.0, down_strike: 1.0 },
+    coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
+  };
+  const Fight = { foes: [], active: null, waitS: FT.firstAfterS, stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
+  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+  Fight.stats = freshStats();
+  const rand = (a, b) => a + Math.random() * (b - a);
+  function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
+
+  // put an opponent on the street ahead, out of any building
+  function spawnFoes(dist = FT.spawnAhead) {
+    const n = G.fightsDone >= 2 && Math.random() < 0.5 ? 2 : 1;
+    let d = dist;
+    while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
+    const x = P.x + Math.sin(P.yaw) * d, z = P.z + Math.cos(P.yaw) * d;
+    Fight.foes = [];
+    for (let i = 0; i < n; i++) {
+      const hp = Math.round(rand(FT.hp[0], FT.hp[1]));
+      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3] });
+    }
+    say(n > 1 ? 'Two of them ahead.' : 'Someone ahead. Get ready.', 'feedback');
+    banner(n > 1 ? 'Two opponents ahead' : 'Opponent ahead', 2000);
+  }
+  const foeDist = (f) => Math.hypot(f.x - P.x, f.z - P.z);
+  const bearingTo = (f) => ((Math.atan2(f.x - P.x, f.z - P.z) * 180) / Math.PI + 360) % 360;
+  const current = () => Fight.foes.find((f) => f.state !== 'ko');
+
+  function startFight(now) {
+    const foe = current();
+    if (!foe) return;
+    Fight.active = { start: now, foe, range: 'in', press: 0 };
+    Fight.hp = FT.playerHp;
+    foe.state = 'guard'; foe.until = now + rand(900, 1600);
+    engine.enter_combat({
+      bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
+      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover'].includes(Fight.active.foe.state),
+      shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
+    });
+    if (isDemo()) setTouchButtons('fight');
+    document.body.classList.add('fighting');
+    note('');
+    say('Fight! Guard up.', 'feedback');
+    fightMsg('Fight!', 1200);
+  }
+
+  function endFight(how, now) {
+    const a = Fight.active;
+    if (!a) return;
+    Fight.stats.ms += now - a.start;
+    Fight.stats[how]++;
+    G.fightsDone++;
+    Fight.active = null;
+    Fight.foes = [];
+    Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
+    if (engine.mode() === 'combat') engine.exit_combat();
+    engine.set_facing((P.yaw * 180) / Math.PI);
+    if (isDemo()) setTouchButtons('walk');
+    document.body.classList.remove('fighting');
+    const line = { won: 'Knockout! March on.', lost: 'You got dropped. Shake it off and march on.', escaped: 'You got away.' }[how];
+    say(line, 'feedback');
+    banner({ won: 'Knockout', lost: 'Dropped', escaped: 'Escaped' }[how], 2500, now);
+  }
+
+  // engine events while fighting
+  function landed(kind, power, now) {
+    const a = Fight.active;
+    if (!a) return;
+    const foe = a.foe;
+    Fight.stats.thrown++;
+    if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Too far: march in'); return; }
+    if (kind === 'down_strike' && foe.state !== 'down') return;
+    if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
+    let dmg = (FT.damage[kind] || 1) * power;
+    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut') dmg *= FT.coverFactor; // hooks and uppercuts go around a high guard
+    if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
+    else if (now < Fight.openUntil) dmg *= FT.openBonus;
+    foe.hp -= dmg;
+    Fight.stats.landed++;
+    foe.hurtUntil = now + 220;
+    if (foe.state === 'windup' && kind !== 'jab' && Math.random() < 0.5) { foe.state = 'hurt'; foe.until = now + 500; } // a hard shot can break their wind-up
+    if (foe.hp <= 0) {
+      foe.state = 'ko'; foe.until = now + 1500;
+      say('Knockdown!', 'feedback');
+    }
+  }
+  engine.on('strike', (e) => {
+    if (!Fight.active) return;
+    Fight.fistFlash[e.hand] = performance.now() + 180;
+    if (engine.combat().phase !== 'top') landed(e.type, e.power, performance.now());
+  });
+  engine.on('down_strike', (e) => { if (Fight.active) landed('down_strike', e.power, performance.now()); });
+  engine.on('takedown', () => {
+    const a = Fight.active;
+    if (!a) return;
+    a.foe.state = 'down'; a.foe.until = Infinity;
+    Fight.stats.takedowns++;
+    say('Takedown! Stay low and strike.', 'feedback');
+    fightMsg('Takedown', 1200);
+  });
+  engine.on('stuffed', () => { if (Fight.active) { fightMsg('Stuffed'); say('Stuffed. Drive up faster.', 'feedback'); } });
+  engine.on('scramble', () => {
+    const a = Fight.active;
+    if (!a || a.foe.state !== 'down') return;
+    a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
+    fightMsg('They scrambled up');
+  });
+  engine.on('sprawl', () => {
+    const a = Fight.active;
+    if (!a || a.foe.state !== 'shoot') return;
+    a.foe.state = 'stuffed'; a.foe.until = performance.now() + FT.stuffedMs;
+    Fight.openUntil = performance.now() + FT.stuffedMs;
+    Fight.stats.sprawls++;
+    say('Sprawl! Now hit.', 'feedback');
+    fightMsg('Sprawl!');
+  });
+  engine.on('escape', () => { if (Fight.active) endFight('escaped', performance.now()); });
+  engine.on('step', () => {
+    const a = Fight.active;
+    if (!a || a.range !== 'out') return;
+    // marching in place presses forward
+    if (++a.press >= FT.pressSteps) { a.range = 'in'; a.press = 0; a.foe.state = 'guard'; a.foe.until = performance.now() + 700; fightMsg('In range'); }
+  });
+
+  // the opponent: guard, then a telegraphed attack, a step back or a cover-up
+  function foeThink(a, now) {
+    const foe = a.foe;
+    const s = engine.signals();
+    if (foe.state === 'ko') {
+      if (now >= foe.until) {
+        const next = Fight.foes.find((f) => f.state !== 'ko');
+        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; a.range = 'in'; say('Next one!', 'feedback'); }
+        else endFight('won', now);
+      }
+      return;
+    }
+    if (foe.state === 'down' || now < foe.until) {
+      if (foe.state === 'windup' || foe.state === 'shoot') return;
+      if (foe.state === 'down') return;
+      return;
+    }
+    // a state just ran out
+    if (foe.state === 'windup') {
+      // the punch lands now unless you covered or slipped it (a little grace for camera lag)
+      const guarded = s.guard_up || now - Fight.lastGuardAt < FT.graceMs;
+      const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
+      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
+      else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); }
+      else hurtPlayer(now, 1);
+      foe.state = 'guard'; foe.until = now + rand(700, 1500);
+      return;
+    }
+    if (foe.state === 'shoot') {
+      // no sprawl: they take you down
+      hurtPlayer(now, 2);
+      fightMsg('Taken down');
+      foe.state = 'guard'; foe.until = now + 1500;
+      return;
+    }
+    if (foe.state === 'out') { a.range = 'in'; a.press = 0; foe.state = 'guard'; foe.until = now + 900; return; }
+    // choose the next move from guard (or after hurt, stuffed, cover)
+    const elapsed = now - a.start;
+    const r = Math.random();
+    if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; }
+    else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; }
+    else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
+    else if (r < 0.82 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; a.press = 0; foe.until = now + FT.outMs; if (Fight.stats.landed < 20) say('March in.', 'feedback'); }
+    else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
+    else { foe.state = 'guard'; foe.until = now + rand(600, 1200); }
+  }
+  function hurtPlayer(now, n) {
+    Fight.hp -= n;
+    Fight.hurtUntil = now + 350;
+    fightMsg(n > 1 ? 'Taken down' : 'Hit');
+    if (Fight.hp <= 0) endFight('lost', now);
+  }
+
+  function updateFight(dt, now) {
+    const a = Fight.active;
+    const m = engine.locomotion();
+    const s = engine.signals();
+    if (s.guard_up) Fight.lastGuardAt = now;
+    if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
+    P.speed = 0;
+    P.yaw = (m.facing * Math.PI) / 180;
+    // the opponent keeps the range: close in, or a step back
+    const foe = a.foe;
+    const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 1.0 : FT.rangeIn;
+    const d = foeDist(foe) || 1;
+    const k = Math.min(1, dt * 4) * (d - want) / d;
+    foe.x += (P.x - foe.x) * k;
+    foe.z += (P.z - foe.z) * k;
+    foeThink(a, now);
+  }
+
+  // walking: count down to the next encounter, and start the fight when you reach them
+  function updateEncounters(dt, now) {
+    if (Fight.active) return;
+    if (!Fight.foes.length) {
+      if (P.speed > 0.5) Fight.waitS -= dt;
+      if (Fight.waitS <= 0) spawnFoes();
+      return;
+    }
+    const foe = current();
+    const d = foeDist(foe);
+    if (d > 150) { Fight.foes = []; Fight.waitS = 20; return; } // walked away from them
+    // they walk toward you once they see you
+    if (d < FT.sees && d > FT.engage) {
+      const k = Math.min(1, dt * 1.2 / d);
+      foe.x += (P.x - foe.x) * k;
+      foe.z += (P.z - foe.z) * k;
+    }
+    if (d <= FT.engage) startFight(now);
+  }
+
+  // ---------- fight drawing ----------
+  // an opponent as a chunky figure facing you, feet at (x, z) on the ground
+  function drawFoe(f, now) {
+    const c = toCam(f.x, 0, f.z);
+    if (c.z < 0.5) return;
+    const sc = F / c.z; // pixels per meter at that depth
+    const gx = W / 2 + (F * c.x) / c.z;
+    const gy = H / 2 - (F * c.y) / c.z;
+    const t = now / 1000;
+    const hurt = now < f.hurtUntil;
+    const col = hurt ? '#fff' : `rgb(${f.col.join(',')})`;
+    const skin = '#d9a77f';
+    ctx.save();
+    ctx.translate(gx, gy);
+    ctx.scale(sc, sc);
+    ctx.lineCap = ctx.lineJoin = 'round';
+    if (f.state === 'down' || f.state === 'ko') {
+      // on the ground
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(0, -0.18, 0.9, 0.18, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = skin;
+      ctx.beginPath(); ctx.arc(0.95, -0.22, 0.13, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
+    const crouch = f.state === 'shoot' ? 0.45 : f.state === 'stuffed' ? 0.3 : 0;
+    const sway = Math.sin(t * 2.4) * 0.05;
+    const lean = f.state === 'hurt' || hurt ? -0.12 : f.state === 'shoot' ? 0.35 : 0;
+    const hip = { x: sway, y: -0.95 + crouch };
+    const neck = { x: hip.x + Math.sin(lean) * 0.55, y: hip.y - 0.55 * Math.cos(lean) };
+    const line = (pts, w, color) => { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y); ctx.stroke(); };
+    // legs
+    line([{ x: hip.x - 0.12, y: hip.y }, { x: -0.2, y: -0.45 + crouch * 0.5 }, { x: -0.18, y: 0 }], 0.14, '#2a2f3a');
+    line([{ x: hip.x + 0.12, y: hip.y }, { x: 0.2, y: -0.45 + crouch * 0.5 }, { x: 0.18, y: 0 }], 0.14, '#2a2f3a');
+    // torso
+    line([hip, neck], 0.34, col);
+    // arms by pose: fists in front of the face, one drawn back for a wind-up
+    const sh = (k) => ({ x: neck.x + k * 0.2, y: neck.y + 0.04 });
+    let fl = { x: neck.x - 0.1, y: neck.y - 0.08 }, fr = { x: neck.x + 0.1, y: neck.y - 0.08 };
+    if (f.state === 'cover') { fl = { x: neck.x - 0.06, y: neck.y - 0.2 }; fr = { x: neck.x + 0.06, y: neck.y - 0.2 }; }
+    if (f.state === 'windup' && f.kind === 'straight') fr = { x: neck.x + 0.32, y: neck.y + 0.02 };
+    if (f.state === 'windup' && f.kind === 'hook') fl = { x: neck.x - 0.55, y: neck.y - 0.02 };
+    if (f.state === 'shoot') { fl = { x: hip.x - 0.35, y: hip.y + 0.1 }; fr = { x: hip.x + 0.35, y: hip.y + 0.1 }; }
+    line([sh(-1), { x: (sh(-1).x + fl.x) / 2 - 0.08, y: (sh(-1).y + fl.y) / 2 + 0.12 }, fl], 0.11, col);
+    line([sh(1), { x: (sh(1).x + fr.x) / 2 + 0.08, y: (sh(1).y + fr.y) / 2 + 0.12 }, fr], 0.11, col);
+    // head and gloves
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(neck.x, neck.y - 0.17, 0.13, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1b1e26';
+    for (const q of [fl, fr]) { ctx.beginPath(); ctx.arc(q.x, q.y, 0.075, 0, Math.PI * 2); ctx.fill(); }
+    // the telegraph: a glow on the hand that is coming
+    if (f.state === 'windup' || f.state === 'shoot') {
+      const k = 0.5 + 0.5 * Math.sin(t * 20);
+      ctx.strokeStyle = `rgba(255, 207, 63, ${0.5 + 0.5 * k})`;
+      ctx.lineWidth = 0.04;
+      const q = f.state === 'shoot' ? { x: hip.x, y: hip.y } : f.kind === 'hook' ? fl : fr;
+      ctx.beginPath(); ctx.arc(q.x, q.y, f.state === 'shoot' ? 0.5 : 0.16, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // your gloves, mirrored from the engine's arm pose: each fist is placed in front of your eye
+  // (shoulder widths to meters, the shoulders a little below and ahead of the eye) and projected
+  // through the game camera, so at the guard they frame the opponent's face and a punch travels
+  // into the scene, shrinking with distance
+  function drawGloves(now) {
+    const arms = engine.arms();
+    if (!arms) return;
+    const S = 0.4; // meters per shoulder width
+    for (const side of ['left', 'right']) {
+      const a = arms[side];
+      if (!a || !a.wrist) continue;
+      // the eye sits about 0.45 m behind the fists at the guard; sideways spread is narrowed a little
+      // because the head turns with a bladed stance while the frame stays square to the camera
+      const rx = a.wrist.x * S * 0.7, up = -0.25 + a.wrist.y * S, fwd = 0.45 + Math.max(0, a.wrist.z) * S;
+      const yc = up * cam.cp + fwd * cam.sp, zc = Math.max(0.15, -up * cam.sp + fwd * cam.cp);
+      const x = W / 2 + (F * rx) / zc, y = H / 2 - (F * yc) / zc;
+      const r = Math.min(Math.min(W, H) * 0.14, (F * 0.065) / zc);
+      const sx = W / 2 + (side === 'left' ? -1 : 1) * W * 0.45;
+      ctx.strokeStyle = 'rgba(40, 44, 54, .92)';
+      ctx.lineWidth = r * 0.85;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(sx, H + r); ctx.lineTo(x, y + r * 0.4); ctx.stroke();
+      const flash = now < Fight.fistFlash[side];
+      ctx.fillStyle = flash ? '#ffe27a' : side === 'left' ? '#c8322b' : '#b02a24';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.18)';
+      ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.35, r * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function fightHud(now) {
+    const a = Fight.active;
+    const bar = (x, y, w, h, frac, color, label) => {
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = color; ctx.fillRect(x + 2, y + 2, Math.max(0, (w - 4) * frac), h - 4);
+      ctx.font = '700 13px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+      ctx.fillText(label, x + 8, y + h / 2);
+    };
+    const w = Math.min(W - 28, 360);
+    bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', 'Opponent');
+    bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
+    const s = engine.signals();
+    const phase = engine.combat().phase;
+    const tag = phase === 'top' ? 'On top: stay low, strike down' : a.range === 'out' ? 'Out of range: march in' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
+    ctx.strokeText(tag, W / 2, 68); ctx.fillText(tag, W / 2, 68);
+    if (now < Fight.msgUntil) {
+      ctx.font = '900 34px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = '#ffcf3f';
+      ctx.strokeText(Fight.msg, W / 2, H * 0.3); ctx.fillText(Fight.msg, W / 2, H * 0.3);
+    }
+    if (now < Fight.hurtUntil) { ctx.fillStyle = 'rgba(220, 40, 30, .28)'; ctx.fillRect(0, 0, W, H); }
   }
 
   // ---------- rendering ----------
@@ -2901,7 +3739,12 @@
 
     const pos = playerPos();
     const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * (1 + P.runBlend) * Math.min(1, P.speed / 4) : 0;
-    const pitch = -0.12; // look slightly up at the skyline
+    // look slightly up at the skyline; in a fight, tilt so the opponent's head sits a third of the way down
+    let pitch = -0.12;
+    if (Fight.active) {
+      const d = Math.max(1, foeDist(Fight.active.foe));
+      pitch = Math.max(-0.12, Math.min(0.45, (0.17 * H) / F - (1.75 - T.eyeHeight) / d));
+    }
     cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
     const horizon = H / 2 - F * (cam.sp / cam.cp);
@@ -2937,7 +3780,12 @@
       if (f.win) windows(f);
     }
 
-    if (G.state === 'walk') { hud(now); minimap(); }
+    if (G.state === 'walk') {
+      // opponents, far to near
+      for (const f of Fight.foes.slice().sort((a, b) => foeDist(b) - foeDist(a))) drawFoe(f, now);
+      if (Fight.active) { drawGloves(now); fightHud(now); }
+      else { hud(now); minimap(); }
+    }
   }
 
   function hud(now) {
@@ -3008,6 +3856,10 @@
       ctx.fillStyle = '#ffcf3f';
       ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, dx)), Math.max(y0 + 4, Math.min(y0 + size - 4, dy)), 4, 0, Math.PI * 2); ctx.fill();
     }
+    for (const f of Fight.foes) {
+      ctx.fillStyle = '#ff5a4f';
+      ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, sx(f.x))), Math.max(y0 + 4, Math.min(y0 + size - 4, sy(f.z))), 3.5, 0, Math.PI * 2); ctx.fill();
+    }
     // player arrow
     const px = sx(pos.x), py = sy(pos.z);
     ctx.translate(px, py);
@@ -3018,14 +3870,29 @@
   }
 
   // ---------- flow ----------
+  const TOUCH_BUTTONS = {
+    walk: ['point_left', 'point_right', 'turn_around'],
+    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up'],
+  };
   function enableTouch() {
-    engine.enable_demo($('demo'), { buttons: ['point_left', 'point_right', 'turn_around'] });
+    engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
+  }
+  const isDemo = () => engine.debug().source === 'demo';
+  // swap the touch buttons between walking and fighting (rebuilding the touch
+  // controls resets the engine's heading, so keep it)
+  function setTouchButtons(mode) {
+    const facing = engine.locomotion().facing;
+    engine.disable_demo();
+    engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS[mode] });
+    engine.set_facing(facing);
   }
 
   function startWalk() {
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
-    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
+    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0 });
+    Object.assign(Fight, { foes: [], active: null, waitS: FT.firstAfterS, stats: freshStats(), hp: FT.playerHp });
+    if (engine.mode() === 'combat') engine.exit_combat();
     pickDestination();
     show(null);
     $('endBtn').hidden = false;
@@ -3033,6 +3900,7 @@
 
   function endWalk() {
     const now = performance.now();
+    if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     $('endBtn').hidden = true;
     const ms = now - G.start;
@@ -3041,9 +3909,11 @@
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
       ['Blocks', G.blocks], ['Destinations reached', G.arrived], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', Fight.stats.takedowns], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
     if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);
+    if (G.fightsDone) lines.push(`<p><b>Fight rounds:</b> ${fmt(Fight.stats.ms)} of fighting in short bursts, with marching between as active recovery: ${Fight.stats.landed} punches build striking power and shoulder endurance${Fight.stats.takedowns ? `, ${Fight.stats.takedowns} takedowns train explosive hip extension` : ''}${Fight.stats.sprawls ? `, ${Fight.stats.sprawls} sprawls train reactive level changes` : ''}.</p>`);
     $('payoff').innerHTML = lines.join('');
     $('saveClip').hidden = !Warm.clip;
     show('summary');
@@ -3462,7 +4332,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, engine, whereAmI, runCamera, blocked };
+  window.__game = { G, P, T, Warm, Fight, FT, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk };
 })();
 </script>
 </body>

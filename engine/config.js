@@ -21,7 +21,7 @@
       // One Euro in body units (S per second). beta 2 keeps lag near 50 ms on a
       // marching knee with rest jitter about the same as beta 0.02 (which lagged
       // 100 to 140 ms); fast wrists get a higher cutoff still, so strikes lag less.
-      smoothing: { minCutoff: 1.0, beta: 2.0, dCutoff: 1.0, worldUnit: 0.4 },
+      smoothing: { minCutoff: 1.0, beta: 2.0, dCutoff: 1.0, worldUnit: 0.4, worldFollow: [13, 14, 15, 16] },
       visibility: {
         hold: 0.5,    // below this a landmark holds its last value
         framing: 0.6, // required landmarks must beat this to pass framing
@@ -114,6 +114,66 @@
         fullCadence: 170, // cadence that reads as full effort
         fullLift: 0.6,    // knee lift (T) that reads as full effort
       },
+      // Combat module (combat.js). Distances in meters unless marked S or T.
+      combat: {
+        guard: {
+          near: 0.85,      // S, each wrist this close to the nose (2D, T scaled to S)
+          below: 0.35,     // T, and no lower than this under the shoulder line
+          holdMs: 150,     // both hands there this long raises the guard
+          release: 1.35,   // a hand must leave near * release to count as away
+          punchMs: 700,    // a hand away this briefly (a punch) keeps the guard up
+        },
+        stance: {
+          minYaw: 10,      // degrees of torso turn that blade the stance
+          handLead: 0.25,  // S, with a square torso, lead hand this far in front decides
+          holdMs: 500,
+        },
+        strike: {
+          windowMs: 350,     // history a strike is judged over
+          velMs: 100,        // velocity over this long
+          refractoryMs: 200, // per hand (spec: 200 ms jab/cross)
+          guardLeadMs: 120,  // the hand was at the guard at least this long before the strike fires (within the window)
+          rearm: 130,        // degrees: after a straight the elbow must bend below this again
+          straightOn: 150,   // degrees: straight punch ends with the elbow this straight
+          bentMax: 115,      // degrees: having been this bent inside the window
+          reach: 0.55,       // fist in front of its shoulder by this share of arm length
+          fwdGain: 0.18,     // m the fist travelled toward the camera inside the window
+          bentMax2: 135,     // degrees: hooks and uppercuts keep the elbow bent
+          hookHeight: 0.3,   // m from shoulder height
+          hookFront: 0.1,    // m in front of the shoulder
+          hookSpeed: 1.8,    // m/s along the arc, sweeping inward
+          hookTravel: 0.15,  // m inward inside the window
+          hookElbow: 0.15,   // m: the elbow no lower than this under the shoulder
+          hookElbowOut: 0.05, // m: and out to the side of it
+          afterStraightMs: 400, // no hook or uppercut from a hand pulling a straight back
+          upperSpeed: 2.0,   // m/s upward
+          upperFrom: 0.25,   // m below the shoulder at the start
+          upperTo: 0.15,     // m below the shoulder or higher at the end
+          downDrop: 0.15,    // T hip drop: crouched, for down strikes
+          downBelow: 0.3,    // m below the shoulder
+          downSpeed: 1.2,    // m/s downward
+          refSpeed: 5,       // m/s of fist speed that is power 1
+        },
+        slip: {
+          deadzone: 0.25,  // S, nose off the hip midpoint
+          full: 0.55,
+          eventLevel: 0.5,
+          eventReset: 0.2,
+        },
+        level: {
+          squat: 0.35,     // T hip drop that is a squat (spec)
+          reset: 0.15,     // T: re-arms above this (spec)
+          speedMs: 400,    // squat speed measured over this long
+          rise: 0.25,      // T the hips come back up for a drive up
+          driveMs: 400,    // within this long of the bottom (spec: 0.35 T in 400 ms)
+        },
+        fight: {
+          shotMs: 800,       // drive up within this long of the shot (spec)
+          topDepth: 0.2,     // squat depth that holds the top position (spec)
+          scrambleMs: 300,   // standing out of it this long lets them scramble
+          escapeMs: 3000,    // high knees this long escapes the fight (spec)
+        },
+      },
       // Speeds are in world units per second; games scale them to their world.
       locomotion: {
         walkSpeed: 1.4,
@@ -132,6 +192,7 @@
         runHoldMs: 250,
         runCadence: 170,
         cadenceWindowMs: 3000,
+        topHoldMs: 6000,   // after a drive up, the demo holds a half squat this long
       },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },

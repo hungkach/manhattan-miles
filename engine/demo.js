@@ -3,8 +3,9 @@
 //   Left thumb zone: tap in rhythm = march (tap speed sets cadence).
 //                    Double-tap and hold = run.
 //   Right thumb zone: drag sideways = turn.
-//   Buttons: point L/R, turn around, jab, cross, hook, guard (hold),
-//            squat, drive up, stomp.
+//   Buttons: point L/R, turn around, jab, cross, hook, uppercut, guard
+//            (hold), slip L/R, stance (orthodox / southpaw), squat, drive up,
+//            stomp. Jab and hook throw the lead hand, cross and uppercut the rear.
 (function (g) {
   'use strict';
   const RE = g.RepEngine;
@@ -19,10 +20,30 @@
       this.turn = 0;
       this.guard = false;
       this.squatUntil = 0;
+      this.topUntil = 0; // after a drive up: the half squat hold of the top position
       this.running = false;
       this.runTimer = 0;
       this.lastTapAt = -Infinity;
       this.holdTimer = 0;
+      this.stance = 'orthodox';
+      this.slip = 0;
+      this.slipUntil = 0;
+      this.lastStrike = { left: -Infinity, right: -Infinity };
+    }
+    lead() { return this.stance === 'southpaw' ? 'right' : 'left'; }
+    rear() { return this.stance === 'southpaw' ? 'left' : 'right'; }
+    // A plain arm pose for games that draw fists: guard or hands down, with a
+    // hand out for 250 ms after it strikes (shoulder widths, as engine.arms()).
+    arms(now) {
+      const arm = (side) => {
+        const sx = side === 'left' ? -0.5 : 0.5;
+        const out = now - this.lastStrike[side] < 250;
+        const up = this.guard || out;
+        const wrist = out ? { x: sx * 0.4, y: 0, z: 1.6 } : up ? { x: sx * 0.6, y: 0.35, z: 0.6 } : { x: sx * 1.1, y: -1.4, z: 0.1 };
+        const elbow = out ? { x: sx * 0.8, y: -0.05, z: 0.8 } : up ? { x: sx * 1.0, y: -0.45, z: 0.4 } : { x: sx * 1.2, y: -0.7, z: 0 };
+        return { shoulder: { x: sx, y: 0, z: 0 }, elbow, wrist, angle: out ? 170 : up ? 50 : 165, extension: out ? 0.9 : up ? 0 : 0.8, reach: out ? 0.9 : up ? 0.3 : 0 };
+      };
+      return { left: arm('left'), right: arm('right') };
     }
     step(now) {
       this.steps.push(now);
@@ -58,16 +79,30 @@
     }
     setTurn(v) { this.turn = RE.clamp(v, -1, 1); }
     press(action, now) {
-      const strike = (hand, type) => this.emit('strike', { hand, type, power: 1 });
+      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); };
       switch (action) {
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
         case 'turn_around': this.emit('turn_around', {}); break;
-        case 'jab': strike('left', 'jab'); break;
-        case 'cross': strike('right', 'cross'); break;
-        case 'hook': strike('left', 'hook'); break;
-        case 'squat': this.squatUntil = now + 600; this.emit('squat', { depth: 1, speed: 1 }); break;
-        case 'drive_up': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 1 }); break;
+        case 'jab': strike(this.lead(), 'jab'); break;
+        case 'cross': strike(this.rear(), 'cross'); break;
+        case 'hook': strike(this.lead(), 'hook'); break;
+        case 'uppercut': strike(this.rear(), 'uppercut'); break;
+        case 'slip_left': case 'slip_right': {
+          const side = action === 'slip_left' ? 'left' : 'right';
+          this.slip = side === 'left' ? -1 : 1;
+          this.slipUntil = now + 500;
+          this.emit('slip', { side });
+          break;
+        }
+        case 'stance':
+          this.stance = this.stance === 'orthodox' ? 'southpaw' : 'orthodox';
+          this.emit('stance', { stance: this.stance });
+          break;
+        case 'squat': this.squatUntil = now + 600; this.topUntil = 0; this.emit('squat', { depth: 1, speed: 1 }); break;
+        // a drive up lands you on top in a half squat, held a few seconds (a
+        // touch screen cannot hold a crouch), long enough for the down strikes
+        case 'drive_up': this.squatUntil = 0; this.topUntil = now + this.cfg.topHoldMs; this.emit('drive_up', { depth: 1, speed: 1 }); break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
         default: break;
       }
@@ -80,8 +115,10 @@
         speed: 0, // the engine fills this in from the locomotion state machine
         turn: this.turn,
         lean: 0,
-        squat_depth: now < this.squatUntil ? 1 : 0,
+        squat_depth: now < this.squatUntil ? 1 : now < this.topUntil ? 0.5 : 0,
         guard_up: this.guard,
+        stance: this.stance,
+        slip: now < this.slipUntil ? this.slip : 0,
         confidence: 1,
       };
     }
@@ -91,8 +128,9 @@
 
   const BUTTONS = [
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'],
-    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'],
-    ['guard', 'Guard'], ['squat', 'Squat'], ['drive_up', 'Drive up'], ['stomp', 'Stomp'],
+    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
+    ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
+    ['squat', 'Squat'], ['drive_up', 'Drive up'], ['stomp', 'Stomp'],
   ];
   RE.DEMO_BUTTONS = Object.freeze(BUTTONS.map(([action]) => action));
 

@@ -11,6 +11,7 @@
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
+  body.fighting #demo .re-demo { height: 34%; }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
   #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 190px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
@@ -91,6 +92,7 @@
       <li>Point left or right for a quick turn onto the cross street</li>
       <li>Turn your shoulders to steer, like a steering wheel; face front to go straight</li>
       <li>Both hands overhead to turn around</li>
+      <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape</li>
     </ul>
     <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
     <div class="btns">
@@ -252,7 +254,7 @@
   }
 
   // ---------- session ----------
-  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0 };
+  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0, fightsDone: 0 };
 
   function pickDestination() {
     const here = { ai: nearestAve(P.x), st: nearestSt(P.z) };
@@ -281,6 +283,7 @@
   // ---------- update ----------
   function update(dt, now) {
     if (G.state !== 'walk') return;
+    if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
     const s = engine.signals();
     P.cadence = s.cadence_spm || 0;
@@ -311,8 +314,12 @@
     if (P.cell !== null && cell !== P.cell) G.blocks++;
     P.cell = cell;
     if (G.dest && Math.hypot(P.x - aveX(G.dest.ai), P.z - stZ(G.dest.st)) < T.arriveRadius) arrive(now);
+    updateEncounters(dt, now);
+    easeView(dt);
+  }
 
-    // the view follows the heading; a point or turn around swings it over smoothly
+  // the view follows the heading; a point, turn around or lock-on swings it over smoothly
+  function easeView(dt) {
     let dy = P.yaw - P.view;
     while (dy > Math.PI) dy -= 2 * Math.PI;
     while (dy < -Math.PI) dy += 2 * Math.PI;
@@ -327,6 +334,348 @@
   function banner(text, ms, now = performance.now()) {
     G.banner = text;
     G.bannerUntil = now + ms;
+  }
+
+  // ---------- fights (rep-engine combat module) ----------
+  // Every 75 to 110 s of walking an opponent (later sometimes two) waits on the street ahead. Walk
+  // up to them and the fight starts: the engine's combat mode stops your walking and locks you on,
+  // and opponents keep the range themselves. You punch for real (your gloves mirror engine.arms()),
+  // guard or slip their punches, sprawl their shots, march in when they step back, and squat then
+  // drive up for the double leg and strike down from the top. Knock them out, or escape with 3 s
+  // of high knees. Fights run 20 to 40 s; the walking between is the active recovery.
+  const FT = {
+    firstAfterS: 45, everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
+    rangeIn: 1.9, rangeOut: 3.4, pressSteps: 3,
+    hp: [12, 16], playerHp: 10,
+    windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, outMs: 4500,
+    damage: { jab: 0.8, cross: 1.1, hook: 1.2, uppercut: 1.2, down: 1.0, down_strike: 1.0 },
+    coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
+  };
+  const Fight = { foes: [], active: null, waitS: FT.firstAfterS, stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
+  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+  Fight.stats = freshStats();
+  const rand = (a, b) => a + Math.random() * (b - a);
+  function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
+
+  // put an opponent on the street ahead, out of any building
+  function spawnFoes(dist = FT.spawnAhead) {
+    const n = G.fightsDone >= 2 && Math.random() < 0.5 ? 2 : 1;
+    let d = dist;
+    while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
+    const x = P.x + Math.sin(P.yaw) * d, z = P.z + Math.cos(P.yaw) * d;
+    Fight.foes = [];
+    for (let i = 0; i < n; i++) {
+      const hp = Math.round(rand(FT.hp[0], FT.hp[1]));
+      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3] });
+    }
+    say(n > 1 ? 'Two of them ahead.' : 'Someone ahead. Get ready.', 'feedback');
+    banner(n > 1 ? 'Two opponents ahead' : 'Opponent ahead', 2000);
+  }
+  const foeDist = (f) => Math.hypot(f.x - P.x, f.z - P.z);
+  const bearingTo = (f) => ((Math.atan2(f.x - P.x, f.z - P.z) * 180) / Math.PI + 360) % 360;
+  const current = () => Fight.foes.find((f) => f.state !== 'ko');
+
+  function startFight(now) {
+    const foe = current();
+    if (!foe) return;
+    Fight.active = { start: now, foe, range: 'in', press: 0 };
+    Fight.hp = FT.playerHp;
+    foe.state = 'guard'; foe.until = now + rand(900, 1600);
+    engine.enter_combat({
+      bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
+      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover'].includes(Fight.active.foe.state),
+      shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
+    });
+    if (isDemo()) setTouchButtons('fight');
+    document.body.classList.add('fighting');
+    note('');
+    say('Fight! Guard up.', 'feedback');
+    fightMsg('Fight!', 1200);
+  }
+
+  function endFight(how, now) {
+    const a = Fight.active;
+    if (!a) return;
+    Fight.stats.ms += now - a.start;
+    Fight.stats[how]++;
+    G.fightsDone++;
+    Fight.active = null;
+    Fight.foes = [];
+    Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
+    if (engine.mode() === 'combat') engine.exit_combat();
+    engine.set_facing((P.yaw * 180) / Math.PI);
+    if (isDemo()) setTouchButtons('walk');
+    document.body.classList.remove('fighting');
+    const line = { won: 'Knockout! March on.', lost: 'You got dropped. Shake it off and march on.', escaped: 'You got away.' }[how];
+    say(line, 'feedback');
+    banner({ won: 'Knockout', lost: 'Dropped', escaped: 'Escaped' }[how], 2500, now);
+  }
+
+  // engine events while fighting
+  function landed(kind, power, now) {
+    const a = Fight.active;
+    if (!a) return;
+    const foe = a.foe;
+    Fight.stats.thrown++;
+    if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Too far: march in'); return; }
+    if (kind === 'down_strike' && foe.state !== 'down') return;
+    if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
+    let dmg = (FT.damage[kind] || 1) * power;
+    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut') dmg *= FT.coverFactor; // hooks and uppercuts go around a high guard
+    if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
+    else if (now < Fight.openUntil) dmg *= FT.openBonus;
+    foe.hp -= dmg;
+    Fight.stats.landed++;
+    foe.hurtUntil = now + 220;
+    if (foe.state === 'windup' && kind !== 'jab' && Math.random() < 0.5) { foe.state = 'hurt'; foe.until = now + 500; } // a hard shot can break their wind-up
+    if (foe.hp <= 0) {
+      foe.state = 'ko'; foe.until = now + 1500;
+      say('Knockdown!', 'feedback');
+    }
+  }
+  engine.on('strike', (e) => {
+    if (!Fight.active) return;
+    Fight.fistFlash[e.hand] = performance.now() + 180;
+    if (engine.combat().phase !== 'top') landed(e.type, e.power, performance.now());
+  });
+  engine.on('down_strike', (e) => { if (Fight.active) landed('down_strike', e.power, performance.now()); });
+  engine.on('takedown', () => {
+    const a = Fight.active;
+    if (!a) return;
+    a.foe.state = 'down'; a.foe.until = Infinity;
+    Fight.stats.takedowns++;
+    say('Takedown! Stay low and strike.', 'feedback');
+    fightMsg('Takedown', 1200);
+  });
+  engine.on('stuffed', () => { if (Fight.active) { fightMsg('Stuffed'); say('Stuffed. Drive up faster.', 'feedback'); } });
+  engine.on('scramble', () => {
+    const a = Fight.active;
+    if (!a || a.foe.state !== 'down') return;
+    a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
+    fightMsg('They scrambled up');
+  });
+  engine.on('sprawl', () => {
+    const a = Fight.active;
+    if (!a || a.foe.state !== 'shoot') return;
+    a.foe.state = 'stuffed'; a.foe.until = performance.now() + FT.stuffedMs;
+    Fight.openUntil = performance.now() + FT.stuffedMs;
+    Fight.stats.sprawls++;
+    say('Sprawl! Now hit.', 'feedback');
+    fightMsg('Sprawl!');
+  });
+  engine.on('escape', () => { if (Fight.active) endFight('escaped', performance.now()); });
+  engine.on('step', () => {
+    const a = Fight.active;
+    if (!a || a.range !== 'out') return;
+    // marching in place presses forward
+    if (++a.press >= FT.pressSteps) { a.range = 'in'; a.press = 0; a.foe.state = 'guard'; a.foe.until = performance.now() + 700; fightMsg('In range'); }
+  });
+
+  // the opponent: guard, then a telegraphed attack, a step back or a cover-up
+  function foeThink(a, now) {
+    const foe = a.foe;
+    const s = engine.signals();
+    if (foe.state === 'ko') {
+      if (now >= foe.until) {
+        const next = Fight.foes.find((f) => f.state !== 'ko');
+        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; a.range = 'in'; say('Next one!', 'feedback'); }
+        else endFight('won', now);
+      }
+      return;
+    }
+    if (foe.state === 'down' || now < foe.until) {
+      if (foe.state === 'windup' || foe.state === 'shoot') return;
+      if (foe.state === 'down') return;
+      return;
+    }
+    // a state just ran out
+    if (foe.state === 'windup') {
+      // the punch lands now unless you covered or slipped it (a little grace for camera lag)
+      const guarded = s.guard_up || now - Fight.lastGuardAt < FT.graceMs;
+      const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
+      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
+      else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); }
+      else hurtPlayer(now, 1);
+      foe.state = 'guard'; foe.until = now + rand(700, 1500);
+      return;
+    }
+    if (foe.state === 'shoot') {
+      // no sprawl: they take you down
+      hurtPlayer(now, 2);
+      fightMsg('Taken down');
+      foe.state = 'guard'; foe.until = now + 1500;
+      return;
+    }
+    if (foe.state === 'out') { a.range = 'in'; a.press = 0; foe.state = 'guard'; foe.until = now + 900; return; }
+    // choose the next move from guard (or after hurt, stuffed, cover)
+    const elapsed = now - a.start;
+    const r = Math.random();
+    if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; }
+    else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; }
+    else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
+    else if (r < 0.82 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; a.press = 0; foe.until = now + FT.outMs; if (Fight.stats.landed < 20) say('March in.', 'feedback'); }
+    else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
+    else { foe.state = 'guard'; foe.until = now + rand(600, 1200); }
+  }
+  function hurtPlayer(now, n) {
+    Fight.hp -= n;
+    Fight.hurtUntil = now + 350;
+    fightMsg(n > 1 ? 'Taken down' : 'Hit');
+    if (Fight.hp <= 0) endFight('lost', now);
+  }
+
+  function updateFight(dt, now) {
+    const a = Fight.active;
+    const m = engine.locomotion();
+    const s = engine.signals();
+    if (s.guard_up) Fight.lastGuardAt = now;
+    if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
+    P.speed = 0;
+    P.yaw = (m.facing * Math.PI) / 180;
+    // the opponent keeps the range: close in, or a step back
+    const foe = a.foe;
+    const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 1.0 : FT.rangeIn;
+    const d = foeDist(foe) || 1;
+    const k = Math.min(1, dt * 4) * (d - want) / d;
+    foe.x += (P.x - foe.x) * k;
+    foe.z += (P.z - foe.z) * k;
+    foeThink(a, now);
+  }
+
+  // walking: count down to the next encounter, and start the fight when you reach them
+  function updateEncounters(dt, now) {
+    if (Fight.active) return;
+    if (!Fight.foes.length) {
+      if (P.speed > 0.5) Fight.waitS -= dt;
+      if (Fight.waitS <= 0) spawnFoes();
+      return;
+    }
+    const foe = current();
+    const d = foeDist(foe);
+    if (d > 150) { Fight.foes = []; Fight.waitS = 20; return; } // walked away from them
+    // they walk toward you once they see you
+    if (d < FT.sees && d > FT.engage) {
+      const k = Math.min(1, dt * 1.2 / d);
+      foe.x += (P.x - foe.x) * k;
+      foe.z += (P.z - foe.z) * k;
+    }
+    if (d <= FT.engage) startFight(now);
+  }
+
+  // ---------- fight drawing ----------
+  // an opponent as a chunky figure facing you, feet at (x, z) on the ground
+  function drawFoe(f, now) {
+    const c = toCam(f.x, 0, f.z);
+    if (c.z < 0.5) return;
+    const sc = F / c.z; // pixels per meter at that depth
+    const gx = W / 2 + (F * c.x) / c.z;
+    const gy = H / 2 - (F * c.y) / c.z;
+    const t = now / 1000;
+    const hurt = now < f.hurtUntil;
+    const col = hurt ? '#fff' : `rgb(${f.col.join(',')})`;
+    const skin = '#d9a77f';
+    ctx.save();
+    ctx.translate(gx, gy);
+    ctx.scale(sc, sc);
+    ctx.lineCap = ctx.lineJoin = 'round';
+    if (f.state === 'down' || f.state === 'ko') {
+      // on the ground
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(0, -0.18, 0.9, 0.18, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = skin;
+      ctx.beginPath(); ctx.arc(0.95, -0.22, 0.13, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
+    const crouch = f.state === 'shoot' ? 0.45 : f.state === 'stuffed' ? 0.3 : 0;
+    const sway = Math.sin(t * 2.4) * 0.05;
+    const lean = f.state === 'hurt' || hurt ? -0.12 : f.state === 'shoot' ? 0.35 : 0;
+    const hip = { x: sway, y: -0.95 + crouch };
+    const neck = { x: hip.x + Math.sin(lean) * 0.55, y: hip.y - 0.55 * Math.cos(lean) };
+    const line = (pts, w, color) => { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y); ctx.stroke(); };
+    // legs
+    line([{ x: hip.x - 0.12, y: hip.y }, { x: -0.2, y: -0.45 + crouch * 0.5 }, { x: -0.18, y: 0 }], 0.14, '#2a2f3a');
+    line([{ x: hip.x + 0.12, y: hip.y }, { x: 0.2, y: -0.45 + crouch * 0.5 }, { x: 0.18, y: 0 }], 0.14, '#2a2f3a');
+    // torso
+    line([hip, neck], 0.34, col);
+    // arms by pose: fists in front of the face, one drawn back for a wind-up
+    const sh = (k) => ({ x: neck.x + k * 0.2, y: neck.y + 0.04 });
+    let fl = { x: neck.x - 0.1, y: neck.y - 0.08 }, fr = { x: neck.x + 0.1, y: neck.y - 0.08 };
+    if (f.state === 'cover') { fl = { x: neck.x - 0.06, y: neck.y - 0.2 }; fr = { x: neck.x + 0.06, y: neck.y - 0.2 }; }
+    if (f.state === 'windup' && f.kind === 'straight') fr = { x: neck.x + 0.32, y: neck.y + 0.02 };
+    if (f.state === 'windup' && f.kind === 'hook') fl = { x: neck.x - 0.55, y: neck.y - 0.02 };
+    if (f.state === 'shoot') { fl = { x: hip.x - 0.35, y: hip.y + 0.1 }; fr = { x: hip.x + 0.35, y: hip.y + 0.1 }; }
+    line([sh(-1), { x: (sh(-1).x + fl.x) / 2 - 0.08, y: (sh(-1).y + fl.y) / 2 + 0.12 }, fl], 0.11, col);
+    line([sh(1), { x: (sh(1).x + fr.x) / 2 + 0.08, y: (sh(1).y + fr.y) / 2 + 0.12 }, fr], 0.11, col);
+    // head and gloves
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(neck.x, neck.y - 0.17, 0.13, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1b1e26';
+    for (const q of [fl, fr]) { ctx.beginPath(); ctx.arc(q.x, q.y, 0.075, 0, Math.PI * 2); ctx.fill(); }
+    // the telegraph: a glow on the hand that is coming
+    if (f.state === 'windup' || f.state === 'shoot') {
+      const k = 0.5 + 0.5 * Math.sin(t * 20);
+      ctx.strokeStyle = `rgba(255, 207, 63, ${0.5 + 0.5 * k})`;
+      ctx.lineWidth = 0.04;
+      const q = f.state === 'shoot' ? { x: hip.x, y: hip.y } : f.kind === 'hook' ? fl : fr;
+      ctx.beginPath(); ctx.arc(q.x, q.y, f.state === 'shoot' ? 0.5 : 0.16, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // your gloves, mirrored from the engine's arm pose: each fist is placed in front of your eye
+  // (shoulder widths to meters, the shoulders a little below and ahead of the eye) and projected
+  // through the game camera, so at the guard they frame the opponent's face and a punch travels
+  // into the scene, shrinking with distance
+  function drawGloves(now) {
+    const arms = engine.arms();
+    if (!arms) return;
+    const S = 0.4; // meters per shoulder width
+    for (const side of ['left', 'right']) {
+      const a = arms[side];
+      if (!a || !a.wrist) continue;
+      // the eye sits about 0.45 m behind the fists at the guard; sideways spread is narrowed a little
+      // because the head turns with a bladed stance while the frame stays square to the camera
+      const rx = a.wrist.x * S * 0.7, up = -0.25 + a.wrist.y * S, fwd = 0.45 + Math.max(0, a.wrist.z) * S;
+      const yc = up * cam.cp + fwd * cam.sp, zc = Math.max(0.15, -up * cam.sp + fwd * cam.cp);
+      const x = W / 2 + (F * rx) / zc, y = H / 2 - (F * yc) / zc;
+      const r = Math.min(Math.min(W, H) * 0.14, (F * 0.065) / zc);
+      const sx = W / 2 + (side === 'left' ? -1 : 1) * W * 0.45;
+      ctx.strokeStyle = 'rgba(40, 44, 54, .92)';
+      ctx.lineWidth = r * 0.85;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(sx, H + r); ctx.lineTo(x, y + r * 0.4); ctx.stroke();
+      const flash = now < Fight.fistFlash[side];
+      ctx.fillStyle = flash ? '#ffe27a' : side === 'left' ? '#c8322b' : '#b02a24';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.18)';
+      ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.35, r * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function fightHud(now) {
+    const a = Fight.active;
+    const bar = (x, y, w, h, frac, color, label) => {
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = color; ctx.fillRect(x + 2, y + 2, Math.max(0, (w - 4) * frac), h - 4);
+      ctx.font = '700 13px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+      ctx.fillText(label, x + 8, y + h / 2);
+    };
+    const w = Math.min(W - 28, 360);
+    bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', 'Opponent');
+    bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
+    const s = engine.signals();
+    const phase = engine.combat().phase;
+    const tag = phase === 'top' ? 'On top: stay low, strike down' : a.range === 'out' ? 'Out of range: march in' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
+    ctx.strokeText(tag, W / 2, 68); ctx.fillText(tag, W / 2, 68);
+    if (now < Fight.msgUntil) {
+      ctx.font = '900 34px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = '#ffcf3f';
+      ctx.strokeText(Fight.msg, W / 2, H * 0.3); ctx.fillText(Fight.msg, W / 2, H * 0.3);
+    }
+    if (now < Fight.hurtUntil) { ctx.fillStyle = 'rgba(220, 40, 30, .28)'; ctx.fillRect(0, 0, W, H); }
   }
 
   // ---------- rendering ----------
@@ -405,7 +754,12 @@
 
     const pos = playerPos();
     const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * (1 + P.runBlend) * Math.min(1, P.speed / 4) : 0;
-    const pitch = -0.12; // look slightly up at the skyline
+    // look slightly up at the skyline; in a fight, tilt so the opponent's head sits a third of the way down
+    let pitch = -0.12;
+    if (Fight.active) {
+      const d = Math.max(1, foeDist(Fight.active.foe));
+      pitch = Math.max(-0.12, Math.min(0.45, (0.17 * H) / F - (1.75 - T.eyeHeight) / d));
+    }
     cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
     const horizon = H / 2 - F * (cam.sp / cam.cp);
@@ -441,7 +795,12 @@
       if (f.win) windows(f);
     }
 
-    if (G.state === 'walk') { hud(now); minimap(); }
+    if (G.state === 'walk') {
+      // opponents, far to near
+      for (const f of Fight.foes.slice().sort((a, b) => foeDist(b) - foeDist(a))) drawFoe(f, now);
+      if (Fight.active) { drawGloves(now); fightHud(now); }
+      else { hud(now); minimap(); }
+    }
   }
 
   function hud(now) {
@@ -512,6 +871,10 @@
       ctx.fillStyle = '#ffcf3f';
       ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, dx)), Math.max(y0 + 4, Math.min(y0 + size - 4, dy)), 4, 0, Math.PI * 2); ctx.fill();
     }
+    for (const f of Fight.foes) {
+      ctx.fillStyle = '#ff5a4f';
+      ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, sx(f.x))), Math.max(y0 + 4, Math.min(y0 + size - 4, sy(f.z))), 3.5, 0, Math.PI * 2); ctx.fill();
+    }
     // player arrow
     const px = sx(pos.x), py = sy(pos.z);
     ctx.translate(px, py);
@@ -522,14 +885,29 @@
   }
 
   // ---------- flow ----------
+  const TOUCH_BUTTONS = {
+    walk: ['point_left', 'point_right', 'turn_around'],
+    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up'],
+  };
   function enableTouch() {
-    engine.enable_demo($('demo'), { buttons: ['point_left', 'point_right', 'turn_around'] });
+    engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
+  }
+  const isDemo = () => engine.debug().source === 'demo';
+  // swap the touch buttons between walking and fighting (rebuilding the touch
+  // controls resets the engine's heading, so keep it)
+  function setTouchButtons(mode) {
+    const facing = engine.locomotion().facing;
+    engine.disable_demo();
+    engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS[mode] });
+    engine.set_facing(facing);
   }
 
   function startWalk() {
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
-    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
+    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0 });
+    Object.assign(Fight, { foes: [], active: null, waitS: FT.firstAfterS, stats: freshStats(), hp: FT.playerHp });
+    if (engine.mode() === 'combat') engine.exit_combat();
     pickDestination();
     show(null);
     $('endBtn').hidden = false;
@@ -537,6 +915,7 @@
 
   function endWalk() {
     const now = performance.now();
+    if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     $('endBtn').hidden = true;
     const ms = now - G.start;
@@ -545,9 +924,11 @@
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
       ['Blocks', G.blocks], ['Destinations reached', G.arrived], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', Fight.stats.takedowns], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
     if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);
+    if (G.fightsDone) lines.push(`<p><b>Fight rounds:</b> ${fmt(Fight.stats.ms)} of fighting in short bursts, with marching between as active recovery: ${Fight.stats.landed} punches build striking power and shoulder endurance${Fight.stats.takedowns ? `, ${Fight.stats.takedowns} takedowns train explosive hip extension` : ''}${Fight.stats.sprawls ? `, ${Fight.stats.sprawls} sprawls train reactive level changes` : ''}.</p>`);
     $('payoff').innerHTML = lines.join('');
     $('saveClip').hidden = !Warm.clip;
     show('summary');
@@ -966,7 +1347,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, engine, whereAmI, runCamera, blocked };
+  window.__game = { G, P, T, Warm, Fight, FT, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk };
 })();
 </script>
 </body>

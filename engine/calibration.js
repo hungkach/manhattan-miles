@@ -180,6 +180,19 @@
             const pitches = ws.map((s) => RE.thighPitch(s.wl, cal.up));
             cal.pitchBaseL = median(pitches.map((p) => p.L).filter((v) => v != null));
             cal.pitchBaseR = median(pitches.map((p) => p.R).filter((v) => v != null));
+            // the camera-facing frame strikes and the arm pose are measured in,
+            // and the shoulder width in meters
+            const rights = ws.map((s) => RE.bodyFrame(s.wl, cal.up)).filter(Boolean).map((f) => f.right);
+            if (rights.length) {
+              const r = rights.reduce((a, u) => ({ x: a.x + u.x, y: a.y + u.y, z: a.z + u.z }), { x: 0, y: 0, z: 0 });
+              const avg = [];
+              avg[L.L_SHOULDER] = { x: 0, y: 0, z: 0 };
+              avg[L.R_SHOULDER] = r;
+              avg[L.L_HIP] = { x: -cal.up.x, y: -cal.up.y, z: -cal.up.z };
+              avg[L.R_HIP] = avg[L.L_HIP];
+              cal.frame = RE.bodyFrame(avg, cal.up);
+            }
+            cal.shoulderWidthW = median(ws.map((s) => Math.hypot(s.wl[L.R_SHOULDER].x - s.wl[L.L_SHOULDER].x, s.wl[L.R_SHOULDER].y - s.wl[L.L_SHOULDER].y, s.wl[L.R_SHOULDER].z - s.wl[L.L_SHOULDER].z)));
           }
         }
       }

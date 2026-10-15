@@ -40,6 +40,7 @@
       detectors: new RE.LocomotionDetectors(cfg),
       det: null,
       loco: new RE.Locomotion(cfg),
+      combat: new RE.Combat(cfg),
       demoInput: null,
       demoUi: null,
       frame: null,
@@ -59,7 +60,17 @@
       st.session.counts[name] = (st.session.counts[name] || 0) + 1;
       if (st.calibrator) st.calibrator.onEvent(name, payload);
       st.loco.onEvent(name, payload, clock());
+      if (st.mode === 'combat') for (const [n, p] of st.combat.onEvent(name, payload, clock())) emitter.emit(n, p);
     });
+
+    // fight state machine tick: shot timeouts, scrambles, escape
+    function combatTick(t) {
+      if (st.mode !== 'combat') return;
+      for (const [n, p] of st.combat.update(t, st.snapshot)) {
+        emitter.emit(n, p);
+        if (n === 'escape') api.exit_combat();
+      }
+    }
 
     // Event time: frame time for camera and replay, wall clock for demo.
     function clock() {
@@ -137,8 +148,12 @@
           turn: det ? det.turn : 0,
           lean: det ? det.lean : 0,
           squat_depth: sig.squatDepth != null && !low ? sig.squatDepth : 0,
+          guard_up: det ? det.guard : false,
+          stance: det ? det.stance : 'square',
+          slip: det ? det.slip : 0,
           confidence: sig.confidence,
         });
+        combatTick(raw.t);
       }
       emitter.emit('frame', st.snapshot);
     }
@@ -295,6 +310,7 @@
           st.loco.update(now, s, st.mode);
           s.speed = st.loco.speed;
           st.snapshot = s;
+          combatTick(now);
         }
         return Object.assign({}, st.snapshot);
       },
@@ -368,8 +384,28 @@
         if (mode !== 'combat') st.combatTarget = null;
         emitter.emit('mode', { mode });
       },
-      enter_combat(target) { st.combatTarget = target || null; api.set_mode('combat'); },
-      exit_combat() { api.set_mode('explore'); },
+      // target: {bearing() (degrees, the player faces it), shooting(), open()}, all optional
+      enter_combat(target) {
+        st.combatTarget = target || null;
+        st.combat.enter(target);
+        st.loco.setCombatBearing(target && target.bearing ? () => target.bearing() : null);
+        api.set_mode('combat');
+      },
+      exit_combat() { st.combat.enter(null); st.loco.setCombatBearing(null); api.set_mode('explore'); },
+      // Fight state: {phase: standing | shot | top, stance, guard}
+      combat() {
+        const s = api.signals();
+        return Object.assign(st.combat.snapshot(), { stance: s.stance, guard: s.guard_up, mode: st.mode });
+      },
+      // Arm pose to mirror: {left, right}, each {shoulder, elbow, wrist} in
+      // shoulder widths from the shoulder midpoint (x = player's right, y = up,
+      // z = toward the camera), plus angle, extension (0..1) and reach (-1..1).
+      // null when the arms are not tracked.
+      arms() {
+        if (st.source === 'demo' && st.demoInput) return st.demoInput.arms(RE.now());
+        const a = st.det && st.det.arms;
+        return a ? { left: a.left, right: a.right } : null;
+      },
       mode: () => st.mode,
 
       start_recording(meta) { st.recorder.start(Object.assign({ preset: st.presetId }, meta)); },
@@ -407,6 +443,7 @@
           detectors: st.det,
           demo: st.demoInput,
           locomotion: st.loco.snapshot(),
+          combat: st.mode === 'combat' ? st.combat.snapshot() : null,
           capture: st.capture,
         };
       },
@@ -418,6 +455,6 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, confidence: 0 };
   }
 })(globalThis);

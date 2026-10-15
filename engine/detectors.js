@@ -419,9 +419,10 @@
   RE.LocomotionDetectors = class LocomotionDetectors {
     constructor(cfg) {
       this.list = [new WristSpeed(), new StepDetector(cfg), new LeanDetector(cfg), new TurnDetector(cfg), new TurnAroundDetector(cfg), new PointDetector(cfg), new WaveDetector(cfg)];
+      if (RE.makeCombatDetectors) this.list.push(...RE.makeCombatDetectors(cfg));
     }
     update(ctx) {
-      const out = { events: [], turn: 0, yaw: 0, lean: 0, steerSuppressed: false, cadence: 0, running: false, effort: 0, kneeLift: 0, handsOverhead: false, wristSpeedL: 0, wristSpeedR: 0 };
+      const out = { events: [], turn: 0, yaw: 0, lean: 0, steerSuppressed: false, cadence: 0, running: false, effort: 0, kneeLift: 0, handsOverhead: false, wristSpeedL: 0, wristSpeedR: 0, arms: null, guard: false, stance: 'square', slip: 0 };
       for (const d of this.list) d.update(ctx, out);
       return out;
     }
