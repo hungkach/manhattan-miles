@@ -5,7 +5,7 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 ## Now playable (touch controls)
 
 - Grid: 12th Ave to 1st Ave, 14th St to 59th St, at Manhattan's real block proportions (about 80 m uptown blocks, 180 to 280 m crosstown blocks). Buildings are generated, taller in Midtown.
-- March to walk, high knees (or cadence over 150) to run, lean to drift across the sidewalk.
+- March to walk, high knees (or cadence over 150) to run, turn your shoulders to drift across the sidewalk (touch: drag the right zone).
 - Point left or right any time on a block; the turn happens at the next corner. At the grid's edge you stop until you point.
 - Both hands overhead turns you around.
 - Walk to destinations at real intersections (Herald Square, Times Square, Grand Central, Columbus Circle and more). HUD shows the street sign, next cross street, distance to the corner, direction to the destination and a minimap.
@@ -14,14 +14,14 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 
 ## Camera mode
 
-Calibration and lean drift work now. Marching, pointing and turning around on camera need the milestone 2 detectors (`step`, `point`, `turn_around`, `run_start`, `run_end`).
+Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and torso turn drift all work on camera.
 
 ## Not built yet
 
 - The existing street-by-street Manhattan map (swap in for the generated grid).
 - Subway, bus and taxi as fast travel and logged rest.
 - Combat mode, NPCs, traffic.
-- Locomotion lives in the game for now; once the engine's locomotion state machine lands in milestone 2, this game moves onto it.
+- Locomotion still lives in the game; body-arcade milestone 5 moves it onto the engine's locomotion state machine (`engine.locomotion()`).
 
 ## Repo layout
 

@@ -11,7 +11,6 @@
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
-  #demo .re-demo-buttons button[hidden] { display: none; }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
   #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 172px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
@@ -2242,7 +2241,7 @@
     <ul>
       <li>March in place to walk, high knees to run</li>
       <li>Point left or right before a corner to turn there</li>
-      <li>Lean to drift across the sidewalk</li>
+      <li>Turn your shoulders to drift across the sidewalk</li>
       <li>Both hands overhead to turn around</li>
     </ul>
     <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
@@ -2276,9 +2275,7 @@
     runMps: 3.5,           // high knees pace
     speedScale: 3,         // game moves 3x real pace so blocks pass at a fun clip
     runCadence: 150,
-    leanDeadzone: 0.06,
-    leanFull: 0.25,
-    sidewalkSlide: 2.4,    // meters of lean slide either side of the sidewalk center
+    sidewalkSlide: 1.6,    // meters of turn slide either side of the sidewalk center (keeps you between curb and facade)
     eyeHeight: 1.7,
     drawDistance: 520,
     arriveRadius: 30,
@@ -2292,7 +2289,7 @@
     ['Lexington Ave', 2500], ['3rd Ave', 2700], ['2nd Ave', 2930], ['1st Ave', 3160],
   ];
   const FIRST_ST = 14, LAST_ST = 59, ST_GAP = 80;
-  const AVE_HALF = 15, ST_HALF = 9, WALK_OFF = 3.2; // half widths in meters; sidewalk center sits outside the roadway
+  const AVE_HALF = 15, ST_HALF = 9, WALK_OFF = 2.2; // half widths in meters; the 4 m sidewalk runs from the curb to the facade, WALK_OFF is its center
   const FIFTH = 7;
   const aveX = (i) => AVES[i][1];
   const stZ = (n) => (n - FIRST_ST) * ST_GAP;
@@ -2439,9 +2436,9 @@
     P.speed += (target - P.speed) * Math.min(1, dt * 3);
     if (running && P.speed > 1) G.runMs += dt * 1000;
 
-    const lean = s.lean || 0;
-    const mag = Math.min(1, Math.max(0, Math.abs(lean) - T.leanDeadzone) / (T.leanFull - T.leanDeadzone));
-    P.lateral += (Math.sign(lean) * mag * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
+    // torso turn slides you across the sidewalk; the engine deadzones it and scales it to -1..1
+    const turn = s.turn || 0;
+    P.lateral += (turn * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
 
     let move = P.speed * dt;
     while (move > 0) {
@@ -2674,13 +2671,8 @@
   }
 
   // ---------- flow ----------
-  const DEMO_BUTTONS = ['Point L', 'Point R', 'Turn 180'];
   function enableTouch() {
-    engine.enable_demo($('demo'));
-    const bar = document.querySelector('#demo .re-demo-buttons');
-    if (!bar) return;
-    for (const b of bar.querySelectorAll('button')) b.hidden = !DEMO_BUTTONS.includes(b.textContent.trim());
-    bar.style.gridTemplateColumns = `repeat(${DEMO_BUTTONS.length}, 1fr)`;
+    engine.enable_demo($('demo'), { buttons: ['point_left', 'point_right', 'turn_around'] });
   }
 
   function startWalk() {
@@ -2724,7 +2716,7 @@
   $('playDemo').addEventListener('click', () => {
     enableTouch();
     startWalk();
-    note('Tap the left zone to walk, double-tap and hold to run. Point before a corner to turn there.', 7000);
+    note('Tap the left zone to walk, double-tap and hold to run. Drag the right zone to drift. Point before a corner to turn there.', 7000);
   });
   $('playCamera').addEventListener('click', async () => {
     show(null);
@@ -2742,8 +2734,7 @@
     const off = engine.on('calibration', (s) => note(s.prompt, 0));
     if (!engine.is_calibrated()) await engine.calibrate('living_room').catch(() => {});
     off();
-    const missing = ['step', 'point', 'turn_around'].filter((e) => !RE.detectors.has(e));
-    note(missing.length ? 'Lean works on camera now. Marching, pointing and turning around arrive with the next engine update.' : 'Calibrated. Start marching.', 7000);
+    note('Calibrated. Start marching.', 7000);
     startWalk();
   });
   $('endBtn').addEventListener('click', endWalk);

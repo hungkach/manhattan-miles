@@ -30,6 +30,6 @@ First-person walking game on a Midtown grid (12th to 1st Ave, 14th to 59th St) a
 
 ## Status and next steps
 
-- First playable version done with touch controls: sidewalk rails, run, lean drift, queued turns at corners, turn around, destinations, street sign HUD, minimap, summary with S&C payoff.
-- Camera: calibration and lean drift work now. Marching, pointing and turning around need the engine's step, point, turn_around and run detectors (body-arcade milestone 2).
-- Next: steer by torso turn once the engine ships the `turn` signal; swap in Mark's existing street-by-street Manhattan map; subway, bus and taxi as fast travel and logged rest; combat mode after body-arcade milestone 4. Locomotion lives in the game until the engine's locomotion state machine lands.
+- Engine 0.2.0: step, run, point, turn_around and torso turn all work on camera and in demo mode.
+- Playable with touch and camera: sidewalk rails, run, torso turn drifts you across the sidewalk (`signals().turn`), queued turns at corners, turn around, destinations, street sign HUD, minimap, summary with S&C payoff.
+- Next: body-arcade milestone 5 moves this game's locomotion onto `engine.locomotion()` with `set_movement({ rails: true, at_intersection, branch_bearing })`; swap in Mark's existing street-by-street Manhattan map; subway, bus and taxi as fast travel and logged rest; combat mode after body-arcade milestone 4.
