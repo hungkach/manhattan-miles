@@ -18,8 +18,14 @@
   #phoneBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 256px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #phoneBtn[hidden], #phone[hidden] { display: none; }
   #phone { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 6; width: min(290px, 82vw); background: #0d1320; border: 3px solid #3a4459; border-radius: 28px; padding: 16px 14px 14px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+  #subway { position: fixed; inset: 0; z-index: 5; background: linear-gradient(#1b2230, #0c1018); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+  #subway[hidden] { display: none; }
+  #subway h2 { margin: 0; font: 800 24px system-ui, sans-serif; color: #fff; }
+  #subway p { margin: 0; font: 600 16px system-ui, sans-serif; color: var(--muted); }
+  #subway .bar { width: min(320px, 80vw); height: 10px; background: #2a3242; border-radius: 6px; overflow: hidden; }
+  #subway .bar i { display: block; height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); }
   #phone h3 { margin: 0 0 10px; text-align: center; font: 800 15px system-ui, sans-serif; color: var(--muted); }
-  #phone ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  #phone ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 52vh; overflow-y: auto; }
   #phone li { font: 700 18px system-ui, sans-serif; padding: 12px 14px; border-radius: 12px; background: #1a2232; color: var(--ink); cursor: pointer; }
   #phone li.on { background: var(--accent); color: #111; }
   #phone p { margin: 10px 0 0; font: 600 12px system-ui, sans-serif; color: var(--muted); text-align: center; }
@@ -82,7 +88,8 @@
 <div id="note" hidden></div>
 <button id="endBtn" hidden>End walk</button>
 <button id="phoneBtn" hidden>Phone</button>
-<div id="phone" hidden><h3>Phone</h3><ul id="phoneList"></ul><p>Turn your shoulders to choose. Wave your right hand to pick, your left to close.</p></div>
+<div id="subway" hidden><h2 id="subTitle"></h2><p id="subInfo"></p><div class="bar"><i id="subFill"></i></div></div>
+<div id="phone" hidden><h3 id="phoneTitle">Phone</h3><ul id="phoneList"></ul><p>Turn your shoulders to choose. Wave your right hand to pick, your left to close.</p></div>
 <canvas id="skel"></canvas>
 <button id="setupCancel" hidden>Use touch instead</button>
 <div id="warm" hidden>
@@ -123,6 +130,7 @@
       <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
+    <p class="hint" id="progLine"></p>
     <p class="stamp" id="buildStamp"></p>
   </div>
 </div>
@@ -389,7 +397,11 @@
   function sessionTick(dt, now) {
     G.playMs += dt * 1000;
     const moving = Fight.active || P.speed > 0.5;
-    if (moving) { G.activeMs += dt * 1000; G.idleS = 0; G.idleSaid = 0; } else G.idleS += dt;
+    if (moving) {
+      const m0 = Math.floor(G.activeMs / 60000);
+      G.activeMs += dt * 1000; G.idleS = 0; G.idleSaid = 0;
+      if (Math.floor(G.activeMs / 60000) > m0) award(XP.minute, 'active minute');
+    } else G.idleS += dt;
     const mins = G.activeMs / 60000;
     let next = null;
     while (G.milestone < SESSION.milestones.length && mins >= SESSION.milestones[G.milestone]) next = SESSION.milestones[G.milestone++];
@@ -418,7 +430,7 @@
     if (!iv.tenSaid && iv.left <= 10) { iv.tenSaid = true; say('Ten more seconds.', 'feedback'); }
     if (iv.left <= 0) {
       const good = iv.ran >= SESSION.intervalS * 0.6;
-      if (good) G.intervals++;
+      if (good) { G.intervals++; award(XP.interval, 'interval'); }
       say(good ? 'Done. Walk it off.' : 'Interval over. Higher knees next time.', 'feedback');
       G.interval = null;
       G.intervalIn = SESSION.intervalEveryS;
@@ -557,33 +569,149 @@
     best.stopUntil = now + 2600;
     best.waveUntil = now + 1800;
     Peds.waves++;
+    award(XP.wave, 'said hi');
     const line = pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
     say(line, 'feedback');
     note(`\u201c${line}\u201d`, 4500);
   }
+
+  // ---------- subway: fast travel, and the ride is logged rest ----------
+  // Real Midtown stations at their intersections (the grid simplifies Broadway). Stand at an entrance
+  // and the phone offers the subway: pick a station, wait on the platform (march in place to stay
+  // warm), then ride; the ride counts as rest. Train times are rough for now; real MTA schedules
+  // come with the real map.
+  const STATIONS = [
+    { name: '34 St-Herald Sq', ai: 6, st: 34, lines: 'B D F M N Q R W' },
+    { name: '34 St-Penn Station', ai: 5, st: 34, lines: '1 2 3' },
+    { name: '34 St-Penn Station', ai: 4, st: 34, lines: 'A C E', key: 'penn8' },
+    { name: 'Times Sq-42 St', ai: 5, st: 42, lines: '1 2 3 7 N Q R W S' },
+    { name: '42 St-Port Authority', ai: 4, st: 42, lines: 'A C E' },
+    { name: '42 St-Bryant Park', ai: 6, st: 42, lines: 'B D F M 7' },
+    { name: 'Grand Central-42 St', ai: 9, st: 42, lines: '4 5 6 7 S' },
+    { name: '47-50 Sts-Rockefeller Ctr', ai: 6, st: 48, lines: 'B D F M' },
+    { name: '59 St-Columbus Circle', ai: 4, st: 59, lines: 'A B C D 1' },
+    { name: 'Lexington Av-59 St', ai: 10, st: 59, lines: 'N R W 4 5 6' },
+    { name: '23 St', ai: 6, st: 23, lines: 'F M' },
+    { name: '14 St-Union Sq', ai: 9, st: 14, lines: 'L N Q R W 4 5 6' },
+    { name: '8 Av-14 St', ai: 4, st: 14, lines: 'A C E L' },
+  ];
+  const SUB = { nearM: 40, waitS: [8, 20], rideS: [15, 45] };
+  const Subway = { ride: null, rides: 0, restMs: 0 };
+  function stationNear() {
+    let best = null, bd = SUB.nearM;
+    for (const st of STATIONS) { const d = Math.hypot(P.x - aveX(st.ai), P.z - stZ(st.st)); if (d < bd) { best = st; bd = d; } }
+    return best;
+  }
+  // every other station, the ones nearest your stop first
+  function stationItems(from) {
+    const tg = target();
+    const dist = (st) => Math.abs(st.ai - tg.ai) * 3.5 + Math.abs(st.st - tg.st);
+    const list = STATIONS.filter((st) => st !== from && !(st.name === from.name)).sort((a, b) => dist(a) - dist(b));
+    return [{ id: 'back', label: 'Back' }, ...list.map((st, i) => ({ id: 'ride', from, to: st, label: `${st.name}${i === 0 ? ` (near ${tg.name})` : ''} \u00b7 ${st.lines}` }))];
+  }
+  function startRide(from, to, now) {
+    const blocks = Math.abs(from.ai - to.ai) * 3.5 + Math.abs(from.st - to.st);
+    const waitS = Math.round(rand(SUB.waitS[0], SUB.waitS[1]));
+    const rideS = Math.round(Math.max(SUB.rideS[0], Math.min(SUB.rideS[1], 8 + blocks * 1.2)));
+    Subway.ride = { from, to, phase: 'wait', until: now + waitS * 1000, waitS, rideS };
+    G.interval = null;
+    $('subway').hidden = false;
+    say(`Downtown and uptown platforms. Next train in ${waitS} seconds. March in place while you wait.`, 'instruction');
+  }
+  function subwayTick(dt, now) {
+    const r = Subway.ride;
+    const left = Math.max(0, (r.until - now) / 1000);
+    if (r.phase === 'wait') {
+      $('subTitle').textContent = `${r.from.name} \u00b7 ${r.from.lines}`;
+      $('subInfo').textContent = `Next train in ${Math.ceil(left)} s. March in place while you wait.`;
+      $('subFill').style.transform = `scaleX(${1 - left / r.waitS})`;
+      if (P.cadence > 0) G.activeMs += dt * 1000;
+      if (left <= 0) {
+        r.phase = 'ride'; r.until = now + r.rideS * 1000;
+        say(`Train to ${r.to.name}. Stand clear of the closing doors, please. Take a breather: this ride is rest.`, 'instruction');
+      }
+      return;
+    }
+    $('subTitle').textContent = `Riding to ${r.to.name}`;
+    $('subInfo').textContent = `${Math.ceil(left)} s \u00b7 rest`;
+    $('subFill').style.transform = `scaleX(${1 - left / r.rideS})`;
+    Subway.restMs += dt * 1000;
+    if (left > 0) return;
+    // out at the destination's corner, facing toward your stop
+    const st = r.to;
+    Subway.ride = null; Subway.rides++;
+    $('subway').hidden = true;
+    let x = aveX(st.ai) + AVE_HALF + WALK_OFF, z = stZ(st.st) - ST_HALF - WALK_OFF;
+    if (blocked(x, z)) { x = aveX(st.ai) - AVE_HALF - WALK_OFF; }
+    const tg = target();
+    const dA = (tg.ai - st.ai) * 3.5, dS = tg.st - st.st;
+    const yaw = Math.abs(dS) >= Math.abs(dA) ? (dS >= 0 ? 0 : Math.PI) : (dA >= 0 ? Math.PI / 2 : -Math.PI / 2);
+    Object.assign(P, { x, z, yaw, view: yaw, speed: 0, cell: null });
+    engine.set_facing((yaw * 180) / Math.PI);
+    Fight.foes = []; Fight.people = []; Peds.list = []; G.cueKey = '';
+    Fight.waitS = Math.max(Fight.waitS, 30);
+    say(`${st.name}. Back up to the street. ${target().name}: ${destWords()}.`, 'instruction');
+    banner(st.name, 2500, now);
+  }
+
+  // ---------- progression: XP, levels and titles, saved between walks ----------
+  // An RPG layer: XP for active minutes, stops, intervals, fights, takedowns, guard breaks, police
+  // calls and saying hi. Levels raise the opponents (more health, quicker punches, pairs sooner)
+  // and give a title. Saved in localStorage with lifetime totals.
+  const XP = { minute: 10, stop: 50, interval: 30, win: 60, takedown: 15, guardBreak: 10, call: 80, wave: 2 };
+  const TITLES = ['Tourist', 'Commuter', 'Bodega Regular', 'Block Captain', 'Neighborhood Watch', 'Express Train', 'Borough Hero', 'Midtown Myth', 'The Mayor (unofficially)', 'King of New York'];
+  const levelFor = (xp) => Math.floor(Math.sqrt(xp / 250)) + 1; // 250, 1000, 2250, 4000 ...
+  const xpFor = (lvl) => 250 * (lvl - 1) * (lvl - 1);
+  const titleOf = (lvl) => TITLES[Math.min(TITLES.length - 1, lvl - 1)];
+  const PROG_KEY = 'manhattan-miles-progress';
+  const Prog = { xp: 0, walkXp: 0, pop: '', popUntil: 0, life: { activeMs: 0, meters: 0, steps: 0, fights: 0, takedowns: 0, calls: 0, stops: 0, intervals: 0, walks: 0 } };
+  try { const saved = JSON.parse(localStorage.getItem(PROG_KEY) || 'null'); if (saved) { Prog.xp = saved.xp || 0; Object.assign(Prog.life, saved.life || {}); } } catch (_) {}
+  const level = () => levelFor(Prog.xp);
+  function saveProg() { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: Prog.xp, life: Prog.life })); } catch (_) {} }
+  function award(n, why) {
+    const before = level();
+    Prog.xp += n; Prog.walkXp += n;
+    Prog.pop = `+${n} XP \u00b7 ${why}`; Prog.popUntil = performance.now() + 1800;
+    const now = level();
+    if (now > before) { say(`Level ${now}. ${titleOf(now)}.`, 'confirm'); banner(`Level ${now}: ${titleOf(now)}`, 3000); }
+    saveProg();
+  }
+  function progLine() { const l = level(); return `Level ${l} \u00b7 ${titleOf(l)} \u00b7 ${Prog.xp} XP \u00b7 ${(Prog.life.meters / 1609.34).toFixed(1)} city miles all time`; }
 
   // ---------- the phone: wave your left hand to open it ----------
   // From 4 ft away you cannot tap the screen, so the menu runs on the moves you already know: a
   // left-hand wave opens it, a shoulder turn moves the highlight (it does not steer while the phone
   // is up), a right-hand wave picks, a left-hand wave closes. The walk and the session clock pause.
   // Touch players use the Phone button and tap.
-  const PHONE_ITEMS = [
-    { id: 'resume', label: 'Back to the walk' },
-    { id: 'radio', label: 'Police radio' },
-    { id: 'repeat', label: 'Repeat directions' },
-    { id: 'skip', label: 'Skip this stop' },
-    { id: 'end', label: 'End session' },
-  ];
-  const Phone = { open: false, idx: 0, movedAt: 0, ready: true, facing: 0 };
+  // the main menu; the subway shows up when you are at a station entrance
+  function mainItems() {
+    const st = stationNear();
+    return [
+      { id: 'resume', label: 'Back to the walk' },
+      ...(st ? [{ id: 'subway', label: `Subway: ${st.name}` }] : []),
+      { id: 'radio', label: 'Police radio' },
+      { id: 'repeat', label: 'Repeat directions' },
+      { id: 'skip', label: 'Skip this stop' },
+      { id: 'end', label: 'End session' },
+    ];
+  }
+  const Phone = { open: false, idx: 0, movedAt: 0, ready: true, facing: 0, items: [], title: 'Phone' };
   function renderPhone() {
-    $('phoneList').innerHTML = PHONE_ITEMS.map((it, i) => `<li data-i="${i}" class="${i === Phone.idx ? 'on' : ''}">${it.label}</li>`).join('');
+    $('phoneTitle').textContent = Phone.title;
+    $('phoneList').innerHTML = Phone.items.map((it, i) => `<li data-i="${i}" class="${i === Phone.idx ? 'on' : ''}">${it.label}</li>`).join('');
+    const on = $('phoneList').children[Phone.idx];
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+  }
+  function phoneMenu(title, items, line) {
+    Object.assign(Phone, { title, items, idx: 0 });
+    renderPhone();
+    say(line, 'prompt');
   }
   function openPhone() {
-    if (G.state !== 'walk' || Fight.active || Phone.open) return;
-    Object.assign(Phone, { open: true, idx: 0, movedAt: performance.now(), ready: false, facing: engine.locomotion().facing });
-    renderPhone();
+    if (G.state !== 'walk' || Fight.active || Phone.open || Subway.ride) return;
+    Object.assign(Phone, { open: true, movedAt: performance.now(), ready: false, facing: engine.locomotion().facing });
     $('phone').hidden = false;
-    say('Phone. Turn to choose, wave your right hand to pick.', 'prompt');
+    phoneMenu('Phone', mainItems(), 'Phone. Turn to choose, wave your right hand to pick.');
   }
   function closePhone() {
     if (!Phone.open) return;
@@ -592,8 +720,12 @@
     engine.set_facing(Phone.facing);
   }
   function pickPhone(i = Phone.idx) {
-    const it = PHONE_ITEMS[i];
+    const it = Phone.items[i];
+    if (!it) return;
+    if (it.id === 'subway') { phoneMenu(it.label.replace('Subway: ', ''), stationItems(stationNear()), 'Subway. Pick a station.'); return; }
+    if (it.id === 'back') { phoneMenu('Phone', mainItems(), 'Phone.'); return; }
     closePhone();
+    if (it.id === 'ride') { startRide(it.from, it.to, performance.now()); return; }
     if (it.id === 'repeat') say(`${G.nav || 'Keep going'}. ${target().name}: ${destWords()}.`, 'prompt');
     else if (it.id === 'radio') radio(performance.now());
     else if (it.id === 'skip') { say(`Skipping ${G.dest.name}.`, 'feedback'); nextStop(performance.now()); sayRoute(false); }
@@ -604,10 +736,10 @@
     const turn = engine.signals().turn || 0;
     if (Math.abs(turn) < 0.15) Phone.ready = true;
     if (Math.abs(turn) >= 0.35 && (Phone.ready || now - Phone.movedAt > 900)) {
-      Phone.idx = (Phone.idx + (turn > 0 ? 1 : -1) + PHONE_ITEMS.length) % PHONE_ITEMS.length;
+      Phone.idx = (Phone.idx + (turn > 0 ? 1 : -1) + Phone.items.length) % Phone.items.length;
       Phone.movedAt = now; Phone.ready = false;
       renderPhone();
-      say(PHONE_ITEMS[Phone.idx].label, 'prompt');
+      say(Phone.items[Phone.idx].label, 'prompt');
     }
   }
   engine.on('wave', (e) => {
@@ -623,6 +755,7 @@
   function update(dt, now) {
     if (G.state !== 'walk') return;
     if (Phone.open) { phoneTick(now); P.speed = 0; easeView(dt); return; }
+    if (Subway.ride) { subwayTick(dt, now); P.speed = 0; return; }
     sessionTick(dt, now);
     if (G.state !== 'walk') return;
     pedTick(dt, now);
@@ -673,6 +806,7 @@
 
   function arrive(now) {
     G.arrived++;
+    award(XP.stop, G.dest.name);
     banner(`Arrived at ${G.dest.name}`, 3500, now);
     say(`You made it to ${G.dest.name}.`, 'feedback');
     nextStop(now);
@@ -753,13 +887,14 @@
 
   // put an opponent on the street ahead, out of any building
   function spawnFoes(dist = FT.spawnAhead) {
-    const n = G.fightsDone >= 2 && Math.random() < 0.5 ? 2 : 1;
+    const lvl = level();
+    const n = (G.fightsDone >= 2 || lvl >= 3) && Math.random() < 0.4 + 0.03 * Math.min(10, lvl) ? 2 : 1;
     let d = dist;
     while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
     const x = P.x + Math.sin(P.yaw) * d, z = P.z + Math.cos(P.yaw) * d;
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
-      const hp = Math.round(rand(FT.hp[0], FT.hp[1]));
+      const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1))); // tougher as you level
       Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp });
     }
     // the person they are hassling, just past them and to the side
@@ -868,6 +1003,7 @@
     Fight.callFight = false;
     if (call && (how === 'won' || how === 'fled')) {
       Calls.answered++;
+      award(XP.call, 'call answered');
       // two officers walk up from down the block
       const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
       for (const k of [-1, 1]) {
@@ -891,6 +1027,7 @@
     Fight.stats.ms += now - a.start;
     Fight.stats[how]++;
     G.fightsDone++;
+    if (how === 'won') award(XP.win, a.foe.state === 'flee' ? 'they ran' : 'knockout');
     Fight.active = null;
     Fight.foes = [];
     Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
@@ -930,6 +1067,7 @@
         foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = FT.guard.hp;
         Fight.openUntil = now + FT.guard.brokenMs;
         Fight.stats.guardBreaks++;
+        award(XP.guardBreak, 'guard break');
         say('Guard broken!', 'feedback'); fightMsg('Guard broken!', 1100);
       }
     }
@@ -997,6 +1135,7 @@
     a.foe.state = 'down'; a.foe.until = Infinity;
     Fight.gnpStart = now; Fight.gnpMs = e.topMs || FT.td.gnpMs[0];
     Fight.stats.takedowns++;
+    award(XP.takedown, 'takedown');
     const big = e.jumped || Fight.gnpMs >= 4000;
     say(big ? 'Big takedown! Ground and pound.' : 'Takedown! Ground and pound.', 'feedback');
     fightMsg(big ? 'Big takedown!' : 'Takedown', 1200);
@@ -1082,13 +1221,15 @@
     a.range = Math.random() < FT.midChance ? 'mid' : 'close';
     const r = Math.random();
     // they step in to punch: that is when your hooks reach
-    if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
-    else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.hookSide = Math.random() < 0.5 ? 'L' : 'R'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
+    if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + windupMs(); foe.aim = Object.assign({}, Fight.head); }
+    else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.hookSide = Math.random() < 0.5 ? 'L' : 'R'; foe.until = now + windupMs() + 100; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
     else if (r < 0.8 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
     else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
     else { foe.state = 'guard'; foe.until = now + rand(600, 1200); }
   }
+  // their wind-up shortens as you level (quicker punches), never under 450 ms
+  function windupMs() { return Math.max(450, FT.windupMs - 20 * (level() - 1)); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
     Fight.hurtUntil = now + 350;
@@ -1823,6 +1964,14 @@
       if (G.nav) line(G.nav, 14, top + 126, 'left', '700 14px system-ui, sans-serif', '#ffcf3f');
     }
 
+    // level, XP to the next one, and the last XP earned
+    {
+      const l = level(), a0 = xpFor(l), a1 = xpFor(l + 1), k = Math.max(0, Math.min(1, (Prog.xp - a0) / (a1 - a0)));
+      line(`Lv ${l} \u00b7 ${titleOf(l)}`, 14, top + 150, 'left', '700 13px system-ui, sans-serif', '#c9d1dd');
+      ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(14, top + 168, 120, 5);
+      ctx.fillStyle = '#ffcf3f'; ctx.fillRect(14, top + 168, 120 * k, 5);
+      if (now < Prog.popUntil) line(Prog.pop, 14, top + 178, 'left', '800 13px system-ui, sans-serif', '#ffcf3f');
+    }
     // session numbers: active time (moving or fighting)
     const act = G.activeMs / 60000;
     const miles = G.meters / 1609.34;
@@ -1892,8 +2041,9 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 straights from foreshortening, aim-free ground and pound, ear blocks, stride, no timer';
+  const BUILD = '2026-10-15 \u00b7 levels and XP, subway, works for more body types';
   $('buildStamp').textContent = `Build ${BUILD}`;
+  $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
     fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up', 'jump'],
@@ -1919,6 +2069,8 @@
     Phone.open = false; $('phone').hidden = true;
     Object.assign(Calls, { active: null, answered: 0, missed: 0 });
     Object.assign(Peds, { list: [], waves: 0 });
+    Object.assign(Subway, { ride: null, rides: 0, restMs: 0 }); $('subway').hidden = true;
+    Prog.walkXp = 0;
     Object.assign(Fight, { people: [], foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
     if (engine.mode() === 'combat') engine.exit_combat();
     planRoute();
@@ -1934,6 +2086,12 @@
     stopFightClip();
     if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
+    Subway.ride = null; $('subway').hidden = true;
+    // lifetime totals
+    Object.assign(Prog.life, { activeMs: Prog.life.activeMs + G.activeMs, meters: Prog.life.meters + G.meters, steps: Prog.life.steps + G.steps, fights: Prog.life.fights + G.fightsDone,
+      takedowns: Prog.life.takedowns + Fight.stats.takedowns, calls: Prog.life.calls + Calls.answered, stops: Prog.life.stops + G.arrived, intervals: Prog.life.intervals + G.intervals, walks: Prog.life.walks + 1 });
+    saveProg();
+    $('progLine').textContent = progLine();
     $('endBtn').hidden = true;
     $('phoneBtn').hidden = true;
     Phone.open = false; $('phone').hidden = true;
@@ -1942,7 +2100,7 @@
     const miles = G.meters / 1609.34;
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
-      ['Blocks', G.blocks], ['Active time', fmt(G.activeMs)], ['Stops reached', G.arrived], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+      ['Blocks', G.blocks], ['Active time', fmt(G.activeMs)], ['Stops reached', G.arrived], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Subway rides (rest)', `${Subway.rides}${Subway.restMs ? ` (${fmt(Subway.restMs)})` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
       ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
@@ -2388,7 +2546,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, radio, greet, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, crossingAhead, adviceAt, endWalk };
+  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, STATIONS, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, crossingAhead, adviceAt, endWalk };
 })();
 </script>
 </body>

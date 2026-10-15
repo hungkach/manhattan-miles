@@ -389,9 +389,12 @@
         const h = this.hands[hand];
         const wi = hand === 'left' ? L.L_WRIST : L.R_WRIST;
         const s = hand === 'left' ? b.ls : b.rs;
-        const w = hand === 'left' ? b.lw : b.rw;
+        // a waving hand of a tall or long-armed player close to the camera often
+        // leaves the frame: wristAt follows MediaPipe's estimate out there (0.6.1)
+        const at = wristAt(ctx, wi);
+        const w = at ? RE.toBody(at.p, ctx.cal) : null;
         // both hands overhead is the turn-around gesture, not a wave
-        if (ctx.upperLow || out.handsOverhead || !seen(ctx, wi) || w.y - s.y < this.c.minAbove) { this.hands[hand] = fresh(); continue; }
+        if (ctx.upperLow || out.handsOverhead || !w || w.y - s.y < this.c.minAbove) { this.hands[hand] = fresh(); continue; }
         const x = w.x - s.x;
         let reversed = false;
         if (h.dir === 0) {

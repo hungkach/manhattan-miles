@@ -64,6 +64,8 @@ else:
 
 ### City and world
 
+Done 10/15: subway fast travel between real Midtown stations with the ride logged as rest (rough train times; real MTA schedules come with the real map), and an RPG layer (XP, levels, titles, tougher opponents, saved progress).
+
 - **Map:** a street-by-street accurate Manhattan with real businesses, like the San Diego game. Real business names come out of any commercial release.
 - **Businesses:** they can be entered. Whether interiors are instanced is still open.
 - **Transit:** accurate MTA schedules. Public transit and taxis are the fast travel (and logged rest).

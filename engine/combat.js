@@ -168,7 +168,9 @@
     }
 
     classify(ctx, hand, a, hist, out) {
-      const c = this.c;
+      // distances and speeds in meters scale with the player's arm length (0.6.1:
+      // a smaller player's hook travels less and slower in meters)
+      const c = scaled(this.c, out.armScale || 1);
       const now = hist[hist.length - 1];
       const first = hist[0];
       const minAngle = Math.min(...hist.map((s) => s.angle));
@@ -206,6 +208,21 @@
       if (vy >= c.upperSpeed && lowest <= -c.upperFrom && now.y >= -c.upperTo && now.z >= c.hookFront) return 'uppercut';
       return null;
     }
+  }
+  // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
+  // smaller thresholds); angles and times stay as they are
+  const METERS = ['reach', 'fwdGain', 'hookHeight', 'hookFront', 'hookSpeed', 'hookTravel', 'hookElbow', 'hookElbowOut', 'upperSpeed', 'upperFrom', 'upperTo', 'downBelow', 'downSpeed'];
+  const scaledCache = new Map();
+  function scaled(c, k) {
+    if (k === 1) return c;
+    const key = Math.round(k * 100);
+    let s = scaledCache.get(key);
+    if (!s || s.base !== c) {
+      s = Object.assign({}, c, { base: c });
+      for (const m of METERS) if (m !== 'reach' && typeof c[m] === 'number') s[m] = c[m] * (key / 100);
+      scaledCache.set(key, s);
+    }
+    return s;
   }
   // arm length in meters (pose positions are in shoulder widths of unitM meters)
   const armLen = (a, unitM) => (len(sub(a.elbow, a.shoulder)) + len(sub(a.wrist, a.elbow))) * unitM;
@@ -294,6 +311,15 @@
   // depth wins when it already says more, or says the segment points back.
   class ArmDepth {
     constructor(cfg) { this.c = cfg.combat.depth; this.ref = {}; this.t = null; }
+    // the player's arm length (shoulder to wrist, the longer arm's references)
+    // over a reference 0.6 m arm, for scaling strike thresholds down for
+    // shorter arms (the references read a few percent long, and long arms
+    // already clear the standard thresholds, so it never scales up)
+    armScale() {
+      const r = this.ref;
+      const arm = r.lu == null || r.ru == null ? 0 : Math.max(r.lu + r.lf, r.ru + r.rf);
+      return arm >= 0.3 ? RE.clamp(arm / 0.6, 0.75, 1) : 1; // no reference yet: unscaled
+    }
     fix(ctx, frame) {
       const world = ctx.world, pts = ctx.points, c = this.c;
       const dt = this.t == null ? 0 : Math.max(0, (ctx.t - this.t) / 1000);
@@ -347,6 +373,7 @@
       out.arms = null;
       const frame = frameOf(ctx);
       const world = frame && ctx.world ? this.depth.fix(ctx, frame) : ctx.world;
+      out.armScale = this.depth.armScale();
       const pose = RE.armPose(world, frame, ctx.cal.shoulderWidthW);
       if (!pose) return;
       pose.unitM = ctx.cal.shoulderWidthW || len(sub(ctx.world[L.R_SHOULDER], ctx.world[L.L_SHOULDER])) || 0.4;
