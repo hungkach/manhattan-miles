@@ -16,7 +16,7 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 
 Every minute and a half or so of walking, an opponent (later sometimes two) waits on the street ahead. Walk up to them and the fight starts: you lock on, they manage the range.
 
-- Punch for real: jab, cross, hook, uppercut. Your gloves on screen follow your actual fists.
+- Punch for real: jab, cross, hook, uppercut. Your gloves on screen follow your actual fists, and a glove that drives fast onto their head or body lands, with a burst, a thump and their head snapping back. Body shots get through a high guard.
 - Guard up (fists by your face) blocks. Slip your head off the center line to dodge a straight and land a counter.
 - When they shoot for your legs (they glow low and you hear "Sprawl"), squat to sprawl, then hit them while they recover.
 - When they step back you can't reach them; they step back in on their own a moment later.
@@ -39,7 +39,7 @@ Every camera session starts with a one minute setup, like Homecoming Hero's:
 
 Spoken instructions wait their turn and leave 2 s between lines, so you have time to move the phone or step back; a move's timer starts once its instruction has been said. Everything is spoken, since the screen is hard to read from 4 ft: each move, a count of detected steps (one, two, three, got it), a nudge when nothing registers (knees higher, turn further), "step back" whenever the camera loses your knees (also during the walk), and a full result at the end.
 
-The warm-up records up to 28 s of camera landmarks. After the walk, "Save warm-up clip" downloads it so the engine can be tuned on real data. During the walk, a three-finger tap shows the stick figure again.
+The warm-up records up to 28 s of camera landmarks, and so does the start of each camera fight. After the walk, "Save warm-up clip" and "Save fight clip" download them so the engine can be tuned on real data. In a fight, the level bar on the left shows how low you are and the mark a shot needs. During the walk, a three-finger tap shows the stick figure again.
 
 Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and torso turn drift all work on camera.
 

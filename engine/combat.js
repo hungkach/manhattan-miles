@@ -71,8 +71,8 @@
       const dist = (w) => Math.hypot(w.x - b.nose.x, (w.y - b.nose.y) * ratio);
       const near = (w, lim) => dist(w) <= lim && w.y >= b.sMid.y - this.c.below;
       const ok = (i) => { const p = ctx.points[i]; return p && !p.held && p.v >= ctx.holdVis; };
-      const nl = !ctx.low && ok(L.L_WRIST) && near(b.lw, this.c.near);
-      const nr = !ctx.low && ok(L.R_WRIST) && near(b.rw, this.c.near);
+      const nl = !ctx.upperLow && ok(L.L_WRIST) && near(b.lw, this.c.near);
+      const nr = !ctx.upperLow && ok(L.R_WRIST) && near(b.rw, this.c.near);
       if (nl) this.lastNear.left = t;
       if (nr) this.lastNear.right = t;
       out.handNearAt = { left: this.lastNear.left, right: this.lastNear.right };
@@ -86,7 +86,7 @@
         // a hand out on a punch keeps the guard: only both hands down, or one away too long, drop it
         const l = keep(b.lw, L.L_WRIST) || t - this.lastNear.left < this.c.punchMs;
         const r = keep(b.rw, L.R_WRIST) || t - this.lastNear.right < this.c.punchMs;
-        if (ctx.low || !(l && r)) { this.up = false; this.since = null; }
+        if (ctx.upperLow || !(l && r)) { this.up = false; this.since = null; }
       }
       out.guard = this.up;
     }
@@ -145,7 +145,7 @@
         while (h.hist.length && t - h.hist[0].t > this.c.windowMs) h.hist.shift();
         if (a.angle < this.c.rearm) h.armed = true;
         if (h.hist.length < 3 || t - h.last < this.c.refractoryMs) continue;
-        if (ctx.low) continue;
+        if (ctx.upperLow) continue;
         const type = this.classify(ctx, hand, a, h.hist, out);
         if (!type) continue;
         h.last = t;
@@ -181,7 +181,7 @@
       const dt = (now.t - v0.t) / 1000 || 1;
       const vx = (now.tx - v0.tx) / dt, vy = (now.y - v0.y) / dt;
       const vArc = Math.hypot(now.tx - v0.tx, now.tz - v0.tz) / dt; // a hook travels an arc in the horizontal plane
-      const lowStance = ctx.sig.hipDrop >= c.downDrop;
+      const lowStance = (ctx.sig.levelDrop != null ? ctx.sig.levelDrop : ctx.sig.hipDrop) >= c.downDrop;
 
       if (a.angle >= c.straightOn && minAngle <= c.bentMax && this.hands[hand].armed) {
         const fwdGain = now.z - Math.min(...hist.map((s) => s.z));
@@ -215,7 +215,7 @@
     update(ctx, out) {
       const b = ctx.sig.body;
       let slip = 0;
-      if (!ctx.low) {
+      if (!ctx.upperLow) {
         const off = b.nose.x - b.hMid.x;
         const k = (Math.abs(off) - this.c.deadzone) / (this.c.full - this.c.deadzone);
         if (k > 0) slip = Math.sign(off) * Math.min(k, 1);
@@ -229,15 +229,17 @@
     }
   }
 
-  // Level changes: 'squat' when the hips drop past squat.drop (with how fast
-  // they got there), re-armed above squat.reset; 'drive_up' when the hips
-  // come back up by drive.rise within drive.ms of the bottom of a squat.
+  // Level changes: 'squat' when the level (sig.levelDrop: the hips, or the
+  // shoulders when the hips are hidden) drops past level.squat (with how fast
+  // it got there), re-armed above level.reset; 'drive_up' when it comes back
+  // up by level.rise within level.driveMs of the bottom of a squat. Knees are
+  // not needed: a squat in knees-up framing pushes them out of the frame.
   class LevelDetector {
     constructor(cfg) { this.c = cfg.combat.level; this.armed = true; this.hist = []; this.bottom = null; }
     update(ctx, out) {
       const t = ctx.t;
-      const drop = ctx.sig.hipDrop;
-      if (drop == null || ctx.low) return;
+      const drop = ctx.sig.levelDrop;
+      if (drop == null) return;
       this.hist.push({ t, drop });
       while (this.hist.length && t - this.hist[0].t > this.c.speedMs) this.hist.shift();
       if (this.armed && drop >= this.c.squat) {

@@ -135,7 +135,7 @@
       if (st.source !== 'demo') {
         // gesture detectors, then the state machine reads their events
         st.det = st.cal && points
-          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, holdVis: cfg.visibility.hold })
+          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold })
           : null;
         if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
@@ -147,7 +147,7 @@
           speed: st.loco.speed,
           turn: det ? det.turn : 0,
           lean: det ? det.lean : 0,
-          squat_depth: sig.squatDepth != null && !low ? sig.squatDepth : 0,
+          squat_depth: sig.squatDepth != null && sig.levelDrop != null ? sig.squatDepth : 0,
           guard_up: det ? det.guard : false,
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,

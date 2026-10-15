@@ -119,7 +119,7 @@
     <h2>Walk complete</h2>
     <table class="stats" id="sumStats"></table>
     <div class="payoff" id="payoff"></div>
-    <div class="btns"><button id="again" class="main">Walk again</button><button id="saveClip" class="secondary" hidden>Save warm-up clip</button></div>
+    <div class="btns"><button id="again" class="main">Walk again</button><button id="saveClip" class="secondary" hidden>Save warm-up clip</button><button id="saveFight" class="secondary" hidden>Save fight clip</button></div>
   </div>
 </div>
 
@@ -353,12 +353,44 @@
     windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, swingMs: 220,
     damage: { jab: 0.8, cross: 1.1, hook: 1.2, uppercut: 1.2, down: 1.0, down_strike: 1.0 },
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
+    // the glove hitbox: a glove moving at least `speed` (shoulder widths a second), at least `reach`
+    // in front of your shoulders, that ends over their head or body on screen lands. One hit per
+    // punch: the hand re-arms once it comes back `rearm` from its furthest point. An engine strike
+    // from the same hand within pairMs is the same punch.
+    hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3 },
   };
-  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
-  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
+    hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
+    armTilt: 0, impacts: [], clip: null, recording: false };
+  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
+
+  // a punch landing: a burst where the glove met them, their head or body snapping back, a thump
+  function impact(foe, hand, where, power, now) {
+    const h = hand && Fight.hand[hand];
+    const at = h && h.scr ? { x: h.scr.x, y: h.scr.y } : foe.hit ? (where === 'body' ? foe.hit.chestPt : foe.hit.head) : null;
+    if (at) Fight.impacts.push({ x: at.x, y: at.y, t: now, power });
+    foe.recoil = { t: now, k: Math.min(1.5, power), body: where === 'body' };
+    thump(power, where === 'body');
+  }
+  const Sfx = { ctx: null };
+  function thump(power, body) {
+    const ac = Sfx.ctx;
+    if (!ac || ac.state !== 'running') return;
+    try {
+      const t = ac.currentTime, g = ac.createGain(), o = ac.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(body ? 110 : 170, t);
+      o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.5 * Math.min(1, power), t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(g).connect(ac.destination);
+      o.start(t); o.stop(t + 0.18);
+    } catch (_) {}
+  }
 
   // put an opponent on the street ahead, out of any building
   function spawnFoes(dist = FT.spawnAhead) {
@@ -390,15 +422,26 @@
       shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
     });
     if (isDemo()) setTouchButtons('fight');
+    else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', fight: true, camera: engine.camera() }); Fight.recording = true; }
+    for (const h of Object.values(Fight.hand)) { h.hist = []; h.armed = true; h.peak = 0; h.last = -Infinity; h.scr = null; }
     document.body.classList.add('fighting');
     note('');
     say('Fight! Guard up.', 'feedback');
     fightMsg('Fight!', 1200);
   }
 
+  // the first 28 s of each camera fight is recorded (the recorder stops itself at 30 s, and its
+  // recording_done event carries the whole clip); the summary offers the latest one
+  function stopFightClip() {
+    if (!Fight.recording) return;
+    Fight.recording = false;
+    if (engine.is_recording()) Fight.clip = engine.stop_recording();
+  }
+
   function endFight(how, now) {
     const a = Fight.active;
     if (!a) return;
+    stopFightClip();
     Fight.stats.ms += now - a.start;
     Fight.stats[how]++;
     G.fightsDone++;
@@ -415,7 +458,9 @@
   }
 
   // engine events while fighting
-  function landed(kind, power, now) {
+  // a punch that reached them. hand: 'left' or 'right'; where: 'head' or 'body' (the glove hitbox),
+  // or null for an engine strike (lock-on: it counts wherever the glove is drawn)
+  function landed(kind, power, now, hand, where) {
     const a = Fight.active;
     if (!a) return;
     const foe = a.foe;
@@ -424,7 +469,10 @@
     if (kind === 'down_strike' && foe.state !== 'down') return;
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
-    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut') dmg *= FT.coverFactor; // hooks and uppercuts go around a high guard
+    if (where === 'body') dmg *= FT.hit.body;
+    // hooks, uppercuts and body shots go around a high guard
+    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') dmg *= FT.coverFactor;
+    impact(foe, hand, where, power, now);
     if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
     foe.hp -= dmg;
@@ -436,12 +484,34 @@
       say('Knockdown!', 'feedback');
     }
   }
+  // the engine's own punch classifier and the glove hitbox (gloveHits) both land punches; the
+  // first one to see a punch counts it and the other skips the same hand for FT.hit.pairMs
+  const claim = (hand, now) => {
+    const h = Fight.hand[hand];
+    if (!h || now - h.last < FT.hit.pairMs) return false;
+    h.last = now; h.armed = false;
+    return true;
+  };
   engine.on('strike', (e) => {
     if (!Fight.active) return;
-    Fight.fistFlash[e.hand] = performance.now() + 180;
-    if (engine.combat().phase !== 'top') landed(e.type, e.power, performance.now());
+    const now = performance.now();
+    Fight.fistFlash[e.hand] = now + 180;
+    if (engine.combat().phase === 'top') return; // it comes back as a down_strike
+    if (claim(e.hand, now)) landed(e.type, e.power, now, e.hand, null);
   });
-  engine.on('down_strike', (e) => { if (Fight.active) landed('down_strike', e.power, performance.now()); });
+  engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
+  engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot! Drive up', 900); } });
+  // a level change the fight machine did not take as a shot or a sprawl: say why
+  engine.on('squat', () => {
+    if (!Fight.active) return;
+    setTimeout(() => {
+      const a = Fight.active;
+      if (!a || engine.combat().phase !== 'standing' || a.foe.state === 'stuffed') return;
+      if (a.range === 'out' || a.foe.state === 'out') fightMsg('Too far to shoot');
+      else if (a.foe.state === 'down' || a.foe.state === 'ko') return;
+      else fightMsg('Level change');
+    }, 0);
+  });
   engine.on('takedown', () => {
     const a = Fight.active;
     if (!a) return;
@@ -530,6 +600,7 @@
     if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
     P.speed = 0;
     P.yaw = (m.facing * Math.PI) / 180;
+    if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
     // the opponent keeps the range: close in, or a step back
     const foe = a.foe;
     const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : FT.rangeIn;
@@ -734,7 +805,14 @@
 
   const SKIN = [214, 166, 128], PANTS = [44, 48, 60], SHOE = [30, 30, 34], GLOVE = [28, 30, 38];
   function drawFoe(f, now) {
-    const j = poseFoe(f, now);
+    let j = poseFoe(f, now);
+    // a landed punch snaps the head (or folds the body) back for a moment
+    if (f.recoil && now - f.recoil.t < 300) {
+      const k = Math.sin((Math.PI * (now - f.recoil.t)) / 300) * 0.09 * f.recoil.k;
+      j = Object.assign({}, j);
+      const back = f.recoil.body ? { chest: k, neck: k * 0.8, head: k * 0.6, shL: k * 0.8, shR: k * 0.8 } : { head: k * 1.4, neck: k * 0.8, chest: k * 0.3 };
+      for (const n in back) j[n] = [j[n][0], j[n][1] - (f.recoil.body ? back[n] * 0.4 : 0), j[n][2] - back[n]];
+    }
     const fr = foeFrame(f);
     const C = (name) => { const w = toWorld(f, fr, j[name]); return toCam(w.x, w.y, w.z); };
     const hurt = now < f.hurtUntil;
@@ -742,6 +820,12 @@
     const list = [];
     const c = {};
     for (const k in j) c[k] = C(k);
+    // where they are on screen, for the glove hitbox: the head, and the torso as a capsule
+    f.hit = null;
+    if (c.head.z > NEAR3 && c.chest.z > NEAR3 && c.pelvis.z > NEAR3) {
+      const hd = projC(c.head, F), ch = projC(c.chest, F), pe = projC(c.pelvis, F), sl = projC(c.shL, F), sr = projC(c.shR, F);
+      f.hit = { head: { x: hd.x, y: hd.y, r: 0.115 * hd.s }, torso: [{ a: ch, b: pe, r: 0.15 * ch.s }, { a: sl, b: sr, r: 0.075 * ch.s }], chestPt: { x: ch.x, y: ch.y } };
+    }
     // a soft shadow on the ground under them anchors where they are
     const mid = toWorld(f, fr, [(j.pelvis[0] + j.chest[0]) / 2, 0, (j.pelvis[2] + j.chest[2]) / 2]);
     const lying = f.state === 'down' || f.state === 'ko' || f.state === 'stuffed';
@@ -780,23 +864,96 @@
 
   // Your arms, from the engine's arm pose (shoulder widths, x right, y up, z toward the camera,
   // which is toward the opponent here), placed in camera space below and just ahead of your eye
-  // and drawn with a wider lens, the way first-person games draw the player's own arms.
+  // and drawn with a wider lens, the way first-person games draw the player's own arms. A fist
+  // tilts up about your eye as it extends, so a straight punch at shoulder height ends on their
+  // chin (or on their body when they are down), and a fist drifts in toward the center line as it extends, the way
+  // a punch closes on a target in front of you. What the glove covers on screen is what it hits.
+  const ARM_S = 0.4, ARM_REF = { x: 0, y: 0.15, z: 1.7 };
+  const armRaw = (q) => {
+    const ext = Math.max(0, Math.min(1, q.z / ARM_REF.z));
+    return { x: q.x * ARM_S * 0.85 * (1 - 0.4 * ext), y: -0.2 + q.y * ARM_S, z: 0.16 + Math.max(-0.1, q.z) * ARM_S };
+  };
+  // the tilt grows with how far a point is out in front (none at the guard, all of it at full
+  // reach), so the guard stays low and out of your view of them and a punch arcs onto the target
+  const armCam = (q) => {
+    const u = Math.max(0, Math.min(1, (q.z - 0.5) / (ARM_REF.z - 0.5)));
+    const tl = Fight.armTilt * u * u * (3 - 2 * u);
+    const p = armRaw(q), c = Math.cos(tl), sn = Math.sin(tl);
+    return { x: p.x, y: p.y * c + p.z * sn, z: p.z * c - p.y * sn };
+  };
+  function aimArms(fv) {
+    const a = Fight.active;
+    const foe = a && a.foe;
+    if (!foe || !foe.hit) return;
+    const lying = foe.state === 'down' || foe.state === 'ko' || foe.state === 'stuffed';
+    const aim = lying ? foe.hit.chestPt : foe.hit.head;
+    const want = Math.atan((H / 2 - (aim.y + (lying ? 0 : foe.hit.head.r * 0.4))) / fv);
+    const g = armRaw(ARM_REF);
+    const tilt = Math.max(-0.4, Math.min(1.0, want - Math.atan2(g.y, g.z)));
+    Fight.armTilt += (tilt - Fight.armTilt) * 0.15;
+  }
   function drawArms(now) {
     const arms = engine.arms();
     if (!arms) return;
-    const S = 0.4, fv = F * 0.5;
-    const at = (q) => ({ x: q.x * S * 0.85, y: -0.2 + q.y * S, z: 0.16 + Math.max(-0.1, q.z) * S });
+    const fv = F * 0.5;
+    aimArms(fv);
     const list = [];
     for (const side of ['left', 'right']) {
       const a = arms[side];
+      Fight.hand[side].scr = null;
       if (!a || !a.wrist) continue;
-      const sh = at(a.shoulder), el = at(a.elbow), wr = at(a.wrist);
+      const sh = armCam(a.shoulder), el = armCam(a.elbow), wr = armCam(a.wrist);
       const flash = now < Fight.fistFlash[side];
       capsule(list, sh, el, 0.06, [52, 56, 68], fv);
       capsule(list, el, wr, 0.05, SKIN, fv);
       ball(list, wr, 0.08, flash ? [255, 226, 122] : side === 'left' ? [200, 50, 43] : [176, 42, 36], fv);
+      if (wr.z > NEAR3) { const p = projC(wr, fv); Fight.hand[side].scr = { x: p.x, y: p.y, r: 0.08 * p.s }; }
     }
     drawPrims(list);
+    gloveHits(arms, now);
+  }
+
+  const segDist = (p, a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1e-9;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2));
+    return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+  };
+  // The glove hitbox: a glove moving fast, out in front of you, that ends over their head or body
+  // on screen lands, once per punch. Its kind comes from how it moved: mostly sideways is a hook,
+  // mostly up an uppercut, else a jab with your lead hand or a cross with the rear one.
+  function gloveHits(arms, now) {
+    const a = Fight.active;
+    if (!a || !a.foe.hit) return;
+    const foe = a.foe, c = FT.hit;
+    const top = engine.combat().phase === 'top';
+    for (const side of ['left', 'right']) {
+      const h = Fight.hand[side], q = arms[side] && arms[side].wrist;
+      if (!q) { h.hist = []; continue; }
+      h.hist.push({ t: now, x: q.x, y: q.y, z: q.z });
+      while (h.hist.length > 2 && now - h.hist[0].t > 120) h.hist.shift();
+      // re-arm once the fist comes back from its furthest point
+      if (h.armed) h.peak = q.z;
+      else { h.peak = Math.max(h.peak, q.z); if (h.peak - q.z >= c.rearm && now - h.last >= 200) { h.armed = true; h.peak = q.z; } }
+      const f0 = h.hist[0], dt = (now - f0.t) / 1000;
+      if (!h.armed || dt < 0.04 || !h.scr || q.z < c.reach) continue;
+      const vx = (q.x - f0.x) / dt, vy = (q.y - f0.y) / dt, vz = (q.z - f0.z) / dt;
+      const speed = Math.hypot(vx, vy, vz);
+      if (speed < c.speed || vz < -0.5) continue;
+      const g = h.scr, slop = c.slop;
+      const onHead = !top && Math.hypot(g.x - foe.hit.head.x, g.y - foe.hit.head.y) <= foe.hit.head.r * slop + g.r * 0.6;
+      const onBody = foe.hit.torso.some((t) => segDist(g, t.a, t.b) <= t.r * slop + g.r * 0.6);
+      if (!onHead && !onBody) continue;
+      if (!claim(side, now)) continue;
+      Fight.stats.glove++;
+      Fight.fistFlash[side] = now + 180;
+      const power = Math.max(0.5, Math.min(1.5, speed / 6));
+      let kind;
+      if (top) kind = 'down_strike';
+      else if (Math.abs(vx) > Math.max(vz, Math.abs(vy)) * 0.9) kind = 'hook';
+      else if (vy > vz) kind = 'uppercut';
+      else kind = side === (engine.signals().stance === 'southpaw' ? 'right' : 'left') ? 'jab' : 'cross';
+      landed(kind, power, now, side, onHead ? 'head' : 'body');
+    }
   }
 
   // Your view follows your body: a slip moves and tilts it to that side, a squat drops it, a
@@ -838,8 +995,27 @@
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = '#ffcf3f';
       ctx.strokeText(Fight.msg, W / 2, H * 0.3); ctx.fillText(Fight.msg, W / 2, H * 0.3);
     }
+    // landed punches: a quick burst where the glove met them
+    Fight.impacts = Fight.impacts.filter((p) => now - p.t < 260);
+    for (const p of Fight.impacts) {
+      const u = (now - p.t) / 260, r = (14 + 30 * u) * (0.7 + 0.4 * p.power);
+      ctx.strokeStyle = `rgba(255, 236, 160, ${1 - u})`; ctx.lineWidth = 5 * (1 - u) + 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * (1 - u)})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.45, 0, Math.PI * 2); ctx.fill();
+    }
+    // your level: how low you are, with the mark a shot needs
+    const lh = Math.min(170, H * 0.24), lx = 14, ly = H * 0.42;
+    const depth = Math.min(1, s.squat_depth || 0), mark = LEVEL_SHOT;
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(lx, ly, 14, lh);
+    ctx.fillStyle = depth >= mark ? '#ffcf3f' : '#9fd2ff'; ctx.fillRect(lx + 2, ly + 2, 10, (lh - 4) * depth);
+    ctx.fillStyle = '#fff'; ctx.fillRect(lx - 3, ly + 2 + (lh - 4) * mark, 20, 2);
+    ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText('Level', lx - 2, ly - 3); ctx.fillText('Level', lx - 2, ly - 3);
     if (now < Fight.hurtUntil) { ctx.fillStyle = 'rgba(220, 40, 30, .28)'; ctx.fillRect(0, 0, W, H); }
   }
+  // squat depth at which the engine sees a level change (a shot)
+  const LEVEL_SHOT = (() => { const c = RE.defaultConfig(); return Math.min(1, c.combat.level.squat / c.signals.squatFullDrop); })();
 
   // ---------- rendering ----------
   const NEAR = 0.3;
@@ -1063,7 +1239,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 3D fighters, view follows slips and shots';
+  const BUILD = '2026-10-15 \u00b7 glove hitbox, level changes with knees out of view';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],
@@ -1096,6 +1272,7 @@
 
   function endWalk() {
     const now = performance.now();
+    stopFightClip();
     if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     $('endBtn').hidden = true;
@@ -1112,6 +1289,7 @@
     if (G.fightsDone) lines.push(`<p><b>Fight rounds:</b> ${fmt(Fight.stats.ms)} of fighting in short bursts, with marching between as active recovery: ${Fight.stats.landed} punches build striking power and shoulder endurance${Fight.stats.takedowns ? `, ${Fight.stats.takedowns} takedowns train explosive hip extension` : ''}${Fight.stats.sprawls ? `, ${Fight.stats.sprawls} sprawls train reactive level changes` : ''}.</p>`);
     $('payoff').innerHTML = lines.join('');
     $('saveClip').hidden = !Warm.clip;
+    $('saveFight').hidden = !Fight.clip;
     show('summary');
   }
 
@@ -1128,6 +1306,7 @@
   }
 
   $('playDemo').addEventListener('click', () => {
+    primeVoice();
     enableTouch();
     startWalk();
     note('Tap the left zone to walk, double-tap and hold to run. Hold a drag on the right zone to steer. Point for a quick turn onto the cross street.', 7000);
@@ -1157,6 +1336,7 @@
   // iOS only lets a page speak after speech starts inside a tap, so primeVoice() runs in the click.
   function primeVoice() {
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
+    try { if (!Sfx.ctx) Sfx.ctx = new (window.AudioContext || window.webkitAudioContext)(); Sfx.ctx.resume(); } catch (_) {}
     try { speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (_) {}
   }
   // One queue, never talking over itself. Kinds:
@@ -1513,6 +1693,7 @@
   $('endBtn').addEventListener('click', endWalk);
   $('again').addEventListener('click', () => { G.state = 'title'; show('title'); });
   $('saveClip').addEventListener('click', () => { if (Warm.clip) RE.downloadClip(Warm.clip, `manhattan-miles-warmup-${Date.now()}.json`); });
+  $('saveFight').addEventListener('click', () => { if (Fight.clip) RE.downloadClip(Fight.clip, `manhattan-miles-fight-${Date.now()}.json`); });
 
   let last = performance.now();
   function frame(now) {

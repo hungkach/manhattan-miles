@@ -90,7 +90,16 @@
     out.lean = sMid.x - hMid.x;
     // hip drop below the calibrated standing hip height, in T
     out.hipDrop = -hMid.y;
-    out.squatDepth = RE.clamp(out.hipDrop / cfg.signals.squatFullDrop, 0, 1);
+    // level: the hip drop when both hips are seen, else the shoulder drop below
+    // standing shoulder height. In knees-up framing a squat or a fighting stance
+    // often hides the knees and sometimes the hips, and the level change must
+    // still read; null when neither pair is seen this frame
+    const seen = (i) => !!points[i] && points[i].v >= cfg.visibility.hold;
+    out.upperSeen = seen(L.L_SHOULDER) && seen(L.R_SHOULDER);
+    out.hipsSeen = seen(L.L_HIP) && seen(L.R_HIP);
+    out.shoulderDrop = (cal.shoulderBaseY != null ? cal.shoulderBaseY : 1) - sMid.y;
+    out.levelDrop = out.hipsSeen ? out.hipDrop : out.upperSeen ? out.shoulderDrop : null;
+    out.squatDepth = RE.clamp((out.levelDrop != null ? out.levelDrop : out.hipDrop) / cfg.signals.squatFullDrop, 0, 1);
     // knee lift above standing knee height, in T
     out.kneeLiftL = lk.y - cal.kneeBaseL;
     out.kneeLiftR = rk.y - cal.kneeBaseR;

@@ -1,6 +1,6 @@
 {
   "name": "rep-engine",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "files": [
     "core.js",
     "config.js",

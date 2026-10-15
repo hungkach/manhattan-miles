@@ -136,8 +136,8 @@
           rearm: 130,        // degrees: after a straight the elbow must bend below this again
           straightOn: 150,   // degrees: straight punch ends with the elbow this straight
           bentMax: 115,      // degrees: having been this bent inside the window
-          reach: 0.55,       // fist in front of its shoulder by this share of arm length
-          fwdGain: 0.18,     // m the fist travelled toward the camera inside the window
+          reach: 0.5,        // fist in front of its shoulder by this share of arm length
+          fwdGain: 0.15,     // m the fist travelled toward the camera inside the window
           bentMax2: 135,     // degrees: hooks and uppercuts keep the elbow bent
           hookHeight: 0.3,   // m from shoulder height
           hookFront: 0.1,    // m in front of the shoulder
@@ -161,14 +161,14 @@
           eventReset: 0.2,
         },
         level: {
-          squat: 0.35,     // T hip drop that is a squat (spec)
+          squat: 0.3,      // T level drop that is a squat (spec 0.35; 0.4.2 eased for a fighting crouch)
           reset: 0.15,     // T: re-arms above this (spec)
           speedMs: 400,    // squat speed measured over this long
-          rise: 0.25,      // T the hips come back up for a drive up
-          driveMs: 400,    // within this long of the bottom (spec: 0.35 T in 400 ms)
+          rise: 0.2,       // T the level comes back up for a drive up
+          driveMs: 600,    // within this long of the bottom (spec: 0.35 T in 400 ms)
         },
         fight: {
-          shotMs: 800,       // drive up within this long of the shot (spec)
+          shotMs: 1000,      // drive up within this long of the shot (spec 800)
           topDepth: 0.2,     // squat depth that holds the top position (spec)
           scrambleMs: 300,   // standing out of it this long lets them scramble
           escapeMs: 3000,    // high knees this long escapes the fight (spec)

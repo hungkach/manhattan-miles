@@ -162,6 +162,9 @@
         side: m('sideSign') >= 0 ? 1 : -1,
         createdAt: new Date().toISOString(),
       };
+      // standing shoulder height in body units (about 1), for the level change
+      // when the hips are hidden
+      cal.shoulderBaseY = median(this.samples.map((s) => (cal.hipMidY - s.shoulderMidY) / cal.torsoLength));
       // Knee baselines in body units, relative to the calibrated hip.
       cal.kneeBaseL = median(this.samples.map((s) => (cal.hipMidY - s.kneeLY) / cal.torsoLength));
       cal.kneeBaseR = median(this.samples.map((s) => (cal.hipMidY - s.kneeRY) / cal.torsoLength));
@@ -209,6 +212,7 @@
       torsoLength: RE.dist(sMid, hMid),
       hipMidX: hMid.x,
       hipMidY: hMid.y,
+      shoulderMidY: sMid.y,
       sideSign: Math.sign(p[L.R_SHOULDER].x - p[L.L_SHOULDER].x),
       kneeLY: p[L.L_KNEE].y,
       kneeRY: p[L.R_KNEE].y,
