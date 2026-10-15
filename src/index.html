@@ -28,6 +28,25 @@
   table.stats td { padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; }
   table.stats td:last-child { text-align: right; font-weight: 700; }
   .payoff { text-align: left; font-size: 14px; }
+  /* camera setup and warm-up: full camera view, the engine's stick figure on top, a move card at the bottom */
+  /* the camera view and the stick figure share the space above the card, so the card never hides your knees */
+  :root { --warmH: clamp(180px, 26vh, 280px); }
+  body.setup { background: #000; }
+  body.setup #game { visibility: hidden; }
+  body.setup #pip, #skel { position: fixed; top: 0; left: 0; right: 0; bottom: var(--warmH); width: 100%; height: calc(100% - var(--warmH)); }
+  body.setup #pip { display: block; max-width: none; aspect-ratio: auto; object-fit: contain; border: 0; border-radius: 0; z-index: 2; }
+  #skel { z-index: 3; pointer-events: none; }
+  #warm { position: fixed; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom) + 8px); height: calc(var(--warmH) - 16px); z-index: 4; display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 16px; background: var(--panel); border: 1px solid rgba(255,255,255,.12); overflow: hidden; }
+  #warm[hidden] { display: none; }
+  #fig { height: calc(var(--warmH) - 40px); aspect-ratio: 3 / 4; border-radius: 12px; background: rgba(255,255,255,.06); }
+  #warm h2 { margin: 2px 0; font-size: clamp(28px, 5vh, 56px); line-height: 1; color: var(--accent); white-space: nowrap; }
+  #warm p { margin: 4px 0; color: var(--muted); font-size: clamp(14px, 2vh, 20px); line-height: 1.25; }
+  .wstep { font-size: 13px; letter-spacing: .05em; color: var(--muted); }
+  .wlive { font: 800 clamp(18px, 3vh, 28px) system-ui, sans-serif; min-height: 1.2em; font-variant-numeric: tabular-nums; }
+  .wbar { height: 8px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; margin-top: 6px; }
+  .wbar i { display: block; height: 100%; background: var(--accent); transform-origin: left center; }
+  #setupCancel { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 10px); z-index: 5; font: 700 14px system-ui, sans-serif; padding: 8px 12px; min-height: 40px; border-radius: 10px; border: 0; background: rgba(0,0,0,.6); color: #fff; }
+  #setupCancel[hidden] { display: none; }
   #note { position: fixed; left: 50%; bottom: calc(52% + 10px); transform: translateX(-50%); z-index: 4; background: rgba(0,0,0,.62); padding: 6px 12px; border-radius: 10px; font-size: 13px; color: var(--muted); max-width: 92vw; text-align: center; pointer-events: none; }
   #note[hidden] { display: none; }
 </style>
@@ -39,6 +58,18 @@
 <video id="pip" playsinline muted></video>
 <div id="note" hidden></div>
 <button id="endBtn" hidden>End walk</button>
+<canvas id="skel"></canvas>
+<button id="setupCancel" hidden>Use touch instead</button>
+<div id="warm" hidden>
+  <canvas id="fig" width="240" height="320"></canvas>
+  <div>
+    <div id="wStep" class="wstep"></div>
+    <h2 id="wBig"></h2>
+    <p id="wSmall"></p>
+    <div id="wLive" class="wlive"></div>
+    <div class="wbar"><i id="wFill"></i></div>
+  </div>
+</div>
 
 <div id="title" class="screen">
   <div class="card">
@@ -63,7 +94,7 @@
     <h2>Walk complete</h2>
     <table class="stats" id="sumStats"></table>
     <div class="payoff" id="payoff"></div>
-    <div class="btns"><button id="again" class="main">Walk again</button></div>
+    <div class="btns"><button id="again" class="main">Walk again</button><button id="saveClip" class="secondary" hidden>Save warm-up clip</button></div>
   </div>
 </div>
 
@@ -579,6 +610,7 @@
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
     if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);
     $('payoff').innerHTML = lines.join('');
+    $('saveClip').hidden = !Warm.clip;
     show('summary');
   }
 
@@ -599,40 +631,214 @@
     startWalk();
     note('Tap the left zone to walk, double-tap and hold to run. Drag the right zone to drift. Point before a corner to turn there.', 7000);
   });
-  $('playCamera').addEventListener('click', async () => {
-    show(null);
+  // ---------- camera setup and warm-up ----------
+  // Every camera session: the engine's framing check and stand-still baseline (no move test, so a
+  // missed move never stalls setup), then a timed warm-up of the moves this game uses. Each move
+  // gets big words, one line on how to do it, a timer bar, a looping figure and live feedback; the
+  // engine's stick figure sits on the camera view. Anything missed after two rounds gets a third.
+  const LIFT_KEY = 'manhattan-miles:liftSource';
+  const MOVES = {
+    march: { big: 'March', small: 'In place, knees up toward hip height.', say: 'March in place.', event: 'step', need: 4 },
+    turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1 },
+    turnR: { big: 'Turn right', small: 'Feet still. Turn your shoulders right, then back.', say: 'Turn your shoulders right.', event: 'turn_right', need: 1, side: 1 },
+  };
+  const MOVE_NAMES = { march: 'marching', turnL: 'left turn', turnR: 'right turn' };
+  const move = (id, secs, round) => Object.assign({ id, secs, round }, MOVES[id]);
+  const warmPlan = () => [
+    { id: 'intro', big: 'Warm-up', small: 'Marching and shoulder turns, two rounds.', say: 'Warm-up. Marching and shoulder turns.', secs: 2.5 },
+    move('march', 8, 1), move('turnL', 3, 1), move('turnR', 3, 1),
+    { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
+    move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
+  ];
+  const Warm = { plan: [], i: -1, left: 0, len: 1, hits: 0, seen: {}, extra: false, done: false, switched: false, clip: null, overlay: null };
+
+  try { const v = localStorage.getItem(LIFT_KEY); if (v === 'image' || v === 'auto') engine.cfg.march.liftSource = v; } catch (_) {}
+  for (const ev of ['step', 'turn_left', 'turn_right']) {
+    engine.on(ev, () => { const c = Warm.plan[Warm.i]; if (G.state === 'setup' && c && c.event === ev) Warm.hits++; });
+  }
+
+  function enterSetup() {
+    G.state = 'setup';
+    document.body.classList.add('setup');
     $('pip').style.display = 'block';
-    note('Starting camera...', 0);
+    $('setupCancel').hidden = false;
+    Warm.i = -1;
+    if (!Warm.overlay) Warm.overlay = new RE.DebugOverlay($('skel'), engine);
+    else if (!Warm.overlay.visible) Warm.overlay.toggle();
+  }
+  function exitSetup() {
+    document.body.classList.remove('setup');
+    $('warm').hidden = true;
+    $('setupCancel').hidden = true;
+    if (Warm.overlay && Warm.overlay.visible) Warm.overlay.toggle(); // three-finger tap brings it back mid-walk
+    Warm.i = -1;
+  }
+
+  async function runCamera(startSource) {
+    show(null);
+    enterSetup();
     try {
-      await engine.start('living_room');
+      await startSource();
     } catch (err) {
+      exitSetup();
       $('pip').style.display = 'none';
       note('Camera unavailable: ' + err.message + '. Using touch controls.');
       enableTouch();
       startWalk();
       return;
     }
-    const off = engine.on('calibration', (s) => note(s.prompt, 0));
-    if (!engine.is_calibrated()) await engine.calibrate('living_room').catch(() => {});
-    off();
-    note('Calibrated. Start marching.', 7000);
+    try { await engine.calibrate('living_room', { moveTest: false }); } catch (_) { return; } // cancelled
+    if (G.state !== 'setup') return;
+    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, switched: false, clip: null });
+    engine.start_recording({ game: 'manhattan-miles', warmup: true, liftSource: engine.cfg.march.liftSource });
+    $('warm').hidden = false;
+    setStep(0);
+  }
+
+  function setStep(i) {
+    const c = Warm.plan[i];
+    Warm.i = i;
+    Warm.left = Warm.len = c.secs;
+    Warm.hits = 0;
+    $('wStep').textContent = c.round ? `Round ${c.round}` : '';
+    $('wBig').textContent = c.big;
+    $('wSmall').textContent = c.small;
+    $('wLive').textContent = c.results || '';
+    RE.speak(c.say);
+  }
+
+  function updateWarm(dt, now) {
+    if (G.state !== 'setup' || Warm.i < 0) return; // Warm.i < 0 while the engine checks framing
+    const c = Warm.plan[Warm.i];
+    Warm.left -= dt;
+    // stop the clip before the recorder's own 30 s cutoff: its recording_done event carries the whole
+    // clip, and the debug overlay stalls trying to print it in the event log
+    if (engine.is_recording() && engine.recording_ms() > 28000) Warm.clip = engine.stop_recording();
+    $('wFill').style.transform = `scaleX(${Math.max(0, Warm.left / Warm.len)})`;
+    if (c.event) $('wLive').textContent = liveText(c);
+    drawFig($('fig'), c.id, now / 1000);
+    if (Warm.left > 0) return;
+
+    if (c.event) {
+      const ok = Warm.hits >= c.need;
+      if (ok) Warm.seen[c.id] = true;
+      if (c.id === 'march') {
+        if (ok) { try { localStorage.setItem(LIFT_KEY, engine.cfg.march.liftSource); } catch (_) {} }
+        else if (!Warm.switched) {
+          // no steps: read knee lift the other way (3D world landmarks or the 2D image) from here on
+          Warm.switched = true;
+          engine.cfg.march.liftSource = engine.cfg.march.liftSource === 'image' ? 'auto' : 'image';
+        }
+      }
+    }
+    if (Warm.i + 1 >= Warm.plan.length && !Warm.extra) {
+      Warm.extra = true;
+      const again = ['march', 'turnL', 'turnR'].filter((id) => !Warm.seen[id]);
+      if (again.length) {
+        Warm.plan.push({ id: 'round', big: 'One more round', small: `Just the ${again.map((id) => MOVE_NAMES[id]).join(' and ')}.`, say: 'One more round.', secs: 2 },
+          ...again.map((id) => move(id, id === 'march' ? 8 : 3, 3)));
+      }
+    }
+    if (Warm.i + 1 >= Warm.plan.length && !Warm.done) {
+      Warm.done = true;
+      if (engine.is_recording()) Warm.clip = engine.stop_recording();
+      const marched = !!Warm.seen.march;
+      Warm.plan.push({
+        id: 'done', secs: 3,
+        big: marched ? 'Warm-up done' : 'Marching not seen',
+        small: marched ? 'Start marching to walk.' : 'Walk anyway. Three-finger tap shows the stick figure. Save the clip on the end screen so the engine can be tuned.',
+        say: marched ? 'Warm-up done. Start marching.' : 'The camera did not see your marching.',
+        results: ['march', 'turnL', 'turnR'].map((id) => `${MOVES[id].big} ${Warm.seen[id] ? '\u2713' : '\u2717'}`).join('   '),
+      });
+    }
+    if (Warm.i + 1 < Warm.plan.length) { setStep(Warm.i + 1); return; }
+    exitSetup();
+    startWalk();
+  }
+
+  function liveText(c) {
+    if (Warm.hits >= c.need) return 'Got it';
+    if (c.id === 'march') return `Steps seen: ${Warm.hits}`;
+    const turn = engine.signals().turn || 0;
+    return `Turn: ${Math.round(Math.max(0, c.side * turn) * 100)}%`;
+  }
+
+  // A figure that loops the move, facing you like a mirror: "left" moves to your left on screen.
+  function drawFig(cv, id, t) {
+    const x = cv.getContext('2d'), Wd = cv.width, Ht = cv.height;
+    x.clearRect(0, 0, Wd, Ht);
+    if (!MOVES[id]) return;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const period = id === 'march' ? 1.1 : 2;
+    const u = (t % period) / period, wave = Math.sin(u * Math.PI * 2), hold = Math.sin(Math.PI * clamp(u * 1.25, 0, 1));
+    let kneeL = 0, kneeR = 0, armL = 0.15, armR = 0.15, lift = 0, yaw = 0;
+    const side = MOVES[id].side || 0;
+    if (id === 'march') { kneeL = 0.75 * Math.max(0, wave); kneeR = 0.75 * Math.max(0, -wave); armL = 0.15 + 0.35 * Math.max(0, -wave); armR = 0.15 + 0.35 * Math.max(0, wave); lift = 3 * Math.abs(wave); }
+    else yaw = 0.9 * hold;
+    x.save();
+    x.scale(Wd / 240, Ht / 320);
+    const cx = 120, ground = 296, hip = { x: cx, y: 176 - lift }, neck = { x: cx + side * 6 * yaw, y: hip.y - 70 };
+    const half = 24 * Math.cos(yaw);
+    // the shoulder on the turning side goes back (dimmer), the other comes forward
+    const sh = (k) => ({ x: neck.x + k * half, y: neck.y });
+    const limb = (pts, col) => { x.strokeStyle = col; x.beginPath(); x.moveTo(pts[0].x, pts[0].y); for (const p of pts.slice(1)) x.lineTo(p.x, p.y); x.stroke(); };
+    const leg = (k, raise) => {
+      const h = { x: hip.x + k * 13, y: hip.y }, Lg = 56;
+      if (raise > 0.05) { const kn = { x: h.x + k * 6, y: h.y + Lg - 50 * raise }; return [h, kn, { x: kn.x, y: kn.y + Lg }]; }
+      const f = { x: cx + k * 22, y: ground - lift }, d = Math.min(Math.hypot(f.x - h.x, f.y - h.y), 2 * Lg - 0.01), m = { x: (h.x + f.x) / 2, y: (h.y + f.y) / 2 };
+      const off = Math.sqrt(Math.max(0, Lg * Lg - (d * d) / 4));
+      return [h, { x: m.x + k * off, y: m.y }, f];
+    };
+    const arm = (k, a) => { const s0 = sh(k), el = { x: s0.x + k * Math.sin(a) * 44, y: s0.y + Math.cos(a) * 44 }; return [s0, el, { x: el.x + k * Math.sin(a) * 40, y: el.y + Math.cos(a) * 40 }]; };
+    const gold = '#ffcf3f', dim = 'rgba(255,207,63,.45)';
+    x.fillStyle = 'rgba(0,0,0,.35)'; x.beginPath(); x.ellipse(cx, ground + 6, 44 - lift * 0.3, 9, 0, 0, Math.PI * 2); x.fill();
+    x.lineCap = x.lineJoin = 'round'; x.lineWidth = 13;
+    limb(leg(-1, kneeL), gold); limb(leg(1, kneeR), gold);
+    limb([hip, neck], gold);
+    limb(arm(side || -1, armL), side ? dim : gold);
+    limb([sh(-1), sh(1)], gold);
+    limb(arm(side ? -side : 1, armR), gold);
+    const head = { x: neck.x, y: neck.y - 24 };
+    x.fillStyle = gold; x.beginPath(); x.arc(head.x, head.y, 19, 0, Math.PI * 2); x.fill();
+    if (side) {
+      // nose shows which way the head and shoulders face, and an arrow sweeps that way
+      x.fillStyle = '#231a00'; x.beginPath(); x.arc(head.x + side * 11 * yaw, head.y + 2, 4, 0, Math.PI * 2); x.fill();
+      x.strokeStyle = 'rgba(255,255,255,.6)'; x.lineWidth = 6;
+      x.beginPath(); x.ellipse(cx, 30, 50, 14, 0, Math.PI * 0.15, Math.PI * 0.85); x.stroke(); // a shallow arc above the head
+      const ax = cx + side * 50 * Math.cos(Math.PI * 0.15), ay = 30 + 14 * Math.sin(Math.PI * 0.15);
+      x.beginPath(); x.moveTo(ax - side * 16, ay + 4); x.lineTo(ax, ay); x.lineTo(ax - side * 8, ay - 12); x.stroke();
+    }
+    x.restore();
+  }
+
+  $('playCamera').addEventListener('click', () => runCamera(() => engine.start('living_room')));
+  $('setupCancel').addEventListener('click', () => {
+    engine.cancel_calibration();
+    if (engine.is_recording()) Warm.clip = engine.stop_recording();
+    engine.stop();
+    exitSetup();
+    $('pip').style.display = 'none';
+    enableTouch();
     startWalk();
   });
   $('endBtn').addEventListener('click', endWalk);
   $('again').addEventListener('click', () => { G.state = 'title'; show('title'); });
+  $('saveClip').addEventListener('click', () => { if (Warm.clip) RE.downloadClip(Warm.clip, `manhattan-miles-warmup-${Date.now()}.json`); });
 
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     update(dt, now);
+    updateWarm(dt, now);
     render(now);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
   // test hook for automated checks
-  window.__game = { G, P, T, whereAmI, engineLoco: ENGINE_LOCO, get queued() { return queued; } };
+  // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
+  window.__game = { G, P, T, Warm, engine, whereAmI, runCamera, engineLoco: ENGINE_LOCO, get queued() { return queued; } };
 })();
 </script>
 </body>
