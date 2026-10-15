@@ -15,6 +15,14 @@
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
   #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 190px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
+  #phoneBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 234px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #phoneBtn[hidden], #phone[hidden] { display: none; }
+  #phone { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 6; width: min(290px, 82vw); background: #0d1320; border: 3px solid #3a4459; border-radius: 28px; padding: 16px 14px 14px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+  #phone h3 { margin: 0 0 10px; text-align: center; font: 800 15px system-ui, sans-serif; color: var(--muted); }
+  #phone ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  #phone li { font: 700 18px system-ui, sans-serif; padding: 12px 14px; border-radius: 12px; background: #1a2232; color: var(--ink); cursor: pointer; }
+  #phone li.on { background: var(--accent); color: #111; }
+  #phone p { margin: 10px 0 0; font: 600 12px system-ui, sans-serif; color: var(--muted); text-align: center; }
   .screen { position: fixed; inset: 0; z-index: 5; display: flex; align-items: safe center; justify-content: center; overflow-y: auto; padding: 20px; background: rgba(6, 9, 15, .74); }
   .screen[hidden] { display: none; }
   .card { width: min(440px, 100%); background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 22px 20px; text-align: center; }
@@ -25,6 +33,8 @@
   .pick { display: grid; gap: 6px; text-align: left; font: 700 13px system-ui, sans-serif; color: var(--muted); margin-top: 6px; }
   .pick select { width: 100%; min-width: 0; font: 600 17px system-ui, sans-serif; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.2); background: #1a2232; color: var(--ink); }
   .card p.hint { margin: 0; font-size: 14px; text-align: left; }
+  .check { display: flex; gap: 8px; align-items: center; text-align: left; font: 600 14px system-ui, sans-serif; color: var(--muted); }
+  .check input { width: 20px; height: 20px; }
   .card p.stamp { margin: 12px 0 0; font-size: 12px; opacity: .6; }
   .btns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 14px; }
   button.main { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; color: #231a00; background: var(--accent); }
@@ -64,7 +74,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.5.1 from hungkach/body-arcade@8dd9d7e, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.5.2 from hungkach/body-arcade@96b523a, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -73,7 +83,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.5.1';
+  RE.version = '0.5.2';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -1007,7 +1017,7 @@
 
     update(ctx, out) {
       const t = ctx.t;
-      const cand = ctx.low ? { left: false, right: false } : { left: this.candidate(ctx, 'left', out), right: this.candidate(ctx, 'right', out) };
+      const cand = ctx.upperLow ? { left: false, right: false } : { left: this.candidate(ctx, 'left', out), right: this.candidate(ctx, 'right', out) };
       if (cand.left && cand.right) cand.left = cand.right = false;
       for (const side of ['left', 'right']) {
         if (!cand[side]) { this.since[side] = null; this.fired[side] = false; continue; }
@@ -1041,7 +1051,7 @@
 
     update(ctx, out) {
       const t = ctx.t;
-      const up = !ctx.low && wristOverhead(ctx, L.L_WRIST, this.c.aboveNose) && wristOverhead(ctx, L.R_WRIST, this.c.aboveNose);
+      const up = !ctx.upperLow && wristOverhead(ctx, L.L_WRIST, this.c.aboveNose) && wristOverhead(ctx, L.R_WRIST, this.c.aboveNose);
       out.handsOverhead = up;
       if (!up) { this.since = null; this.fired = false; return; }
       if (this.since === null) this.since = t;
@@ -1071,7 +1081,7 @@
         const s = hand === 'left' ? b.ls : b.rs;
         const w = hand === 'left' ? b.lw : b.rw;
         // both hands overhead is the turn-around gesture, not a wave
-        if (ctx.low || out.handsOverhead || !seen(ctx, wi) || w.y - s.y < this.c.minAbove) { this.hands[hand] = fresh(); continue; }
+        if (ctx.upperLow || out.handsOverhead || !seen(ctx, wi) || w.y - s.y < this.c.minAbove) { this.hands[hand] = fresh(); continue; }
         const x = w.x - s.x;
         let reversed = false;
         if (h.dir === 0) {
@@ -3128,6 +3138,8 @@
 <video id="pip" playsinline muted></video>
 <div id="note" hidden></div>
 <button id="endBtn" hidden>End walk</button>
+<button id="phoneBtn" hidden>Phone</button>
+<div id="phone" hidden><h3>Phone</h3><ul id="phoneList"></ul><p>Turn your shoulders to choose. Wave your right hand to pick, your left to close.</p></div>
 <canvas id="skel"></canvas>
 <button id="setupCancel" hidden>Use touch instead</button>
 <div id="warm" hidden>
@@ -3152,7 +3164,7 @@
       <li>Both hands overhead to turn around</li>
       <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape. Your view follows your slips and level changes.</li>
     </ul>
-    <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
+    <p>Pick a session length: the game plans three stops, talks you through each turn and calls high knees intervals. Marching is easy on tired days; the intervals make it a real session. Wave your left hand to open the phone menu.</p>
     <div class="btns">
       <button id="playDemo" class="main">Walk with touch controls</button>
       <label class="pick">Camera setup
@@ -3165,6 +3177,14 @@
         </select>
       </label>
       <p id="modeHint" class="hint"></p>
+      <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
+      <label class="pick">Session
+        <select id="len">
+          <option value="10">10 minutes</option>
+          <option value="15" selected>15 minutes</option>
+          <option value="20">20 minutes</option>
+        </select>
+      </label>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
     <p class="stamp" id="buildStamp"></p>
@@ -3313,15 +3333,146 @@
   }
 
   // ---------- session ----------
-  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0, fightsDone: 0 };
+  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0, fightsDone: 0,
+    minutes: 15, playMs: 0, route: [], leg: 0, nav: '', cueKey: '', interval: null, intervalIn: 0, intervals: 0, halfSaid: false, finishAt: 0 };
 
-  function pickDestination() {
-    const here = { ai: nearestAve(P.x), st: nearestSt(P.z) };
-    const far = PLACES.filter((p) => Math.abs(p.ai - here.ai) + Math.abs(p.st - here.st) >= 6);
-    const pool = far.length ? far : PLACES;
-    let next = pool[Math.floor(Math.random() * pool.length)];
-    if (G.dest && next.name === G.dest.name) next = pool[(pool.indexOf(next) + 1) % pool.length];
-    G.dest = next;
+  // ---------- the session: a route of stops, spoken directions, run intervals ----------
+  // A session is G.minutes long (10, 15 or 20, picked on the title screen). The route is three
+  // stops sized to the time; finish early and a bonus stop is picked for the time left. Directions
+  // are spoken as you near each corner (turn here, or the wrong way), and every couple of minutes
+  // of walking a high knees interval is called: the work, with walking as the recovery.
+  const SESSION = {
+    legs: 3,
+    metersPerMin: 190,   // game meters a minute of the session covers, fights and stops included
+    cueAhead: 55,        // m before a corner that its direction is spoken
+    intervalEveryS: 120, // walking between intervals (a fight resets it: the fight was the work)
+    intervalS: 30,
+  };
+  const placeXZ = (p) => ({ x: aveX(p.ai), z: stZ(p.st) });
+  const legMeters = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+  // the unvisited place whose walk from `from` is closest to `want` meters
+  function pickStop(from, want, used) {
+    let best = null, bestErr = Infinity;
+    for (const p of PLACES) {
+      if (used.includes(p.name)) continue;
+      const d = legMeters(from, placeXZ(p));
+      if (d < 250) continue;
+      const err = Math.abs(d - want);
+      if (err < bestErr) { best = p; bestErr = err; }
+    }
+    return best || PLACES.find((p) => !used.includes(p.name)) || PLACES[0];
+  }
+  function planRoute() {
+    const want = (G.minutes * SESSION.metersPerMin) / SESSION.legs;
+    G.route = [];
+    let from = { x: P.x, z: P.z };
+    for (let i = 0; i < SESSION.legs; i++) {
+      const p = pickStop(from, want, G.route.map((r) => r.name));
+      G.route.push(p);
+      from = placeXZ(p);
+    }
+    G.leg = 0;
+    G.dest = G.route[0];
+  }
+  const leftMs = () => G.minutes * 60000 - G.playMs;
+  // blocks and avenues to the stop, in words
+  function destWords() {
+    const dAve = G.dest.ai - nearestAve(P.x), dSt = G.dest.st - nearestSt(P.z);
+    const parts = [];
+    if (dSt) parts.push(`${Math.abs(dSt)} ${Math.abs(dSt) === 1 ? 'block' : 'blocks'} ${dSt > 0 ? 'north' : 'south'}`);
+    if (dAve) parts.push(`${Math.abs(dAve)} ${Math.abs(dAve) === 1 ? 'avenue' : 'avenues'} ${dAve > 0 ? 'east' : 'west'}`);
+    return parts.length ? parts.join(' and ') : 'right here';
+  }
+  // compass heading 0 north, 1 east, 2 south, 3 west
+  const headingOf = (yaw) => ((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4;
+  // the intersection ahead in the direction you face
+  function crossingAhead() {
+    const h = headingOf(P.yaw);
+    if (h === 0 || h === 2) {
+      const ai = nearestAve(P.x), k = P.z / ST_GAP;
+      const n = (h === 0 ? Math.floor(k + 0.02) + 1 : Math.ceil(k - 0.02) - 1) + FIRST_ST;
+      if (n < FIRST_ST || n > LAST_ST) return null;
+      return { ai, st: n, h, dist: Math.abs(stZ(n) - P.z), name: streetName(n, ai) };
+    }
+    const st = nearestSt(P.z);
+    let n = -1;
+    if (h === 1) { for (let i = 0; i < NA; i++) if (aveX(i) > P.x + 2) { n = i; break; } }
+    else { for (let i = NA - 1; i >= 0; i--) if (aveX(i) < P.x - 2) { n = i; break; } }
+    if (n < 0) return null;
+    return { ai: n, st, h, dist: Math.abs(aveX(n) - P.x), name: AVES[n][0] };
+  }
+  // what to do at crossing c to reach the stop: go straight while there is still ground to cover
+  // this way, then turn toward it; the wrong way is a turn around
+  function adviceAt(c) {
+    const dA = G.dest.ai - c.ai, dS = G.dest.st - c.st;
+    if (!dA && !dS) return { turn: 0, arrive: true };
+    const along = [dS, dA, -dS, -dA][c.h];
+    if (along > 0) return { turn: 0 };
+    let t;
+    if (c.h % 2 === 0) t = dA > 0 ? 1 : dA < 0 ? 3 : (c.h + 2) % 4;
+    else t = dS > 0 ? 0 : dS < 0 ? 2 : (c.h + 2) % 4;
+    return { turn: (t - c.h + 4) % 4 };
+  }
+  function navTick() {
+    if (!G.dest) return;
+    const c = crossingAhead();
+    if (!c) { G.nav = 'Turn around'; return; }
+    const a = adviceAt(c);
+    const side = a.turn === 1 ? 'right' : 'left';
+    G.nav = a.arrive ? `${G.dest.name} at ${c.name}` : a.turn === 0 ? `Straight through ${c.name}` : a.turn === 2 ? 'Wrong way: turn around' : `Turn ${side} at ${c.name}`;
+    const key = `${c.ai},${c.st},${c.h}`;
+    if (c.dist > SESSION.cueAhead || c.dist < 5 || key === G.cueKey) return;
+    G.cueKey = key;
+    if (a.turn === 1 || a.turn === 3) say(`At ${c.name}, turn ${side}.`, 'prompt');
+    else if (a.turn === 2) say('Wrong way. Turn around.', 'prompt');
+  }
+  function sayRoute(first) {
+    const lead = first ? `Today: ${G.route.map((r) => r.name).join(', then ')}. First stop, ${G.dest.name}` : `Next stop, ${G.dest.name}`;
+    say(`${lead}: ${destWords()}.`, 'instruction');
+  }
+  function nextStop(now) {
+    G.leg++;
+    if (G.leg >= G.route.length) {
+      // the route is done with time left: a bonus stop sized to the time
+      const want = Math.max(400, (leftMs() / 60000) * SESSION.metersPerMin * 0.8);
+      G.route.push(pickStop({ x: P.x, z: P.z }, want, G.route.map((r) => r.name).slice(-4)));
+    }
+    G.dest = G.route[G.leg];
+    G.cueKey = '';
+  }
+  // the session clock, run intervals and the finish (walking only: fights pause intervals)
+  function sessionTick(dt, now) {
+    if (G.finishAt) { if (now >= G.finishAt && !Fight.active) { G.finishAt = 0; endWalk(); } return; }
+    G.playMs += dt * 1000;
+    if (!G.halfSaid && G.playMs >= G.minutes * 30000) { G.halfSaid = true; say('Halfway. Keep it going.', 'feedback'); }
+    if (leftMs() <= 0 && !Fight.active) {
+      G.finishAt = now + 4000;
+      G.interval = null;
+      say(`Time. Session complete: ${G.arrived} ${G.arrived === 1 ? 'stop' : 'stops'} and ${(G.meters / 1609.34).toFixed(1)} city miles.`, 'instruction');
+      banner('Session complete', 4000, now);
+      return;
+    }
+    if (Fight.active) return;
+    const iv = G.interval;
+    if (!iv) {
+      if (P.speed > 0.5) G.intervalIn -= dt;
+      if (G.intervalIn <= 0 && leftMs() > (SESSION.intervalS + 20) * 1000) {
+        G.interval = { left: SESSION.intervalS, ran: 0, tenSaid: false };
+        say(`Interval! High knees for ${SESSION.intervalS} seconds.`, 'prompt');
+        banner('High knees!', 1800, now);
+      }
+      return;
+    }
+    iv.left -= dt;
+    if (P.running) iv.ran += dt;
+    if (!iv.tenSaid && iv.left <= 10) { iv.tenSaid = true; say('Ten more seconds.', 'feedback'); }
+    if (iv.left <= 0) {
+      const good = iv.ran >= SESSION.intervalS * 0.6;
+      if (good) G.intervals++;
+      say(good ? 'Done. Walk it off.' : 'Interval over. Higher knees next time.', 'feedback');
+      G.interval = null;
+      G.intervalIn = SESSION.intervalEveryS;
+    }
   }
 
   // ---------- engine ----------
@@ -3333,14 +3484,72 @@
   engine.on('run_start', () => { if (G.state === 'walk') { say('Running', 'feedback'); banner('Running', 1500); } });
   // point: a quick 90 degree turn onto the cross street (steering does the rest)
   engine.on('point', (e) => {
-    if (G.state !== 'walk') return;
+    if (G.state !== 'walk' || Phone.open) return;
     const facing = (P.yaw * 180) / Math.PI;
     engine.set_facing(Math.round(facing / 90) * 90 + (e.side === 'right' ? 90 : -90));
   });
   // turn around: the engine's free movement model adds 180 itself
 
+  // ---------- the phone: wave your left hand to open it ----------
+  // From 4 ft away you cannot tap the screen, so the menu runs on the moves you already know: a
+  // left-hand wave opens it, a shoulder turn moves the highlight (it does not steer while the phone
+  // is up), a right-hand wave picks, a left-hand wave closes. The walk and the session clock pause.
+  // Touch players use the Phone button and tap.
+  const PHONE_ITEMS = [
+    { id: 'resume', label: 'Back to the walk' },
+    { id: 'repeat', label: 'Repeat directions' },
+    { id: 'skip', label: 'Skip this stop' },
+    { id: 'end', label: 'End session' },
+  ];
+  const Phone = { open: false, idx: 0, movedAt: 0, ready: true, facing: 0 };
+  function renderPhone() {
+    $('phoneList').innerHTML = PHONE_ITEMS.map((it, i) => `<li data-i="${i}" class="${i === Phone.idx ? 'on' : ''}">${it.label}</li>`).join('');
+  }
+  function openPhone() {
+    if (G.state !== 'walk' || Fight.active || Phone.open) return;
+    Object.assign(Phone, { open: true, idx: 0, movedAt: performance.now(), ready: false, facing: engine.locomotion().facing });
+    renderPhone();
+    $('phone').hidden = false;
+    say('Phone. Turn to choose, wave your right hand to pick.', 'prompt');
+  }
+  function closePhone() {
+    if (!Phone.open) return;
+    Phone.open = false;
+    $('phone').hidden = true;
+    engine.set_facing(Phone.facing);
+  }
+  function pickPhone(i = Phone.idx) {
+    const it = PHONE_ITEMS[i];
+    closePhone();
+    if (it.id === 'repeat') say(`${G.nav || 'Keep going'}. ${G.dest.name}: ${destWords()}.`, 'prompt');
+    else if (it.id === 'skip') { say(`Skipping ${G.dest.name}.`, 'feedback'); nextStop(performance.now()); sayRoute(false); }
+    else if (it.id === 'end') endWalk();
+  }
+  function phoneTick(now) {
+    engine.set_facing(Phone.facing); // the turn picks; it does not steer
+    const turn = engine.signals().turn || 0;
+    if (Math.abs(turn) < 0.15) Phone.ready = true;
+    if (Math.abs(turn) >= 0.35 && (Phone.ready || now - Phone.movedAt > 900)) {
+      Phone.idx = (Phone.idx + (turn > 0 ? 1 : -1) + PHONE_ITEMS.length) % PHONE_ITEMS.length;
+      Phone.movedAt = now; Phone.ready = false;
+      renderPhone();
+      say(PHONE_ITEMS[Phone.idx].label, 'prompt');
+    }
+  }
+  engine.on('wave', (e) => {
+    if (G.state !== 'walk' || Fight.active) return;
+    if (!Phone.open) { if (e.hand === 'left') openPhone(); }
+    else if (e.hand === 'right') pickPhone();
+    else closePhone();
+  });
+  $('phoneBtn').addEventListener('click', () => { if (Phone.open) closePhone(); else openPhone(); });
+  $('phoneList').addEventListener('click', (ev) => { const li = ev.target.closest('li'); if (li) pickPhone(Number(li.dataset.i)); });
+
   // ---------- update ----------
   function update(dt, now) {
+    if (G.state !== 'walk') return;
+    if (Phone.open) { phoneTick(now); P.speed = 0; easeView(dt); return; }
+    sessionTick(dt, now);
     if (G.state !== 'walk') return;
     if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
@@ -3373,6 +3582,7 @@
     if (P.cell !== null && cell !== P.cell) G.blocks++;
     P.cell = cell;
     if (G.dest && Math.hypot(P.x - aveX(G.dest.ai), P.z - stZ(G.dest.st)) < T.arriveRadius) arrive(now);
+    navTick();
     updateEncounters(dt, now);
     easeView(dt);
   }
@@ -3388,7 +3598,9 @@
   function arrive(now) {
     G.arrived++;
     banner(`Arrived at ${G.dest.name}`, 3500, now);
-    pickDestination();
+    say(`You made it to ${G.dest.name}.`, 'feedback');
+    nextStop(now);
+    sayRoute(false);
   }
   function banner(text, ms, now = performance.now()) {
     G.banner = text;
@@ -3427,11 +3639,13 @@
     // guard breaks: blocked punches wear the guard down (guardHp, raw damage); at 0 the hands drop
     // for brokenMs and take openBonus damage. It refills by regen a second when they are not covering.
     guard: { hp: 4, regen: 0.4, brokenMs: 1600 },
+    // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
+    fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
   };
   const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
-    armTilt: 0, impacts: [], clip: null, recording: false };
-  const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+    armTilt: 0, impacts: [], clip: null, recording: false, people: [] };
+  const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
@@ -3472,8 +3686,13 @@
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]));
       Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp });
     }
-    say(n > 1 ? 'Two of them ahead.' : 'Someone ahead. Get ready.', 'feedback');
-    banner(n > 1 ? 'Two opponents ahead' : 'Opponent ahead', 2000);
+    // the person they are hassling, just past them and to the side
+    const side = Math.random() < 0.5 ? -1 : 1, rx = Math.cos(P.yaw) * side, rz = -Math.sin(P.yaw) * side;
+    let vx = x + rx * 1.6 + Math.sin(P.yaw) * 0.8, vz = z + rz * 1.6 + Math.cos(P.yaw) * 0.8;
+    if (blocked(vx, vz)) { vx = x - rx * 1.6 + Math.sin(P.yaw) * 0.8; vz = z - rz * 1.6 + Math.cos(P.yaw) * 0.8; }
+    Fight.people = [{ kind: 'victim', x: vx, z: vz, look: Fight.foes[0], col: VICTIM_COLS[G.fightsDone % VICTIM_COLS.length], seed: Math.random() }];
+    say(n > 1 ? 'Two of them hassling someone up ahead. Go help.' : 'Someone is getting hassled up ahead. Go help.', 'confirm');
+    banner(n > 1 ? 'Two opponents ahead' : 'Someone needs help', 2000);
   }
   const foeDist = (f) => Math.hypot(f.x - P.x, f.z - P.z);
   const bearingTo = (f) => ((Math.atan2(f.x - P.x, f.z - P.z) * 180) / Math.PI + 360) % 360;
@@ -3483,6 +3702,9 @@
     const foe = current();
     if (!foe) return;
     Fight.active = { start: now, foe, range: 'close' };
+    // the fight is the work: a running interval stops, and the next one waits a full gap
+    G.interval = null; G.intervalIn = SESSION.intervalEveryS;
+    gatherCrowd(now);
     Fight.hp = FT.playerHp;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
     foe.guardHp = FT.guard.hp;
@@ -3510,6 +3732,68 @@
     if (engine.is_recording()) Fight.clip = engine.stop_recording();
   }
 
+  // ---------- the street around a fight ----------
+  // Every opponent is hassling someone. A crowd gathers once the fight starts, most of them filming
+  // on their phones; when it ends the person you helped says their piece (thanks or a roast: this
+  // game's humor is blue), the crowd cheers a knockout, and a knocked-out opponent stays down.
+  const VICTIM_COLS = [[236, 196, 70], [150, 110, 190], [90, 170, 200], [230, 130, 160]];
+  const CROWD_COLS = [[120, 130, 150], [180, 90, 70], [70, 110, 90], [200, 180, 150], [90, 90, 120], [160, 160, 170], [140, 100, 80]];
+  const LINES = {
+    thanks: [
+      'Thank you! I owe you a drink. A small one. Rent is due.',
+      'My hero! You smell like a gym bag, but my hero.',
+      'Holy crap, you actually did it. Thank you!',
+      'He got his ass handed to him. On a Tuesday. Beautiful.',
+      'Thanks! I was two seconds from crying into my bagel.',
+      'That was hot. Is that weird? That is weird. Thank you.',
+    ],
+    roast: [
+      'Took you long enough. My bodega cat fights faster.',
+      'Great. Now I am going viral as the guy who screamed.',
+      'You punch like you are hailing a cab. But thanks, I guess.',
+      'Cool. Could you have done that before he took my sandwich?',
+      'Six people filmed that and not one of them helped. Except you. Barely.',
+    ],
+    fled: [
+      'Yeah, run! Look at him go. Faster than the uptown express.',
+      'He ran off like he saw his landlord. Thanks!',
+      'And stay gone! Thank you, seriously.',
+    ],
+    escaped: [
+      'Wow. You just ran. Very brave. Very cardio.',
+      'Did you just leave me here? Thanks for nothing, marathon man.',
+    ],
+    lost: [
+      'Well. That was embarrassing for both of us.',
+      'Stay down, hero. I will call someone who has done a push-up.',
+    ],
+  };
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  function gatherCrowd(now) {
+    const a = Fight.active, foe = a.foe;
+    const n = Math.hypot(foe.x - P.x, foe.z - P.z) || 1, dx = (foe.x - P.x) / n, dz = (foe.z - P.z) / n;
+    const base = Math.atan2(dx, dz);
+    for (let i = 0; i < FT.crowd; i++) {
+      // a ring beyond them, where you can see it over their shoulders
+      const ang = base + (i / (FT.crowd - 1) - 0.5) * 2.6 + rand(-0.1, 0.1), r = rand(3.4, 4.8);
+      let x = foe.x + Math.sin(ang) * r, z = foe.z + Math.cos(ang) * r;
+      if (blocked(x, z)) { x = foe.x + Math.sin(ang) * 2.4; z = foe.z + Math.cos(ang) * 2.4; if (blocked(x, z)) continue; }
+      Fight.people.push({ kind: 'crowd', x, z, tx: x, tz: z, sx: foe.x + Math.sin(ang) * (r + 9), sz: foe.z + Math.cos(ang) * (r + 9),
+        joinAt: now + 700 + i * 1300, look: foe, phone: Math.random() < 0.75, col: CROWD_COLS[i % CROWD_COLS.length], seed: Math.random() });
+    }
+  }
+  function aftermath(how, now, last) {
+    const victim = Fight.people.find((p) => p.kind === 'victim');
+    const foe = last && last.state === 'ko' ? last : null;
+    for (const p of Fight.people) p.look = P; // everyone turns to you
+    if (how === 'won' && foe) Fight.people.push({ kind: 'ko', x: foe.x, z: foe.z, look: P, col: foe.col, seed: 0 });
+    if (how === 'won' || how === 'fled') for (const p of Fight.people) p.cheerUntil = now + 2500;
+    if (!victim) return;
+    const pool = how === 'won' ? (Math.random() < 0.6 ? LINES.thanks : LINES.roast) : LINES[how];
+    const line = pick(pool);
+    setTimeout(() => { if (G.state === 'walk') { say(line, 'confirm'); note(`\u201c${line}\u201d`, 6000); } }, 1200);
+  }
+
   function endFight(how, now) {
     const a = Fight.active;
     if (!a) return;
@@ -3524,9 +3808,12 @@
     engine.set_facing((P.yaw * 180) / Math.PI);
     if (isDemo()) setTouchButtons('walk');
     document.body.classList.remove('fighting');
-    const line = { won: 'Knockout! March on.', lost: 'You got dropped. Shake it off and march on.', escaped: 'You got away.' }[how];
+    const fled = how === 'won' && a.foe.state === 'flee';
+    if (fled) Fight.stats.fled++;
+    const line = fled ? 'They ran off. March on.' : { won: 'Knockout! March on.', lost: 'You got dropped. Shake it off and march on.', escaped: 'You got away.' }[how];
     say(line, 'feedback');
-    banner({ won: 'Knockout', lost: 'Dropped', escaped: 'Escaped' }[how], 2500, now);
+    banner(fled ? 'They ran off' : { won: 'Knockout', lost: 'Dropped', escaped: 'Escaped' }[how], 2500, now);
+    aftermath(fled ? 'fled' : how, now, a.foe);
   }
 
   // engine events while fighting
@@ -3569,6 +3856,11 @@
     if (foe.hp <= 0) {
       foe.state = 'ko'; foe.until = now + 1500;
       say('Knockdown!', 'feedback');
+      for (const p of Fight.people) p.cheerUntil = now + 2500;
+    } else if (!foe.fleeChecked && foe.hp < foe.maxHp * FT.fleeBelow && Fight.foes.filter((f) => f.state !== 'ko').length === 1) {
+      // a beaten opponent may cut and run
+      foe.fleeChecked = true;
+      if (Math.random() < FT.fleeChance) { foe.state = 'flee'; foe.until = now + FT.fleeMs; fightMsg('They ran off!', 1400); }
     }
   }
   // the engine's own punch classifier and the glove hitbox (gloveHits) both land punches; the
@@ -3657,6 +3949,7 @@
       }
       return;
     }
+    if (foe.state === 'flee') { if (now >= foe.until) endFight('won', now); return; }
     if (foe.state !== 'cover') foe.guardHp = Math.min(FT.guard.hp, (foe.guardHp ?? FT.guard.hp) + FT.guard.regen * (now - (foe.thinkAt || now)) / 1000);
     foe.thinkAt = now;
     // they read a held crouch: braced for the double, hands low and level dropped
@@ -3720,6 +4013,13 @@
     if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
     // the opponent keeps the range: close in, or a step back
     const foe = a.foe;
+    if (foe.state === 'flee') {
+      const fd = foeDist(foe) || 1;
+      foe.x += ((foe.x - P.x) / fd) * 7 * dt; foe.z += ((foe.z - P.z) / fd) * 7 * dt;
+      foe.walk = (foe.walk || 0) + dt * 14;
+      foeThink(a, now);
+      return;
+    }
     const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : a.range === 'mid' ? FT.rangeMid : FT.rangeClose;
     const d = foeDist(foe) || 1;
     const k = Math.min(1, dt * 4) * (d - want) / d;
@@ -3731,6 +4031,8 @@
   // walking: count down to the next encounter, and start the fight when you reach them
   function updateEncounters(dt, now) {
     if (Fight.active) return;
+    // the crowd and the person you helped stay behind as you walk on
+    if (Fight.people.length && !Fight.foes.length && Fight.people.every((p) => Math.hypot(p.x - P.x, p.z - P.z) > 60)) Fight.people = [];
     if (!Fight.foes.length) {
       if (P.speed > 0.5) Fight.waitS -= dt;
       if (Fight.waitS <= 0) spawnFoes();
@@ -3738,7 +4040,7 @@
     }
     const foe = current();
     const d = foeDist(foe);
-    if (d > 150) { Fight.foes = []; Fight.waitS = 20; return; } // walked away from them
+    if (d > 150) { Fight.foes = []; Fight.people = []; Fight.waitS = 20; return; } // walked away from them
     // they walk toward you once they see you
     if (d < FT.sees && d > FT.engage) {
       foe.walk = (foe.walk || 0) + dt * 6;
@@ -3791,6 +4093,7 @@
   // the opponent's frame in the world: facing you
   function foeFrame(f) {
     let fx = P.x - f.x, fz = P.z - f.z;
+    if (f.state === 'flee') { fx = -fx; fz = -fz; }
     const n = Math.hypot(fx, fz) || 1;
     fx /= n; fz /= n;
     return { fx, fz, rx: fz, rz: -fx };
@@ -3817,7 +4120,7 @@
     for (const k in GUARD_POSE) p[k] = GUARD_POSE[k].slice();
     const bob = Math.sin(t * 2.4) * 0.015, sway = Math.sin(t * 1.3) * 0.03;
     for (const k in p) { p[k][1] += k.startsWith('ft') ? 0 : bob; p[k][0] += k.startsWith('ft') ? 0 : sway; }
-    if (st === 'wait') {
+    if (st === 'wait' || st === 'flee') {
       // walking toward you, hands down
       const ph = Math.sin(f.walk || 0);
       p.elL = [-0.23, 1.15, 0.02 + 0.1 * ph]; p.elR = [0.23, 1.15, 0.02 - 0.1 * ph];
@@ -3990,6 +4293,74 @@
         ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.s * (f.state === 'shoot' ? 0.45 : 0.15), 0, Math.PI * 2); ctx.stroke();
       }
     }
+  }
+
+  // a bystander, the person they were hassling, or a knocked-out opponent left on the pavement
+  const PERSON_POSE = Object.assign({}, GUARD_POSE, {
+    shL: [-0.19, 1.42, 0], shR: [0.19, 1.42, 0], elL: [-0.23, 1.15, 0.02], elR: [0.23, 1.15, 0.02],
+    fiL: [-0.24, 0.9, 0.06], fiR: [0.24, 0.9, 0.06], knL: [-0.11, 0.52, 0.02], knR: [0.11, 0.52, 0.02],
+    ftL: [-0.13, 0.06, 0.04], ftR: [0.13, 0.06, 0.04], chest: [0, 1.36, 0], neck: [0, 1.5, 0], head: [0, 1.63, 0.01],
+  });
+  function drawPerson(p, now) {
+    if (p.kind === 'crowd') {
+      if (now < p.joinAt) return;
+      // walking in to join the ring
+      const k = Math.min(1, (now - p.joinAt) / 2200);
+      p.x = p.sx + (p.tx - p.sx) * k; p.z = p.sz + (p.tz - p.sz) * k;
+      p.walking = k < 1;
+    }
+    const t = now / 1000 + p.seed * 10;
+    let j;
+    if (p.kind === 'ko') j = KO_POSE;
+    else {
+      j = {};
+      for (const k in PERSON_POSE) j[k] = PERSON_POSE[k].slice();
+      const sway = Math.sin(t * 1.1) * 0.02;
+      for (const k in j) if (!k.startsWith('ft')) j[k][0] += sway;
+      if (p.walking) {
+        const ph = Math.sin(t * 8);
+        j.knL = [-0.12, 0.52, 0.12 * ph]; j.knR = [0.12, 0.52, -0.12 * ph]; j.ftL = [-0.12, 0.06, 0.25 * ph]; j.ftR = [0.12, 0.06, -0.25 * ph];
+      }
+      if (now < (p.cheerUntil || 0)) {
+        const up = 0.05 * Math.abs(Math.sin(t * 9));
+        j.elL = [-0.3, 1.62 + up, 0.04]; j.elR = [0.3, 1.62 + up, 0.04]; j.fiL = [-0.34, 1.9 + up, 0.06]; j.fiR = [0.34, 1.9 + up, 0.06];
+      } else if (p.kind === 'victim' && Fight.active) {
+        // scared: hands up by the face
+        j.elL = [-0.2, 1.3, 0.14]; j.elR = [0.2, 1.3, 0.14]; j.fiL = [-0.1, 1.58, 0.2]; j.fiR = [0.1, 1.58, 0.2];
+        j.head[2] -= 0.05;
+      } else if (p.phone) {
+        // filming: phone held up at eye height
+        j.elR = [0.2, 1.32, 0.22]; j.fiR = [0.08, 1.56, 0.34]; j.elL = [-0.16, 1.3, 0.2]; j.fiL = [-0.02, 1.54, 0.33];
+      }
+    }
+    const tgt = p.look || P;
+    let fx = tgt.x - p.x, fz = tgt.z - p.z;
+    const n = Math.hypot(fx, fz) || 1;
+    fx /= n; fz /= n;
+    const fr = { fx, fz, rx: fz, rz: -fx };
+    const c = {};
+    for (const k in j) { const w = toWorld(p, fr, j[k]); c[k] = toCam(w.x, w.y, w.z); }
+    const list = [];
+    const shirt = p.col;
+    capsule(list, c.pelvis, c.chest, 0.15, shirt, F);
+    capsule(list, c.shL, c.shR, 0.075, shirt, F);
+    capsule(list, c.hipL, c.hipR, 0.1, PANTS, F);
+    capsule(list, c.chest, c.neck, 0.06, SKIN, F);
+    ball(list, c.head, 0.11, SKIN, F);
+    for (const sd of ['L', 'R']) {
+      capsule(list, c['sh' + sd], c['el' + sd], 0.05, shirt, F);
+      capsule(list, c['el' + sd], c['fi' + sd], 0.042, SKIN, F);
+      ball(list, c['fi' + sd], 0.045, SKIN, F);
+      capsule(list, c['hip' + sd], c['kn' + sd], 0.075, PANTS, F);
+      capsule(list, c['kn' + sd], c['ft' + sd], 0.06, PANTS, F);
+      ball(list, c['ft' + sd], 0.055, SHOE, F);
+    }
+    // the phone: a lit screen between the hands
+    if (p.phone && p.kind === 'crowd' && !(now < (p.cheerUntil || 0))) {
+      const w = toWorld(p, fr, [0.03, 1.56, 0.36]);
+      ball(list, toCam(w.x, w.y, w.z), 0.05, [210, 235, 255], F);
+    }
+    drawPrims(list);
   }
 
   // Your arms, from the engine's arm pose (shoulder widths, x right, y up, z toward the camera,
@@ -4287,7 +4658,9 @@
 
     if (G.state === 'walk') {
       // opponents, far to near
-      for (const f of Fight.foes.slice().sort((a, b) => foeDist(b) - foeDist(a))) drawFoe(f, now);
+      // opponents, the crowd and the person they were hassling, far to near
+      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f, foe: false })));
+      for (const it of all.sort((a, b) => foeDist(b.f) - foeDist(a.f))) { if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
     ctx.restore();
     if (G.state === 'walk') {
@@ -4315,25 +4688,30 @@
     if (w.next) line(`${w.next} in ${Math.round(w.dist)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
     else line('Edge of the grid: turn around', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
 
-    // destination
+    // the stop, how far, and what to do at the next corner
     if (G.dest) {
-      const dAve = G.dest.ai - nearestAve(P.x), dSt = G.dest.st - nearestSt(P.z);
-      const parts = [];
-      if (dSt) parts.push(`${Math.abs(dSt)} ${dSt > 0 ? 'north' : 'south'}`);
-      if (dAve) parts.push(`${Math.abs(dAve)} ave ${dAve > 0 ? 'east' : 'west'}`);
-      line(`To ${G.dest.name}`, 14, top + 86, 'left', '700 15px system-ui, sans-serif');
-      line(parts.length ? parts.join(', ') : 'right here', 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
+      const label = G.leg < SESSION.legs ? `Stop ${G.leg + 1} of ${SESSION.legs}` : 'Bonus stop';
+      line(`${label}: ${G.dest.name}`, 14, top + 86, 'left', '700 15px system-ui, sans-serif');
+      line(destWords(), 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
+      if (G.nav) line(G.nav, 14, top + 126, 'left', '700 14px system-ui, sans-serif', '#ffcf3f');
     }
 
-    // session numbers
-    const mins = (now - G.start) / 60000;
+    // session numbers: time left of the session
+    const left = Math.max(0, leftMs()) / 60000;
     const miles = G.meters / 1609.34;
-    line(`${Math.floor(mins)}:${String(Math.floor((mins % 1) * 60)).padStart(2, '0')}`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
+    line(`${Math.floor(left)}:${String(Math.floor((left % 1) * 60)).padStart(2, '0')} left`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
     line(`${miles.toFixed(2)} mi · ${G.steps} steps`, W - 14, top + 142, 'right', '600 13px system-ui, sans-serif');
     // pace: marching faster walks faster, high knees run
     const pace = P.speed < 0.3 ? 'Stopped' : P.running ? 'Running' : 'Walking';
     line(P.cadence > 0 ? `${pace} · ${Math.round(P.cadence)} spm` : pace, W - 14, top + 160, 'right', '700 13px system-ui, sans-serif', pace === 'Running' ? '#ffcf3f' : '#fff');
 
+    // a high knees interval: a bar counting down
+    if (G.interval) {
+      const bw = Math.min(W - 160, 240), bx = W / 2 - bw / 2, by = H * 0.3;
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(bx, by, bw, 26);
+      ctx.fillStyle = P.running ? '#ffcf3f' : '#b98b2e'; ctx.fillRect(bx + 2, by + 2, (bw - 4) * Math.max(0, G.interval.left / SESSION.intervalS), 22);
+      line(`High knees ${Math.ceil(G.interval.left)} s`, W / 2, by + 5, 'center', '800 14px system-ui, sans-serif');
+    }
     if (now < G.bannerUntil) {
       ctx.font = '800 22px system-ui, sans-serif';
       const tw = ctx.measureText(G.banner).width;
@@ -4379,7 +4757,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 punch trade-offs: reach vs power';
+  const BUILD = '2026-10-15 \u00b7 session route, crowd and aftermath, phone menu, quick start';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],
@@ -4401,13 +4779,17 @@
   function startWalk() {
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
-    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0 });
-    Object.assign(Fight, { foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
-    spawnFoes(FT.firstAhead);
+    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0,
+      minutes: sessionMinutes(), playMs: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: SESSION.intervalEveryS, intervals: 0, halfSaid: false, finishAt: 0 });
+    Phone.open = false; $('phone').hidden = true;
+    Object.assign(Fight, { people: [], foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
     if (engine.mode() === 'combat') engine.exit_combat();
-    pickDestination();
+    planRoute();
+    sayRoute(true);
+    spawnFoes(FT.firstAhead);
     show(null);
     $('endBtn').hidden = false;
+    $('phoneBtn').hidden = false;
   }
 
   function endWalk() {
@@ -4416,16 +4798,18 @@
     if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     $('endBtn').hidden = true;
+    $('phoneBtn').hidden = true;
+    Phone.open = false; $('phone').hidden = true;
     const ms = now - G.start;
     const fmt = (t) => `${Math.floor(t / 60000)}:${String(Math.floor((t % 60000) / 1000)).padStart(2, '0')}`;
     const miles = G.meters / 1609.34;
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
-      ['Blocks', G.blocks], ['Destinations reached', G.arrived], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+      ['Blocks', G.blocks], ['Stops reached', `${G.arrived} of ${Math.max(SESSION.legs, G.arrived)}`], ['High knees intervals', G.intervals], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
       ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
-    if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);
+    if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${G.intervals ? `${G.intervals} high knees intervals, ` : ''}${fmt(G.runMs)} of running in all, works hip flexor endurance and pushes your heart rate up, with walking as the recovery.</p>`);
     if (G.fightsDone) lines.push(`<p><b>Fight rounds:</b> ${fmt(Fight.stats.ms)} of fighting in short bursts, with marching between as active recovery: ${Fight.stats.landed} punches build striking power and shoulder endurance${Fight.stats.takedowns ? `, ${Fight.stats.takedowns} takedowns train explosive hip extension` : ''}${Fight.stats.sprawls ? `, ${Fight.stats.sprawls} sprawls train reactive level changes` : ''}.</p>`);
     $('payoff').innerHTML = lines.join('');
     $('saveClip').hidden = !Warm.clip;
@@ -4469,7 +4853,15 @@
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
     move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
   ];
-  const Warm = { setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null, overlay: null };
+  // a returning player (a warm-up on this setup saw their marching before; tuned step cues are kept
+  // in the engine profile) gets a quick check: one march round. A miss adds the full rounds.
+  const quickPlan = () => [
+    { id: 'intro', big: 'Quick check', small: 'A few marching steps and you are in.', say: 'Welcome back. Quick check.', secs: 2 },
+    move('march', 6, 1),
+  ];
+  const WARMED_KEY = (setup) => `manhattan-miles-warmed-${setup}`;
+  const warmedBefore = (setup) => { try { return localStorage.getItem(WARMED_KEY(setup)) === '1'; } catch (_) { return false; } };
+  const Warm = { quick: false, setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null, overlay: null };
 
 
   // Voice: the player stands 4 ft from a small screen, so every prompt and result is spoken.
@@ -4614,6 +5006,10 @@
   }
   $('mode').value = pickSetup();
   showModeHint();
+  const LEN_KEY = 'manhattan-miles-minutes';
+  try { const v = localStorage.getItem(LEN_KEY); if (v) $('len').value = v; } catch (_) {}
+  $('len').addEventListener('change', () => { try { localStorage.setItem(LEN_KEY, $('len').value); } catch (_) {} });
+  function sessionMinutes() { return Number($('len').value) || 15; }
   $('mode').addEventListener('change', () => {
     showModeHint();
     try { localStorage.setItem(MODE_KEY, $('mode').value); } catch (_) {}
@@ -4673,7 +5069,8 @@
     say(`${m.label}. ${camLine ? camLine + ' ' : ''}${m.place} Then stand ${m.dist} away, so your knees are in view.`);
     try { await engine.calibrate(m.preset, { moveTest: false }); } catch (_) { return; } // cancelled
     if (G.state !== 'setup') return;
-    Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null });
+    const quick = !$('fullWarm').checked && warmedBefore(m.key);
+    Object.assign(Warm, { quick, plan: quick ? quickPlan() : warmPlan(), seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null });
     engine.capture_reset();
     engine.start_recording({ game: 'manhattan-miles', warmup: true, setup: m.key, camera: engine.camera() });
     setStep(0);
@@ -4739,8 +5136,13 @@
     }
     if (Warm.i + 1 >= Warm.plan.length && !Warm.extra) {
       Warm.extra = true;
-      const again = ['march', 'turnL', 'turnR'].filter((id) => !Warm.seen[id]);
-      if (again.length) {
+      const again = planMoves().filter((id) => !Warm.seen[id]);
+      if (again.length && Warm.quick) {
+        // the quick check missed: the full warm-up, so the step thresholds can retune
+        Warm.plan.push({ id: 'round', big: 'Full warm-up', small: 'Marching and shoulder turns, two rounds.', say: 'Let us do the full warm-up.', secs: 2 },
+          ...warmPlan().slice(1));
+        Warm.quick = false; Warm.extra = false;
+      } else if (again.length) {
         Warm.plan.push({ id: 'round', big: 'One more round', small: `Just the ${again.map((id) => MOVE_NAMES[id]).join(' and ')}.`, say: 'One more round.', secs: 2 },
           ...again.map((id) => move(id, id === 'march' ? 8 : 3, 3)));
       }
@@ -4749,14 +5151,15 @@
       Warm.done = true;
       if (engine.is_recording()) Warm.clip = engine.stop_recording();
       const marched = !!Warm.seen.march, turned = Warm.seen.turnL && Warm.seen.turnR;
-      const lines = [marched ? 'Warm-up done. Marching works.' : 'Warm-up done. The camera did not pick up your marching.'];
-      lines.push(turned ? 'Turns work.' : Warm.seen.turnL || Warm.seen.turnR ? 'One of your turns was missed.' : 'Turns were missed.');
+      try { if (marched) localStorage.setItem(WARMED_KEY(Warm.setup.key), '1'); else localStorage.removeItem(WARMED_KEY(Warm.setup.key)); } catch (_) {}
+      const lines = [marched ? (Warm.quick ? 'You are in. Marching works.' : 'Warm-up done. Marching works.') : 'Warm-up done. The camera did not pick up your marching.'];
+      if (planMoves().includes('turnL')) lines.push(turned ? 'Turns work.' : Warm.seen.turnL || Warm.seen.turnR ? 'One of your turns was missed.' : 'Turns were missed.');
       if (Warm.lowCount) lines.push('The camera lost your knees at times. Stand a little farther back.');
       lines.push(marched ? 'Start marching to walk.' : 'Walk anyway, and when you finish, tap save warm-up clip and send it to Claude.');
       Warm.plan.push({
         id: 'done', secs: 3,
         big: marched ? 'Warm-up done' : 'No steps seen',
-        small: ['march', 'turnL', 'turnR'].map((id) => `${MOVES[id].big} ${Warm.seen[id] ? '\u2713' : '\u2717'}`).join(' \u00b7 '),
+        small: planMoves().map((id) => `${MOVES[id].big} ${Warm.seen[id] ? '\u2713' : '\u2717'}`).join(' \u00b7 '),
         say: lines.join(' '),
       });
     }
@@ -4764,6 +5167,9 @@
     exitSetup();
     startWalk();
   }
+
+  // the moves this warm-up's plan checks
+  function planMoves() { return ['march', 'turnL', 'turnR'].filter((id) => Warm.plan.some((c) => c.id === id)); }
 
   function liveText(c) {
     if (Warm.hits >= c.need) return 'Got it';
@@ -4849,7 +5255,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, Fight, FT, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk };
+  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, crossingAhead, adviceAt, endWalk };
 })();
 </script>
 </body>

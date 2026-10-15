@@ -8,7 +8,8 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 - March to walk, high knees (or cadence over 150) to run, turn your shoulders to steer like a steering wheel: hold the turn to keep turning, face front to go straight (touch: hold a drag on the right zone). You walk anywhere on the streets and sidewalks; buildings block you, and letting go near a street's direction settles you onto it. The pace readout under the timer shows walking or running and your steps per minute: marching faster walks faster (0.6 to 1.25 times walking pace), and high knees or 150+ steps per minute runs at 2.5 times walking pace.
 - Point left or right for a quick 90 degree turn onto the cross street.
 - Both hands overhead turns you around.
-- Walk to destinations at real intersections (Herald Square, Times Square, Grand Central, Columbus Circle and more). HUD shows the street sign, next cross street, distance to the corner, direction to the destination and a minimap.
+- Sessions of 10, 15 or 20 minutes (title screen). Each plans a route of three stops at real intersections (Herald Square, Times Square, Grand Central, Columbus Circle and more), sized to the time; finish early and you get a bonus stop. Directions are spoken as you near each corner ("At 7th Ave, turn left", or "Wrong way"), and the HUD shows the stop, blocks to go and the next turn. Every two minutes of walking a 30 s high knees interval is called, with a countdown bar; walking is the recovery. The clock counts down and the session ends itself.
+- Wave your left hand to open the phone (touch: the Phone button): turn your shoulders to move the highlight, wave your right hand to pick, your left to close. Back to the walk, repeat directions, skip this stop, end session. The walk and the clock pause while it is open.
 - Movement runs at 3x real walking pace so blocks pass at a game pace; distance in the summary is city distance.
 - Summary names the S&C payoff: aerobic base from marching, intervals from high knees.
 
@@ -25,6 +26,7 @@ Every minute and a half or so of walking, an opponent (later sometimes two) wait
 - Straights reach further but hit softer. Hooks hit hardest but only land close, so throw them when they step in to punch. Uppercuts dig into the body.
 - Some opponents just cover up. Body shots, hooks and uppercuts go around the guard; straights wear it down until it breaks.
 - Three seconds of high knees escapes.
+- Every opponent is hassling someone. A crowd gathers and films on their phones; a beaten opponent may run off instead of going down; afterwards the person you helped thanks you or roasts you (the humor is blue), and the crowd cheers a knockout.
 
 The fighters are 3D: the opponent is a jointed figure that moves between guard, punches, shots and falls, and your own arms come up from the bottom of the screen, following your real shoulders, elbows and fists. Your view follows your body: a slip moves and tilts it, a squat drops it, a double leg lunges it in at their hips, and on top you look down at them.
 
@@ -34,7 +36,7 @@ Fights run about 20 to 40 seconds; the walking between them is the active recove
 
 Pick a camera setup on the title screen: phone or tablet, upright or sideways (auto-picked, remembered). Standing the device the other way switches to the matching setup. Each setup has its own placement line and distance. The TV setup uses the back camera (the ultra-wide lens when the browser offers it) with the screen mirrored to the TV; without a back camera it falls back to the front camera and says so.
 
-Every camera session starts with a one minute setup, like Homecoming Hero's:
+Every camera session starts with a one minute setup, like Homecoming Hero's (returning players, whose marching a warm-up on this setup already saw, get a quick check instead: framing, then one march round; a miss runs the full warm-up, and the "Full warm-up" box forces it):
 
 1. Framing check and a 3 second stand-still baseline, on the full camera view with the engine's stick figure on top.
 2. Warm-up, two rounds: march (8 s, then 6 s), turn your shoulders left, turn right. Each move shows big words, one line on how to do it, a timer bar, a looping figure (mirrored, so "left" moves to your left) and live feedback (steps seen, turn percent). Anything still missed gets a short third round, then the walk starts by itself.
@@ -50,7 +52,7 @@ Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and tor
 
 - The existing street-by-street Manhattan map (swap in for the generated grid).
 - Subway, bus and taxi as fast travel and logged rest.
-- Combat mode, NPCs, traffic.
+- Pedestrians to wave at, traffic, police radio.
 - Locomotion still lives in the game; body-arcade milestone 5 moves it onto the engine's locomotion state machine (`engine.locomotion()`).
 
 ## Repo layout

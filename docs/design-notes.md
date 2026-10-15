@@ -48,7 +48,7 @@ else:
 
 **Guards can break.** Done 10/15 (`FT.guard`, turtle opponents). An opponent who covers up the whole time can be beaten by volume: guard damage builds up until the guard breaks. That's the fitness point: there's an efficient way (body shots, uppercuts, timing) and a brute-force way (sheer work rate), and both pay off.
 
-**Fight aftermath**
+**Fight aftermath** Done 10/15 (`gatherCrowd`, `aftermath`, `LINES`, `drawPerson`, flee in `FT.flee*`).
 
 - Fights gather a crowd, with people filming on their phones.
 - Opponents are knocked out or run away.
@@ -65,6 +65,7 @@ else:
 ### Phone and interaction
 
 - Wave the right hand to interact with an NPC.
+- Done 10/15: wave left opens the phone (`Phone`, `PHONE_ITEMS`), shoulder turn moves the highlight, wave right picks, wave left closes. Items so far: back to the walk, repeat directions, skip this stop, end session; police radio and fast travel go here later.
 - Wave the left hand to open the in-game phone: the menu, the police radio, and fast travel for testing. Menu navigation still needs a gesture (torso turn to move, point to pick is the likely fit).
 - The engine already emits `wave` with `{ hand }`, so this is game work.
 

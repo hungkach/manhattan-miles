@@ -318,7 +318,7 @@
 
     update(ctx, out) {
       const t = ctx.t;
-      const cand = ctx.low ? { left: false, right: false } : { left: this.candidate(ctx, 'left', out), right: this.candidate(ctx, 'right', out) };
+      const cand = ctx.upperLow ? { left: false, right: false } : { left: this.candidate(ctx, 'left', out), right: this.candidate(ctx, 'right', out) };
       if (cand.left && cand.right) cand.left = cand.right = false;
       for (const side of ['left', 'right']) {
         if (!cand[side]) { this.since[side] = null; this.fired[side] = false; continue; }
@@ -352,7 +352,7 @@
 
     update(ctx, out) {
       const t = ctx.t;
-      const up = !ctx.low && wristOverhead(ctx, L.L_WRIST, this.c.aboveNose) && wristOverhead(ctx, L.R_WRIST, this.c.aboveNose);
+      const up = !ctx.upperLow && wristOverhead(ctx, L.L_WRIST, this.c.aboveNose) && wristOverhead(ctx, L.R_WRIST, this.c.aboveNose);
       out.handsOverhead = up;
       if (!up) { this.since = null; this.fired = false; return; }
       if (this.since === null) this.since = t;
@@ -382,7 +382,7 @@
         const s = hand === 'left' ? b.ls : b.rs;
         const w = hand === 'left' ? b.lw : b.rw;
         // both hands overhead is the turn-around gesture, not a wave
-        if (ctx.low || out.handsOverhead || !seen(ctx, wi) || w.y - s.y < this.c.minAbove) { this.hands[hand] = fresh(); continue; }
+        if (ctx.upperLow || out.handsOverhead || !seen(ctx, wi) || w.y - s.y < this.c.minAbove) { this.hands[hand] = fresh(); continue; }
         const x = w.x - s.x;
         let reversed = false;
         if (h.dir === 0) {
