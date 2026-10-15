@@ -3405,10 +3405,14 @@
   const FT = {
     firstAhead: 32, // m: the first opponent waits about 10 marching steps ahead of the start (they walk to meet you)
     everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
-    rangeIn: 1.9, rangeOut: 3.4, outMs: [1200, 2000],
+    // ranges (m): they drift between close and mid; a step back is out. Straights reach mid range,
+    // hooks and uppercuts only land close (`reach`, against the real distance)
+    rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
+    reach: { jab: 2.6, cross: 2.6, hook: 1.85, uppercut: 1.85 },
     hp: [12, 16], playerHp: 10,
     windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, swingMs: 220,
-    damage: { jab: 0.8, cross: 1.1, hook: 1.2, uppercut: 1.2, down: 1.0, down_strike: 1.0 },
+    // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
+    damage: { jab: 0.7, cross: 1.0, hook: 1.5, uppercut: 1.3, down: 1.0, down_strike: 1.0 },
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
     // the glove hitbox: a glove moving at least `speed` (shoulder widths a second), at least `reach`
     // in front of your shoulders, that ends over their head or body on screen lands. One hit per
@@ -3478,14 +3482,14 @@
   function startFight(now) {
     const foe = current();
     if (!foe) return;
-    Fight.active = { start: now, foe, range: 'in' };
+    Fight.active = { start: now, foe, range: 'close' };
     Fight.hp = FT.playerHp;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
     foe.guardHp = FT.guard.hp;
     Fight.lowSince = null;
     engine.enter_combat({
       bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
-      open: () => !!Fight.active && Fight.active.range === 'in' && ['guard', 'windup', 'hurt', 'stuffed', 'cover', 'brace', 'broken'].includes(Fight.active.foe.state),
+      open: () => !!Fight.active && Fight.active.range !== 'out' && ['guard', 'windup', 'hurt', 'stuffed', 'cover', 'brace', 'broken'].includes(Fight.active.foe.state),
       shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
       shot: resolveShot,
     });
@@ -3534,10 +3538,13 @@
     const foe = a.foe;
     Fight.stats.thrown++;
     if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Out of range'); return; }
+    // reach: hooks and uppercuts only land close; straights reach mid range
+    if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) { fightMsg(kind === 'hook' || kind === 'uppercut' ? `Too far for ${kind === 'hook' ? 'a hook' : 'an uppercut'}` : 'Out of range'); return; }
+    if (kind === 'uppercut') where = 'body'; // uppercuts dig into the body
     if (kind === 'down_strike' && foe.state !== 'down') return;
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
-    if (where === 'body') dmg *= FT.hit.body;
+    if (where === 'body' && kind !== 'uppercut') dmg *= FT.hit.body;
     // hooks, uppercuts and body shots go around a high guard; the rest wear it down until it breaks
     if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') {
       foe.guardHp -= dmg;
@@ -3645,7 +3652,7 @@
     if (foe.state === 'ko') {
       if (now >= foe.until) {
         const next = Fight.foes.find((f) => f.state !== 'ko');
-        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; next.guardHp = FT.guard.hp; a.range = 'in'; say('Next one!', 'feedback'); }
+        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; next.guardHp = FT.guard.hp; a.range = 'close'; say('Next one!', 'feedback'); }
         else endFight('won', now);
       }
       return;
@@ -3679,14 +3686,17 @@
       foe.state = 'guard'; foe.until = now + 1500;
       return;
     }
-    if (foe.state === 'out') { a.range = 'in'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
+    if (foe.state === 'out') { a.range = 'mid'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
     // choose the next move from guard (or after hurt, stuffed, cover)
     const elapsed = now - a.start;
     // some opponents just cover up: beat the guard with body shots, hooks and uppercuts, or wear it down
     if (Math.random() < (foe.turtle || 0)) { foe.state = 'cover'; foe.until = now + rand(1600, 2600); return; }
+    // between moves they drift between close and mid range
+    a.range = Math.random() < FT.midChance ? 'mid' : 'close';
     const r = Math.random();
-    if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
-    else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
+    // they step in to punch: that is when your hooks reach
+    if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
+    else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
     else if (r < 0.8 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
     else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
@@ -3710,7 +3720,7 @@
     if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
     // the opponent keeps the range: close in, or a step back
     const foe = a.foe;
-    const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : FT.rangeIn;
+    const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : a.range === 'mid' ? FT.rangeMid : FT.rangeClose;
     const d = foeDist(foe) || 1;
     const k = Math.min(1, dt * 4) * (d - want) / d;
     foe.x += (P.x - foe.x) * k;
@@ -4107,7 +4117,8 @@
     bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     const s = engine.signals();
     const phase = engine.combat().phase;
-    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    const close = foeDist(a.foe) <= FT.reach.hook;
+    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : `${close ? 'Close: hooks land' : 'Mid range: straights'} · ${s.guard_up ? 'guard up' : 'guard down'}`;
     // their guard, while it is worn down
     const gh = a.foe.guardHp ?? FT.guard.hp;
     if (gh < FT.guard.hp - 0.05) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / FT.guard.hp), '#9fb4c8', 'Guard');
@@ -4368,7 +4379,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 takedown rework, guard breaks';
+  const BUILD = '2026-10-15 \u00b7 punch trade-offs: reach vs power';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],

@@ -22,6 +22,7 @@ Every minute and a half or so of walking, an opponent (later sometimes two) wait
 - When they step back you can't reach them; they step back in on their own a moment later.
 - Drive up out of the squat for a double leg. The faster you drive, the longer your ground and pound (2 to 5 s); jump off the drive for the biggest takedown. Shoot while they wind up a punch for a longer one.
 - Hold the crouch too long and they read it: they brace, and a plain drive gets stuffed. Jump into it, or catch them low with an uppercut (double damage).
+- Straights reach further but hit softer. Hooks hit hardest but only land close, so throw them when they step in to punch. Uppercuts dig into the body.
 - Some opponents just cover up. Body shots, hooks and uppercuts go around the guard; straights wear it down until it breaks.
 - Three seconds of high knees escapes.
 

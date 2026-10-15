@@ -40,7 +40,7 @@ else:
 - Engine work (body-arcade): a jump signal (the level rising above standing; ankles are not needed), and rise speed on `drive_up`. Both read from the hips, or from the shoulders when the hips are hidden.
 - Wrestling is the hook: most opponents are strikers, so the player's takedowns are what make this game different.
 
-**Punch trade-offs**
+**Punch trade-offs** Done 10/15: they drift between close (1.6 m) and mid (2.3 m) range and step in to punch; straights reach mid range, hooks and uppercuts only land close (`FT.reach`); damage jab 0.7, cross 1.0, hook 1.5, uppercut 1.3 to the body.
 
 - Straights (jab, cross): longer range, less power.
 - Hooks: more power, shorter range. This needs a middle range band, not just in or out.
