@@ -202,6 +202,7 @@
   class LeanDetector {
     constructor(cfg) {
       this.c = cfg.lean;
+      this.raiseAbove = cfg.wave.minAbove;
       this.suppressUntil = -Infinity;
       this.armed = { left: true, right: true };
     }
@@ -211,6 +212,13 @@
       const s = ctx.sig;
       const speed = Math.max(out.wristSpeedL, out.wristSpeedR);
       if (speed > this.c.wristSpeedMax) this.suppressUntil = t + this.c.suppressHoldMs;
+      // a hand raised like a wave (wrist above its shoulder by wave.minAbove)
+      // tilts the shoulders and would read as a torso turn: no steering while
+      // it is up (0.6.2, Mark: waving turned him)
+      for (const [i, sh] of [[L.L_WRIST, s.body.ls], [L.R_WRIST, s.body.rs]]) {
+        const at = wristAt(ctx, i);
+        if (at && (at.offFrame ? at.p.y < 0 : RE.toBody(at.p, ctx.cal).y - sh.y >= this.raiseAbove)) this.suppressUntil = Math.max(this.suppressUntil, t + this.c.raisedHoldMs);
+      }
       out.steerSuppressed = t < this.suppressUntil;
 
       let steer = 0;

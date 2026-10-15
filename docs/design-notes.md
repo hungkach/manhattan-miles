@@ -2,6 +2,16 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-15 PM iPad test (8:47, 83 kcal, very light)
+
+- Blocking felt clunky with no cue. Done: a shield per hand on the HUD, glowing gloves at the guard, the needed hand pulses during their wind-up, and a block flashes a big shield with a clack.
+- Level change works perfectly.
+- Raising or waving a hand turned him. Done in engine 0.6.2: a hand raised like a wave switches off steering.
+- On iPad the text must read from across the room. Done: the HUD, phone and notes scale up on a tablet, more in camera mode.
+- Testing: teleport and spawn an opponent from the phone. Done.
+- It should feel like a busy NYC. Done: more pedestrians, texting, chatter, vendors, cars and cabs, horns. Next: enterable businesses, buses, a subway platform crowd.
+- More reward for strikes. Done: sparks, damage numbers, combos, shake, crowd ooh, knockout bell.
+
 ## 2026-10-15 second camera test
 
 - Hooks and uppercuts land; straights did not. Fixed in engine 0.6.0 (arm depth from foreshortening; MediaPipe squashes depth toward the camera).

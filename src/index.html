@@ -13,19 +13,19 @@
   #demo .re-demo { top: auto; height: 52%; }
   body.fighting #demo .re-demo { height: 34%; }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
-  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 212px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 212px * var(--ui, 1)); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
-  #phoneBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 256px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #phoneBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 212px * var(--ui, 1) + 44px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #phoneBtn[hidden], #phone[hidden] { display: none; }
-  #phone { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 6; width: min(290px, 82vw); background: #0d1320; border: 3px solid #3a4459; border-radius: 28px; padding: 16px 14px 14px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+  #phone { position: fixed; left: 50%; top: 12%; transform: translateX(-50%) scale(var(--ui, 1)); transform-origin: 50% 0; z-index: 6; width: min(290px, calc(82vw / var(--ui, 1))); background: #0d1320; border: 3px solid #3a4459; border-radius: 28px; padding: 16px 14px 14px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
   #subway { position: fixed; inset: 0; z-index: 5; background: linear-gradient(#1b2230, #0c1018); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
   #subway[hidden] { display: none; }
-  #subway h2 { margin: 0; font: 800 24px system-ui, sans-serif; color: #fff; }
-  #subway p { margin: 0; font: 600 16px system-ui, sans-serif; color: var(--muted); }
-  #subway .bar { width: min(320px, 80vw); height: 10px; background: #2a3242; border-radius: 6px; overflow: hidden; }
+  #subway h2 { margin: 0; font: 800 calc(24px * var(--ui, 1)) system-ui, sans-serif; color: #fff; }
+  #subway p { margin: 0; font: 600 calc(16px * var(--ui, 1)) system-ui, sans-serif; color: var(--muted); }
+  #subway .bar { width: min(calc(320px * var(--ui, 1)), 80vw); height: calc(10px * var(--ui, 1)); background: #2a3242; border-radius: 6px; overflow: hidden; }
   #subway .bar i { display: block; height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); }
   #phone h3 { margin: 0 0 10px; text-align: center; font: 800 15px system-ui, sans-serif; color: var(--muted); }
-  #phone ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 52vh; overflow-y: auto; }
+  #phone ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: calc(62vh / var(--ui, 1)); overflow-y: auto; }
   #phone li { font: 700 18px system-ui, sans-serif; padding: 12px 14px; border-radius: 12px; background: #1a2232; color: var(--ink); cursor: pointer; }
   #phone li.on { background: var(--accent); color: #111; }
   #phone p { margin: 10px 0 0; font: 600 12px system-ui, sans-serif; color: var(--muted); text-align: center; }
@@ -76,7 +76,7 @@
   }
   #setupCancel { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 10px); z-index: 5; font: 700 14px system-ui, sans-serif; padding: 8px 12px; min-height: 40px; border-radius: 10px; border: 0; background: rgba(0,0,0,.6); color: #fff; }
   #setupCancel[hidden] { display: none; }
-  #note { position: fixed; left: 50%; bottom: calc(52% + 10px); transform: translateX(-50%); z-index: 4; background: rgba(0,0,0,.62); padding: 6px 12px; border-radius: 10px; font-size: 13px; color: var(--muted); max-width: 92vw; text-align: center; pointer-events: none; }
+  #note { position: fixed; left: 50%; bottom: calc(52% + 10px); transform: translateX(-50%) scale(var(--ui, 1)); transform-origin: 50% 100%; z-index: 4; background: rgba(0,0,0,.62); padding: 6px 12px; border-radius: 10px; font-size: 13px; color: var(--muted); max-width: calc(92vw / var(--ui, 1)); text-align: center; pointer-events: none; }
   #note[hidden] { display: none; }
 </style>
 <!-- rep-engine:inline -->
@@ -534,7 +534,40 @@
   // ---------- pedestrians: wave your right hand to say hi ----------
   // People walk the sidewalks around you at a real walking pace (you pass them at game pace). Wave
   // your right hand at someone within a few meters ahead and they wave back with a line.
-  const PED = { max: 8, near: 40, far: 150, drop: 200, greetM: 9 };
+  // a busy city: up to max people on the sidewalks (texting of them on their phones), and you
+  // overhear one when you pass within chatM (a bubble; spoken now and then, never over directions)
+  const PED = { max: 28, near: 22, far: 140, drop: 170, greetM: 9, texting: 0.3, chatM: 4.5, chatGapS: 6, voiceGapS: 22 };
+  const CHATTER = [
+    'And I said, that is not a bagel, that is a donut with an attitude.',
+    'The rent went up again. For a closet. With a view of another closet.',
+    'The L train is down? The L train is always down.',
+    'I am not lost. I am exploring. Angrily.',
+    'He said he is a DJ. I said, of what, the subway?',
+    'Do you think pigeons have jobs?',
+    'Twenty blocks for this slice and it was worth every one.',
+    'My dating app matched me with my landlord.',
+    'Is that guy doing high knees? On the sidewalk?',
+    'Forty dollars for brunch and the eggs were sad.',
+    'I am not yelling, this is my phone voice.',
+    'He farted in the elevator and then said good morning. Bold.',
+    'Nobody makes eye contact. It is a whole system.',
+    'I would move to Jersey but then I would live in Jersey.',
+    'That rat was carrying a whole bagel. Respect.',
+  ];
+  const BUMP_LINES = ['Watch it! I am walking here!', 'Eyes up, marathon man.', 'Excuse you.'];
+  // street vendors on the corners: wave right to chat
+  const VENDOR = { max: 3, near: 30, far: 170, drop: 230 };
+  const VENDOR_KINDS = [['Halal', [40, 110, 200]], ['Hot dogs', [220, 70, 40]], ['Pretzels', [230, 170, 40]], ['Coffee', [60, 140, 90]]];
+  const VENDOR_LINES = [
+    'Hot dog, two dollars. Health advice, free: stop marching in my line.',
+    'White sauce? Everybody wants white sauce. Even you, sweaty.',
+    'No, I do not take Venmo. Cash or compliments.',
+    'Pretzel? Builds character. Breaks teeth.',
+    'You have been jogging in place at my cart for a minute. Buy something or lunge somewhere else.',
+    'This cart has been on this corner longer than that building.',
+    'Coffee, a dollar fifty. It tastes like a dollar.',
+  ];
+  const Vendors = { list: [] };
   const PED_LINES = [
     'Do not wave at me. I am from here.',
     'Nice knees. Very high. Very concerning.',
@@ -551,7 +584,7 @@
     'Please do not take me down. I just got these pants.',
     'I saw you on six phones today. Ugly in all of them. Kidding! Mostly.',
   ];
-  const Peds = { list: [], waves: 0 };
+  const Peds = { list: [], waves: 0, chatAt: 0, voiceAt: -Infinity };
   // a sidewalk spot between near and far meters away, on a real street, walking along it
   function sidewalkSpot(near, far) {
     const list = [];
@@ -570,22 +603,141 @@
   }
   function pedTick(dt, now) {
     Peds.list = Peds.list.filter((p) => Math.hypot(p.x - P.x, p.z - P.z) < PED.drop);
-    if (Peds.list.length < PED.max && Math.random() < dt * 1.5) {
+    // fill up fast at first, then keep it topped up
+    if (Peds.list.length < PED.max && Math.random() < dt * (Peds.list.length < PED.max / 2 ? 10 : 2)) {
       const sp = sidewalkSpot(PED.near, PED.far);
-      if (sp) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.6), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, look: null });
+      if (sp) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.7), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, texting: Math.random() < PED.texting, look: null });
     }
+    let near = null, nearD = PED.chatM;
     for (const p of Peds.list) {
+      const d = Math.hypot(p.x - P.x, p.z - P.z);
+      if (d < nearD && now > (p.sayUntil || 0) && !p.chatted) { near = p; nearD = d; }
+      if (p.texting && d < 1.3 && !p.bumped) { p.bumped = true; p.say = pick(BUMP_LINES); p.sayUntil = now + 2200; }
       if (now < (p.stopUntil || 0)) { p.walking = false; p.look = P; continue; }
       const nx = p.x + p.dx * p.v * dt, nz = p.z + p.dz * p.v * dt;
       if (blocked(nx, nz)) { p.dx = -p.dx; p.dz = -p.dz; } else { p.x = nx; p.z = nz; }
       p.walking = true;
       p.look = { x: p.x + p.dx * 5, z: p.z + p.dz * 5 };
     }
+    // overheard as you pass
+    if (near && now > Peds.chatAt && !Fight.active) {
+      near.chatted = true; near.say = pick(CHATTER); near.sayUntil = now + 3200;
+      Peds.chatAt = now + PED.chatGapS * 1000;
+      if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; say(near.say, 'feedback'); }
+    }
+    vendorTick(now);
+    trafficTick(dt, now);
+  }
+  function vendorTick(now) {
+    Vendors.list = Vendors.list.filter((v) => Math.hypot(v.x - P.x, v.z - P.z) < VENDOR.drop);
+    if (Vendors.list.length < VENDOR.max && Math.random() < 0.02) {
+      const sp = sidewalkSpot(VENDOR.near, VENDOR.far);
+      if (sp && Vendors.list.every((v) => Math.hypot(v.x - sp.x, v.z - sp.z) > 60)) {
+        const [what, umb] = pick(VENDOR_KINDS);
+        Vendors.list.push({ kind: 'vendor', x: sp.x + sp.dx * 1.2, z: sp.z + sp.dz * 1.2, cx: sp.x, cz: sp.z, dx: sp.dx, dz: sp.dz, what, umb, col: [235, 235, 230], seed: Math.random(), walking: false, look: null });
+      }
+    }
+    for (const v of Vendors.list) v.look = Math.hypot(v.x - P.x, v.z - P.z) < 25 ? P : { x: v.cx, z: v.cz };
+  }
+
+  // ---------- traffic: cars and cabs on the real streets ----------
+  // Cars drive the drivable streets (one-way the right way), pick a way at each corner (mostly
+  // straight on), keep to their lane, stop for you and for the car ahead, and honk if you stand
+  // in the road in front of them.
+  const CAR = { max: 16, near: 45, far: 230, drop: 280, v: [7, 12], stopM: 10, laneHalf: 2.2, honkM: 8, honkGapMs: 3500, cab: 0.4 };
+  const CAR_COLS = [[34, 36, 42], [205, 205, 210], [130, 24, 28], [40, 62, 112], [96, 98, 104], [236, 236, 238]];
+  const CAB_COL = [242, 190, 32];
+  const Traffic = { cars: [], honkAt: -Infinity, ambAt: 0 };
+  const driveEdge = (e) => MW.ECLS[e] <= 5 && MW.EN0[e] >= 0;
+  function carSpot() {
+    const list = [];
+    MW.edgesNear(P.x, P.z, CAR.far, (e) => { if (driveEdge(e)) list.push(e); });
+    for (let tries = 0; tries < 6 && list.length; tries++) {
+      const e = list[Math.floor(Math.random() * list.length)];
+      const k = MW.EP0[e] + Math.floor(Math.random() * Math.max(1, MW.EP0[e + 1] - 1 - MW.EP0[e]));
+      const c = { e, k, t: Math.random(), dir: MW.oneway(e) || Math.random() < 0.5 ? 1 : -1, v: 0 };
+      const at = carPos(c), d = Math.hypot(at.x - P.x, at.z - P.z);
+      if (d >= CAR.near && d <= CAR.far) return c;
+    }
+    return null;
+  }
+  // where a car is: along its segment, offset into its lane (right of travel on a two-way street)
+  function carPos(c) {
+    const ax = MW.PX[c.k], az = MW.PZ[c.k], bx = MW.PX[c.k + 1], bz = MW.PZ[c.k + 1];
+    const L = Math.hypot(bx - ax, bz - az) || 1;
+    const hx = ((bx - ax) / L) * c.dir, hz = ((bz - az) / L) * c.dir;
+    const w = MW.roadW(c.e), off = MW.oneway(c.e) ? (c.lane || 0) * Math.max(0, w / 2 - 1.6) : w / 4;
+    return { x: ax + (bx - ax) * c.t + hz * off, z: az + (bz - az) * c.t - hx * off, hx, hz, L };
+  }
+  // at a corner: the next street, mostly straight on; null if there is nowhere legal to go
+  function nextEdge(c, n) {
+    const here = carPos(c), opts = [];
+    for (let q = MW.NODE_OFF[n]; q < MW.NODE_OFF[n + 1]; q++) {
+      const ee = MW.NODE_EDGES[q], e = ee >> 1;
+      if (e === c.e || !driveEdge(e)) continue;
+      if ((ee & 1) === 1 && MW.oneway(e)) continue; // that one-way comes toward this corner
+      const d = MW.leaving(ee);
+      opts.push({ ee, e, straight: d.x * here.hx + d.z * here.hz });
+    }
+    if (!opts.length) return null;
+    opts.sort((a, b) => b.straight - a.straight);
+    const o = opts[0].straight > 0.7 && Math.random() < 0.6 ? opts[0] : pick(opts);
+    return (o.ee & 1) === 0 ? { e: o.e, k: MW.EP0[o.e], t: 0, dir: 1 } : { e: o.e, k: MW.EP0[o.e + 1] - 2, t: 1, dir: -1 };
+  }
+  function moveCar(c, dist) {
+    for (let guard = 0; dist > 1e-4 && guard < 20; guard++) {
+      const L = carPos(c).L, rem = (c.dir > 0 ? 1 - c.t : c.t) * L;
+      if (dist < rem) { c.t += (c.dir * dist) / L; return true; }
+      dist -= rem;
+      if (c.dir > 0 && c.k + 1 < MW.EP0[c.e + 1] - 1) { c.k++; c.t = 0; continue; }
+      if (c.dir < 0 && c.k > MW.EP0[c.e]) { c.k--; c.t = 1; continue; }
+      const n = c.dir > 0 ? MW.EN1[c.e] : MW.EN0[c.e];
+      const nx = n >= 0 ? nextEdge(c, n) : null;
+      if (!nx) return false;
+      Object.assign(c, nx);
+    }
+    return true;
+  }
+  function trafficTick(dt, now) {
+    Traffic.cars = Traffic.cars.filter((c) => !c.gone && Math.hypot(c.x - P.x, c.z - P.z) < CAR.drop);
+    if (Traffic.cars.length < CAR.max && Math.random() < dt * (Traffic.cars.length < CAR.max / 2 ? 8 : 1.5)) {
+      const c = carSpot();
+      if (c) {
+        const cab = Math.random() < CAR.cab;
+        Object.assign(c, { cab, col: cab ? CAB_COL : pick(CAR_COLS), cruise: rand(CAR.v[0], CAR.v[1]) * (MW.ECLS[c.e] <= 1 ? 1.6 : 1), lane: Math.random() * 2 - 1, stopT: 0 });
+        c.v = c.cruise;
+        Object.assign(c, carPos(c));
+        Traffic.cars.push(c);
+      }
+    }
+    for (const c of Traffic.cars) {
+      const at = carPos(c);
+      const rx = at.hz, rz = -at.hx;
+      let want = c.cruise;
+      // you, standing in the road ahead
+      const dx = P.x - at.x, dz = P.z - at.z, ahead = dx * at.hx + dz * at.hz, lat = Math.abs(dx * rx + dz * rz);
+      if (ahead > 0 && ahead < CAR.stopM && lat < CAR.laneHalf) {
+        want = 0;
+        if (ahead < CAR.honkM && now - Traffic.honkAt > CAR.honkGapMs) { Traffic.honkAt = now; honk(1); c.honked = now; }
+      }
+      // the car ahead (a car stuck too long creeps on)
+      if (c.stopT < 4) for (const o of Traffic.cars) {
+        if (o === c) continue;
+        const ox = o.x - at.x, oz = o.z - at.z, oa = ox * at.hx + oz * at.hz;
+        if (oa > 0 && oa < 8 && Math.abs(ox * rx + oz * rz) < 1.6) { want = 0; break; }
+      }
+      c.stopT = want === 0 && c.v < 0.5 ? c.stopT + dt : c.stopT > 4 ? c.stopT - dt * 2 : 0;
+      c.v += (want - c.v) * Math.min(1, dt * (want < c.v ? 5 : 1.5));
+      if (!moveCar(c, c.v * dt)) { c.gone = true; continue; }
+      Object.assign(c, carPos(c));
+    }
+    // far off: horns now and then
+    if (now > Traffic.ambAt) { if (Traffic.ambAt) honk(rand(0.15, 0.4)); Traffic.ambAt = now + rand(6000, 16000); }
   }
   function greet(now) {
     const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
     let best = null, bestD = PED.greetM;
-    for (const p of Peds.list) {
+    for (const p of Peds.list.concat(Vendors.list)) {
       const dx = p.x - P.x, dz = p.z - P.z, d = Math.hypot(dx, dz);
       if (d < bestD && (dx * hx + dz * hz) / (d || 1) > 0.2) { best = p; bestD = d; }
     }
@@ -594,7 +746,8 @@
     best.waveUntil = now + 1800;
     Peds.waves++;
     award(XP.wave, 'said hi');
-    const line = pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
+    const line = best.kind === 'vendor' ? pick(VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
+    best.say = line; best.sayUntil = now + 4000;
     say(line, 'feedback');
     note(`\u201c${line}\u201d`, 4500);
   }
@@ -661,7 +814,7 @@
     Object.assign(P, { x: out.x, z: out.z, yaw, view: yaw, speed: 0, cell: null });
     Nav.tg = null;
     engine.set_facing((yaw * 180) / Math.PI);
-    Fight.foes = []; Fight.people = []; Peds.list = []; G.cueKey = '';
+    Fight.foes = []; Fight.people = []; Peds.list = []; Traffic.cars = []; Vendors.list = []; G.cueKey = '';
     Fight.waitS = Math.max(Fight.waitS, 30);
     say(`${st.name}. Back up to the street. ${target().name}: ${destWords()}.`, 'instruction');
     banner(st.name, 2500, now);
@@ -705,8 +858,22 @@
       { id: 'radio', label: 'Police radio' },
       { id: 'repeat', label: 'Repeat directions' },
       { id: 'skip', label: 'Skip this stop' },
+      { id: 'teleport', label: 'Teleport (test)' },
+      { id: 'spawn', label: 'Spawn opponent (test)' },
       { id: 'end', label: 'End session' },
     ];
+  }
+  // testing: jump to a landmark's corner, facing along its street, with the street life reset
+  function teleport(pl, now) {
+    const sp = sidewalkNear(pl.x, pl.z, 1);
+    const yaw = sp.dir ? angleOf(sp.dir) : P.yaw;
+    Object.assign(P, { x: sp.x, z: sp.z, yaw, view: yaw, speed: 0, cell: null });
+    engine.set_facing((yaw * 180) / Math.PI);
+    Fight.foes = []; Fight.people = []; Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
+    Peds.list = []; Traffic.cars = []; Vendors.list = [];
+    Nav.at = -Infinity; G.cueKey = '';
+    say(`Teleported to ${pl.name}.`, 'confirm');
+    banner(pl.name, 2000, now);
   }
   const Phone = { open: false, idx: 0, movedAt: 0, ready: true, facing: 0, items: [], title: 'Phone' };
   function renderPhone() {
@@ -737,12 +904,15 @@
     if (!it) return;
     if (it.id === 'subway') { phoneMenu(it.label.replace('Subway: ', ''), stationItems(stationNear()), 'Subway. Pick a station.'); return; }
     if (it.id === 'back') { phoneMenu('Phone', mainItems(), 'Phone.'); return; }
+    if (it.id === 'teleport') { phoneMenu('Teleport', [{ id: 'back', label: 'Back' }, ...PLACES.map((pl) => ({ id: 'tp', label: pl.name.replace(/^the /, 'The '), place: pl }))], 'Teleport. Pick a place.'); return; }
     closePhone();
     if (it.id === 'ride') { startRide(it.from, it.to, performance.now()); return; }
     if (it.id === 'repeat') say(`${G.nav || 'Keep going'}. ${target().name}: ${destWords()}.`, 'prompt');
     else if (it.id === 'radio') radio(performance.now());
     else if (it.id === 'skip') { say(`Skipping ${G.dest.name}.`, 'feedback'); nextStop(performance.now()); sayRoute(false); }
     else if (it.id === 'end') endWalk();
+    else if (it.id === 'tp') teleport(it.place, performance.now());
+    else if (it.id === 'spawn') spawnFoes(14);
   }
   function phoneTick(now) {
     engine.set_facing(Phone.facing); // the turn picks; it does not steer
@@ -889,24 +1059,105 @@
     guard: { hp: 4, regen: 0.4, brokenMs: 1600 },
     // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
     fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
+    // feedback: punches within comboMs of each other count as a combo; a hit of bigDmg or more
+    // flashes the screen and gets an "ooh" from the crowd; a block flashes your shield blockMs
+    fx: { comboMs: 1400, bigDmg: 1.4, shakeMs: 220, shakePx: 9, blockMs: 520 },
   };
   const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
-    armTilt: 0, impacts: [], clip: null, recording: false, people: [] };
+    armTilt: 0, impacts: [], sparks: [], pops: [], combo: { n: 0, last: -Infinity }, shake: null, flashAt: -Infinity, block: null, clip: null, recording: false, people: [] };
   const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
 
-  // a punch landing: a burst where the glove met them, their head or body snapping back, a thump
-  function impact(foe, hand, where, power, now) {
+  // a punch landing: a burst and sparks where the glove met them, the damage and the punch's name
+  // floating up, a combo count, their head or body snapping back, the screen shaking with the
+  // weight of it, and a layered smack (a crowd "ooh" on a big one)
+  const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike' };
+  function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
     const at = h && h.scr ? { x: h.scr.x, y: h.scr.y } : foe.hit ? (where === 'body' ? foe.hit.chestPt : foe.hit.head) : null;
-    if (at) Fight.impacts.push({ x: at.x, y: at.y, t: now, power });
-    foe.recoil = { t: now, k: Math.min(1.5, power), body: where === 'body' };
-    thump(power, where === 'body');
+    const c = Fight.combo;
+    c.n = now - c.last < FT.fx.comboMs ? c.n + 1 : 1; c.last = now;
+    const big = dmg >= FT.fx.bigDmg;
+    if (at) {
+      Fight.impacts.push({ x: at.x, y: at.y, t: now, power: Math.max(power, dmg / 1.2) });
+      const n = big ? 18 : 10;
+      for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = rand(120, big ? 520 : 340); Fight.sparks.push({ x: at.x, y: at.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, t: now, life: rand(220, 420), hot: Math.random() < 0.5 }); }
+      Fight.pops.push({ x: at.x, y: at.y, t: now, text: `${KIND_NAME[kind] || 'Hit'} ${Math.max(1, Math.round(dmg * 10))}`, big });
+    }
+    Fight.shake = { t: now, k: Math.min(1.8, 0.5 + dmg * 0.6) };
+    if (big) Fight.flashAt = now;
+    foe.recoil = { t: now, k: Math.min(1.5, Math.max(power, dmg / 1.2)), body: where === 'body' };
+    smack(Math.max(power, dmg), where === 'body', c.n);
+    if (big || c.n === 4) ooh();
   }
-  const Sfx = { ctx: null };
+  const Sfx = { ctx: null, noise: null };
+  // short sounds built from oscillators and a noise buffer (no files): smack, ooh, bell, clack, honk
+  function sfxOk() { const ac = Sfx.ctx; return ac && ac.state === 'running' ? ac : null; }
+  function noiseBuf(ac) {
+    if (!Sfx.noise) { const b = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.6), ac.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; Sfx.noise = b; }
+    return Sfx.noise;
+  }
+  function burst(freq, q, dur, gain, type = 'bandpass', at = 0) {
+    const ac = sfxOk(); if (!ac) return;
+    try {
+      const t = ac.currentTime + at, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+      src.buffer = noiseBuf(ac); f.type = type; f.frequency.value = freq; f.Q.value = q;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f).connect(g).connect(ac.destination); src.start(t, Math.random() * 0.3); src.stop(t + dur + 0.02);
+    } catch (_) {}
+  }
+  function tone(freq, dur, gain, type = 'sine', at = 0, slideTo = 0) {
+    const ac = sfxOk(); if (!ac) return;
+    try {
+      const t = ac.currentTime + at, o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t); if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur + 0.02);
+    } catch (_) {}
+  }
+  // a landed punch: the thump of the body, the crack of the glove (higher on the head, and up a
+  // step with each punch of a combo)
+  function smack(power, body, combo = 1) {
+    thump(power, body);
+    const k = Math.min(1, power);
+    burst((body ? 700 : 1900) * (1 + 0.06 * Math.min(6, combo - 1)), body ? 1.2 : 0.8, body ? 0.12 : 0.08, 0.55 * k + 0.15);
+    if (!body) burst(5200, 0.6, 0.035, 0.25 * k + 0.05, 'highpass');
+  }
+  // the crowd: a few voices swelling "ooh" and falling, with breath noise
+  function ooh() {
+    const ac = sfxOk(); if (!ac) return;
+    try {
+      const t = ac.currentTime, f = ac.createBiquadFilter(), g = ac.createGain();
+      f.type = 'lowpass'; f.frequency.value = 650;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.25); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+      f.connect(g).connect(ac.destination);
+      for (const fr of [180, 215, 262, 300, 340]) {
+        const o = ac.createOscillator(); o.type = 'sawtooth';
+        o.frequency.setValueAtTime(fr * rand(0.97, 1.03), t); o.frequency.exponentialRampToValueAtTime(fr * 0.8, t + 1.1);
+        o.connect(f); o.start(t); o.stop(t + 1.15);
+      }
+    } catch (_) {}
+    burst(500, 0.5, 0.9, 0.05, 'lowpass');
+  }
+  function bell(n = 3) { for (let i = 0; i < n; i++) { tone(1180, 1.1, 0.22, 'sine', i * 0.32); tone(2950, 0.6, 0.07, 'sine', i * 0.32); } }
+  // a punch hitting your guard: a sharp clack and a dull knock
+  function clack() { burst(3200, 1.4, 0.05, 0.45, 'bandpass'); tone(110, 0.09, 0.3, 'sine', 0, 60); }
+  // the city under everything while you walk: a low rumble of traffic
+  function hum(on) {
+    const ac = sfxOk();
+    if (on && ac && !Sfx.hum) {
+      try {
+        const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+        src.buffer = noiseBuf(ac); src.loop = true; f.type = 'lowpass'; f.frequency.value = 380; g.gain.value = 0.035;
+        src.connect(f).connect(g).connect(ac.destination); src.start();
+        Sfx.hum = src;
+      } catch (_) {}
+    } else if (!on && Sfx.hum) { try { Sfx.hum.stop(); } catch (_) {} Sfx.hum = null; }
+  }
+  function honk(far = 1) { tone(392, 0.32, 0.07 * far, 'square'); tone(494, 0.32, 0.06 * far, 'square'); }
   function thump(power, body) {
     const ac = Sfx.ctx;
     if (!ac || ac.state !== 'running') return;
@@ -1109,19 +1360,21 @@
         say('Guard broken!', 'feedback'); fightMsg('Guard broken!', 1100);
       }
     }
-    impact(foe, hand, where, power, now);
     // an uppercut catches them changing levels: shooting at you, or braced for your shot
     const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
     else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
     foe.hp -= dmg;
+    impact(foe, hand, where, power, now, kind, dmg);
     Fight.stats.landed++;
     foe.hurtUntil = now + 220;
     if (foe.state === 'windup' && kind !== 'jab' && Math.random() < 0.5) { foe.state = 'hurt'; foe.until = now + 500; } // a hard shot can break their wind-up
     if (foe.hp <= 0) {
       foe.state = 'ko'; foe.until = now + 1500;
       say('Knockdown!', 'feedback');
+      bell(3); Fight.shake = { t: now, k: 2.4 }; Fight.flashAt = now;
+      fightMsg('Knockout!', 1600);
       for (const p of Fight.people) p.cheerUntil = now + 2500;
     } else if (!foe.fleeChecked && foe.hp < foe.maxHp * FT.fleeBelow && Fight.foes.filter((f) => f.state !== 'ko').length === 1) {
       // a beaten opponent may cut and run
@@ -1237,8 +1490,8 @@
         (foe.kind === 'hook' && (s['guard_' + yours] || now - Fight.lastGuardSide[yours] < FT.graceMs));
       const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
       if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
-      else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); }
-      else { hurtPlayer(now, 1); if (foe.kind === 'hook') fightMsg(`Hook to your ${yours}: hand up by that ear`, 1300); }
+      else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); Fight.block = { t: now, side: s.guard_up || foe.kind === 'straight' ? 'both' : yours }; clack(); Fight.shake = { t: now, k: 0.5 }; }
+      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(`Hook to your ${yours}: hand up by that ear`, 1300); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -1480,6 +1733,11 @@
   function drawPrims(list) {
     list.sort((p, q) => q.depth - p.depth);
     for (const p of list) {
+      if (p.kind === 'poly') {
+        ctx.fillStyle = rgb(p.col, p.k);
+        ctx.beginPath(); p.pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.closePath(); ctx.fill();
+        continue;
+      }
       if (p.kind === 'ball') {
         const R = p.r * p.c.s;
         const g = ctx.createRadialGradient(p.c.x - R * 0.35, p.c.y - R * 0.4, R * 0.1, p.c.x, p.c.y, R);
@@ -1512,6 +1770,66 @@
     }
   }
 
+  // a box in the world (cars, carts): center, half length along heading (hx, hz), half width,
+  // half height; only the faces turned toward the camera, shaded by the sun
+  const BOX_FACES = [[[4, 5, 7, 6], 1, 0, 0], [[0, 1, 3, 2], -1, 0, 0], [[2, 3, 7, 6], 0, 1, 0], [[0, 1, 5, 4], 0, -1, 0], [[1, 3, 7, 5], 0, 0, 1]];
+  function boxPrims(list, cx, cy, cz, hl, hw, hh, hx, hz, col) {
+    const rx = hz, rz = -hx, v = [];
+    for (const a of [-1, 1]) for (const b of [-1, 1]) for (const c of [-1, 1]) v.push({ x: cx + hx * hl * a + rx * hw * b, y: cy + hh * c, z: cz + hz * hl * a + rz * hw * b });
+    for (const [ix, fa, fb, up] of BOX_FACES) {
+      const nx = hx * fa + rx * fb, nz = hz * fa + rz * fb, ny = up;
+      const m = { x: cx + (hx * hl * fa + rx * hw * fb), y: cy + hh * up, z: cz + (hz * hl * fa + rz * hw * fb) };
+      if ((cam.x - m.x) * nx + (cam.y - m.y) * ny + (cam.z - m.z) * nz <= 0) continue;
+      const cs = ix.map((i) => toCam(v[i].x, v[i].y, v[i].z));
+      if (cs.some((q) => q.z < NEAR3)) continue;
+      const mc = toCam(m.x, m.y, m.z);
+      list.push({ kind: 'poly', pts: cs.map((q) => projC(q, F)), col, k: up ? 1.08 : 0.68 + 0.3 * Math.max(0, nx * SUN.x + nz * SUN.z), depth: mc.z });
+    }
+  }
+  const GLASS = [52, 66, 82], TIRE = [22, 22, 24];
+  function drawCar(c) {
+    const list = [];
+    const ty = c.cab ? 0 : 0.05;
+    boxPrims(list, c.x, 0.72, c.z, 2.2, 0.9, 0.36, c.hx, c.hz, c.col);
+    boxPrims(list, c.x - c.hx * 0.2, 1.33 - ty, c.z - c.hz * 0.2, 1.2, 0.8, 0.26, c.hx, c.hz, GLASS);
+    if (c.cab) boxPrims(list, c.x - c.hx * 0.2, 1.7, c.z - c.hz * 0.2, 0.3, 0.45, 0.1, c.hx, c.hz, [250, 244, 214]);
+    const rx = c.hz, rz = -c.hx;
+    for (const a of [-1.35, 1.35]) for (const b of [-0.82, 0.82]) { const q = toCam(c.x + c.hx * a + rx * b, 0.33, c.z + c.hz * a + rz * b); ball(list, q, 0.33, TIRE, F); }
+    drawPrims(list);
+  }
+  // a vendor's cart and umbrella, and what they sell on a sign when you are near
+  function drawCart(v) {
+    const list = [];
+    boxPrims(list, v.cx, 0.72, v.cz, 0.95, 0.5, 0.42, v.dx, v.dz, [196, 200, 206]);
+    const pole = [toCam(v.cx, 1.1, v.cz), toCam(v.cx, 2.2, v.cz)];
+    capsule(list, pole[0], pole[1], 0.03, [160, 160, 165], F);
+    boxPrims(list, v.cx, 2.25, v.cz, 1.15, 1.15, 0.05, v.dx, v.dz, v.umb);
+    drawPrims(list);
+    const d = Math.hypot(v.cx - P.x, v.cz - P.z), top = toCam(v.cx, 2.55, v.cz);
+    if (d < 45 && top.z > NEAR3) { const q = projC(top, F); label(v.what, q.x, q.y, 13, '#fff', 'rgba(0,0,0,.6)'); }
+  }
+  // a speech bubble over someone's head
+  function label(text, x, y, size, color, bg) {
+    const U = Ui.u;
+    ctx.font = `800 ${Math.round(size * U)}px system-ui, sans-serif`;
+    const w = ctx.measureText(text).width + 14 * U, h = (size + 10) * U;
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - w / 2, y - h, w, h, 8 * U) : ctx.rect(x - w / 2, y - h, w, h); ctx.fill();
+    ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y - h / 2);
+  }
+  function bubble(text, x, y) {
+    const U = Ui.u, max = Math.min(W * 0.6, 260 * U);
+    ctx.font = `700 ${Math.round(13 * U)}px system-ui, sans-serif`;
+    const words = text.split(' '), lines = [];
+    let cur = '';
+    for (const wd of words) { const t = cur ? cur + ' ' + wd : wd; if (ctx.measureText(t).width > max && cur) { lines.push(cur); cur = wd; } else cur = t; }
+    if (cur) lines.push(cur);
+    const lh = 17 * U, w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 18 * U, h = lines.length * lh + 10 * U;
+    const bx = Math.max(4, Math.min(W - w - 4, x - w / 2)), by = Math.max(4, y - h - 10 * U);
+    ctx.fillStyle = 'rgba(255,255,255,.94)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, w, h, 10 * U) : ctx.rect(bx, by, w, h); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x - 6 * U, by + h); ctx.lineTo(x + 6 * U, by + h); ctx.lineTo(x, by + h + 9 * U); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#111'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    lines.forEach((l, i) => ctx.fillText(l, bx + w / 2, by + 5 * U + i * lh));
+  }
   const SKIN = [214, 166, 128], PANTS = [44, 48, 60], SHOE = [30, 30, 34], GLOVE = [28, 30, 38];
   function drawFoe(f, now) {
     let j = poseFoe(f, now);
@@ -1608,6 +1926,10 @@
         // scared: hands up by the face
         j.elL = [-0.2, 1.3, 0.14]; j.elR = [0.2, 1.3, 0.14]; j.fiL = [-0.1, 1.58, 0.2]; j.fiR = [0.1, 1.58, 0.2];
         j.head[2] -= 0.05;
+      } else if (p.texting) {
+        // head down over the phone
+        j.elR = [0.16, 1.14, 0.16]; j.fiR = [0.05, 1.24, 0.3]; j.elL = [-0.16, 1.14, 0.16]; j.fiL = [-0.04, 1.23, 0.3];
+        j.head = [0, 1.6, 0.07];
       } else if (p.phone && !p.officer) {
         // filming: phone held up at eye height
         j.elR = [0.2, 1.32, 0.22]; j.fiR = [0.08, 1.56, 0.34]; j.elL = [-0.16, 1.3, 0.2]; j.fiL = [-0.02, 1.54, 0.33];
@@ -1645,7 +1967,13 @@
       const w = toWorld(p, fr, [0.03, 1.56, 0.36]);
       ball(list, toCam(w.x, w.y, w.z), 0.05, [210, 235, 255], F);
     }
+    if (p.texting && !(now < (p.waveUntil || 0))) {
+      const w = toWorld(p, fr, [0, 1.25, 0.32]);
+      ball(list, toCam(w.x, w.y, w.z), 0.04, [190, 225, 255], F);
+    }
+    if (p.kind === 'vendor') drawCart(p);
     drawPrims(list);
+    if (now < (p.sayUntil || 0) && c.head.z > NEAR3 && Math.hypot(p.x - P.x, p.z - P.z) < 30) { const q = projC({ x: c.head.x, y: c.head.y + 0.25, z: c.head.z }, F); bubble(p.say, q.x, q.y); }
   }
 
   // Your arms, from the engine's arm pose (shoulder widths, x right, y up, z toward the camera,
@@ -1696,6 +2024,17 @@
       if (wr.z > NEAR3) { const p = projC(wr, fv); Fight.hand[side].scr = { x: p.x, y: p.y, r: 0.08 * p.s }; }
     }
     drawPrims(list);
+    // a hand up at the guard glows, so you can see you are covered
+    const sg = engine.signals();
+    for (const side of ['left', 'right']) {
+      const h = Fight.hand[side].scr;
+      if (!h || !(sg.guard_up || sg['guard_' + side])) continue;
+      const blk = Fight.block && now - Fight.block.t < FT.fx.blockMs && (Fight.block.side === 'both' || Fight.block.side === side);
+      ctx.save(); ctx.shadowColor = '#3fc8ff'; ctx.shadowBlur = 18 * Ui.u;
+      ctx.lineWidth = (blk ? 7 : 4) * Ui.u; ctx.strokeStyle = blk ? '#ffffff' : 'rgba(110, 215, 255, .9)';
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r * (blk ? 1.7 : 1.35), 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
     gloveHits(arms, now);
   }
 
@@ -1791,7 +2130,7 @@
     const s = engine.signals();
     const phase = engine.combat().phase;
     const close = foeDist(a.foe) <= FT.reach.hook;
-    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : `${close ? 'Close: hooks land' : 'Mid range: straights'} · ${s.guard_up ? 'guard up' : 'guard down'}`;
+    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : `${close ? 'Close: hooks land' : 'Mid range: straights'} · ${s.guard_up ? 'guard up' : s.guard_left ? 'left hand up' : s.guard_right ? 'right hand up' : 'guard down'}`;
     // their guard, while it is worn down
     const gh = a.foe.guardHp ?? FT.guard.hp;
     if (gh < FT.guard.hp - 0.05) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / FT.guard.hp), '#9fb4c8', 'Guard');
@@ -1808,17 +2147,50 @@
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = '#ffcf3f';
       ctx.strokeText(Fight.msg, W / 2, H * 0.3); ctx.fillText(Fight.msg, W / 2, H * 0.3);
     }
-    // landed punches: a quick burst where the glove met them
-    Fight.impacts = Fight.impacts.filter((p) => now - p.t < 260);
-    for (const p of Fight.impacts) {
-      const u = (now - p.t) / 260, r = (14 + 30 * u) * (0.7 + 0.4 * p.power);
-      ctx.strokeStyle = `rgba(255, 236, 160, ${1 - u})`; ctx.lineWidth = 5 * (1 - u) + 1;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * (1 - u)})`;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.45, 0, Math.PI * 2); ctx.fill();
+    // your guard: a shield for each hand, lit while that hand is up by your face; the one an
+    // incoming punch needs pulses, and a block flashes it
+    {
+      const foe = a.foe, yours = foe.hookSide === 'R' ? 'left' : 'right';
+      const need = foe.state === 'windup' ? (foe.kind === 'straight' ? 'both' : yours) : null;
+      const blk = Fight.block && now - Fight.block.t < FT.fx.blockMs ? Fight.block : null;
+      const gy = 118, r = 22;
+      ctx.font = '800 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      for (const side of ['left', 'right']) {
+        const on = s.guard_up || s['guard_' + side];
+        const cx = side === 'left' ? 34 : W - 34;
+        const pulse = need && !on && (need === 'both' || need === side);
+        const word = pulse ? 'Up!' : side === 'left' ? 'Left' : 'Right';
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = pulse ? '#ffcf3f' : on ? '#9fe6ff' : '#c9d1dd';
+        ctx.strokeText(word, cx, gy + r * 1.2 + 4); ctx.fillText(word, cx, gy + r * 1.2 + 4);
+        shieldPath(cx, gy, r);
+        ctx.fillStyle = blk && (blk.side === 'both' || blk.side === side) ? '#ffffff' : on ? '#3fc8ff' : 'rgba(0,0,0,.5)';
+        ctx.fill();
+        ctx.lineWidth = pulse ? 3.5 : 2; ctx.strokeStyle = pulse ? `rgba(255, 207, 63, ${0.55 + 0.45 * Math.sin(now / 70)})` : on ? '#e9fbff' : 'rgba(255,255,255,.35)';
+        ctx.stroke();
+      }
+      // a block: a big shield flashes on the side it covered, the screen edge goes blue
+      if (blk) {
+        const u = (now - blk.t) / FT.fx.blockMs, R = 46 + 40 * u;
+        const bx = blk.side === 'both' ? W / 2 : blk.side === 'left' ? W * 0.3 : W * 0.7;
+        ctx.globalAlpha = 1 - u;
+        shieldPath(bx, H * 0.5, R); ctx.fillStyle = 'rgba(63, 200, 255, .35)'; ctx.fill(); ctx.lineWidth = 6; ctx.strokeStyle = '#e9fbff'; ctx.stroke();
+        ctx.lineWidth = 18; ctx.strokeStyle = 'rgba(63, 200, 255, .5)'; ctx.strokeRect(0, 0, W, H);
+        ctx.globalAlpha = 1;
+      }
     }
+    // a combo: punches landed close together
+    const cb = Fight.combo;
+    if (cb.n >= 2 && now - cb.last < FT.fx.comboMs) {
+      const k = 1 + 0.25 * Math.max(0, 1 - (now - cb.last) / 180);
+      ctx.save(); ctx.translate(W - 16, H * 0.46); ctx.scale(k, k);
+      ctx.font = '900 28px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = cb.n >= 5 ? '#ff7a3d' : '#ffcf3f';
+      ctx.strokeText(`${cb.n} hit combo`, 0, 0); ctx.fillText(`${cb.n} hit combo`, 0, 0);
+      ctx.restore();
+    }
+    if (now - Fight.flashAt < 90) { ctx.fillStyle = 'rgba(255,255,255,.2)'; ctx.fillRect(0, 0, W, H); }
     // your level: how low you are, with the mark a shot needs
-    const lh = Math.min(170, H * 0.24), lx = 14, ly = H * 0.42;
+    const lh = Math.min(170, H * 0.24), lx = 14, ly = H * 0.5;
     const depth = Math.min(1, s.squat_depth || 0), mark = LEVEL_SHOT;
     ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(lx, ly, 14, lh);
     ctx.fillStyle = depth >= mark ? '#ffcf3f' : '#9fd2ff'; ctx.fillRect(lx + 2, ly + 2, 10, (lh - 4) * depth);
@@ -1826,6 +2198,59 @@
     ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText('Level', lx - 2, ly - 3); ctx.fillText('Level', lx - 2, ly - 3);
     if (now < Fight.hurtUntil) { ctx.fillStyle = 'rgba(220, 40, 30, .28)'; ctx.fillRect(0, 0, W, H); }
+  }
+  function shieldPath(cx, cy, r) {
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r * 0.85); ctx.quadraticCurveTo(cx, cy - r * 1.15, cx + r, cy - r * 0.85);
+    ctx.lineTo(cx + r * 0.9, cy + r * 0.15); ctx.quadraticCurveTo(cx + r * 0.6, cy + r * 0.8, cx, cy + r * 1.15);
+    ctx.quadraticCurveTo(cx - r * 0.6, cy + r * 0.8, cx - r * 0.9, cy + r * 0.15); ctx.closePath();
+  }
+  // landed punches, in screen pixels where the glove met them: a burst, sparks, and the punch's
+  // name and damage floating up
+  function drawHits(now) {
+    const U = Ui.u;
+    Fight.impacts = Fight.impacts.filter((p) => now - p.t < 300);
+    for (const p of Fight.impacts) {
+      const u = (now - p.t) / 300, r = (16 + 40 * u) * (0.7 + 0.4 * Math.min(2, p.power)) * U;
+      ctx.strokeStyle = `rgba(255, 236, 160, ${1 - u})`; ctx.lineWidth = (6 * (1 - u) + 1) * U;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.85 * (1 - u)})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.45, 0, Math.PI * 2); ctx.fill();
+    }
+    Fight.sparks = Fight.sparks.filter((q) => now - q.t < q.life);
+    ctx.lineCap = 'round';
+    for (const q of Fight.sparks) {
+      const u = (now - q.t) / 1000, a = 1 - (now - q.t) / q.life;
+      const x = q.x + q.vx * u * U, y = q.y + (q.vy * u + 700 * u * u) * U;
+      ctx.strokeStyle = q.hot ? `rgba(255, 245, 190, ${a})` : `rgba(255, 150, 50, ${a})`; ctx.lineWidth = 3 * U;
+      ctx.beginPath(); ctx.moveTo(x - q.vx * 0.025 * U, y - q.vy * 0.025 * U); ctx.lineTo(x, y); ctx.stroke();
+    }
+    Fight.pops = Fight.pops.filter((q) => now - q.t < 950);
+    for (const q of Fight.pops) {
+      if (q.dx === undefined) q.dx = rand(-26, 26);
+      const u = (now - q.t) / 950, grow = u < 0.12 ? 0.6 + 4 * u : 1.08 - 0.08 * Math.min(1, (u - 0.12) * 4);
+      ctx.font = `900 ${Math.round((q.big ? 30 : 22) * U * grow)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.globalAlpha = 1 - u * u;
+      ctx.lineWidth = 5 * U; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = q.big ? '#ff7a3d' : '#fff3b0';
+      const x = q.x + q.dx * U, y = q.y - (34 + 80 * u) * U;
+      ctx.strokeText(q.text, x, y); ctx.fillText(q.text, x, y);
+      ctx.globalAlpha = 1;
+    }
+  }
+  function shakeOffset(now) {
+    const sk = Fight.shake;
+    if (!sk) return { x: 0, y: 0 };
+    const u = (now - sk.t) / FT.fx.shakeMs;
+    if (u >= 1) { Fight.shake = null; return { x: 0, y: 0 }; }
+    const a = FT.fx.shakePx * sk.k * (1 - u) * (1 - u) * Ui.u;
+    return { x: Math.sin(now * 0.11) * a, y: Math.cos(now * 0.137) * a * 0.7 };
+  }
+  // the HUD's scale: bigger on a tablet, and bigger again with the camera (you read it from
+  // across the room), never so big the HUD runs off the screen
+  const Ui = { u: 1, css: 0 };
+  function uiScale() {
+    const base = Math.min(innerWidth, innerHeight) / 390 * (isDemo() ? 1 : 1.3);
+    return Math.max(1, Math.min(base, innerWidth / 400, innerHeight / 330, 2.6));
   }
   // squat depth at which the engine sees a level change (a shot)
   const LEVEL_SHOT = (() => { const c = RE.defaultConfig(); return Math.min(1, c.combat.level.squat / c.signals.squatFullDrop); })();
@@ -2051,8 +2476,12 @@
     }
     cam = { x: eye.x, y: eye.y, z: eye.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
-    // a slip tilts the whole scene a little
+    // a slip tilts the whole scene a little; a hit shakes it
+    Ui.u = uiScale();
+    if (Ui.u !== Ui.css) { Ui.css = Ui.u; document.documentElement.style.setProperty('--ui', Ui.u.toFixed(3)); }
+    const shk = shakeOffset(now);
     ctx.save();
+    ctx.translate(shk.x, shk.y);
     if (pv.roll) { ctx.translate(W / 2, H / 2); ctx.rotate(-pv.roll); ctx.translate(-W / 2, -H / 2); }
     const horizon = H / 2 - F * (cam.sp / cam.cp);
     const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
@@ -2080,13 +2509,20 @@
     if (G.state === 'walk') {
       // opponents, far to near
       // opponents, the crowd and the person they were hassling, far to near
-      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f, foe: false })), Peds.list.filter((p) => foeDist(p) < 120).map((f) => ({ f, foe: false })));
-      for (const it of all.sort((a, b) => foeDist(b.f) - foeDist(a.f))) { if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
+      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f, foe: false })), Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f, foe: false })), Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })));
+      for (const it of all.sort((a, b) => foeDist(b.f) - foeDist(a.f))) { if (it.car) drawCar(it.f); else if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
     ctx.restore();
     if (G.state === 'walk') {
-      if (Fight.active) { drawArms(now); fightHud(now); }
+      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawArms(now); drawHits(now); ctx.restore(); }
+      // the HUD in logical pixels times the UI scale
+      const RW = W, RH = H, U = Ui.u;
+      ctx.setTransform(dpr * U, 0, 0, dpr * U, 0, 0);
+      W = RW / U; H = RH / U;
+      if (Fight.active) fightHud(now);
       else { hud(now); minimap(); }
+      W = RW; H = RH;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
   }
 
@@ -2218,7 +2654,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 all of Manhattan, street by street';
+  const BUILD = '2026-10-15 PM \u00b7 block cue, big iPad text, busy streets, hit feedback';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
@@ -2255,7 +2691,8 @@
       playMs: 0, activeMs: 0, idleS: 0, idleSaid: 0, milestone: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: SESSION.intervalEveryS, intervals: 0 });
     Phone.open = false; $('phone').hidden = true;
     Object.assign(Calls, { active: null, answered: 0, missed: 0 });
-    Object.assign(Peds, { list: [], waves: 0 });
+    Object.assign(Peds, { list: [], waves: 0, chatAt: 0, voiceAt: -Infinity });
+    Traffic.cars = []; Vendors.list = [];
     Object.assign(Subway, { ride: null, rides: 0, restMs: 0 }); $('subway').hidden = true;
     Prog.walkXp = 0;
     Object.assign(Fight, { people: [], foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
@@ -2263,6 +2700,7 @@
     planRoute();
     sayRoute(true);
     spawnFoes(FT.firstAhead);
+    hum(true);
     show(null);
     $('endBtn').hidden = false;
     $('phoneBtn').hidden = false;
@@ -2271,6 +2709,7 @@
   function endWalk() {
     const now = performance.now();
     stopFightClip();
+    hum(false);
     if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     Subway.ride = null; $('subway').hidden = true;
@@ -2733,7 +3172,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
