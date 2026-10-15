@@ -5,8 +5,8 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 ## Now playable (touch controls)
 
 - Grid: 12th Ave to 1st Ave, 14th St to 59th St, at Manhattan's real block proportions (about 80 m uptown blocks, 180 to 280 m crosstown blocks). Buildings are generated, taller in Midtown.
-- March to walk, high knees (or cadence over 150) to run, turn your shoulders to look left or right; walking while turned veers you across the sidewalk (touch: drag the right zone). The pace readout under the timer shows walking or running and your steps per minute: marching faster walks faster (0.6 to 1.25 times walking pace), and high knees or 150+ steps per minute runs at 2.5 times walking pace.
-- Point left or right any time on a block; the turn happens at the next corner. At the grid's edge you stop until you point.
+- March to walk, high knees (or cadence over 150) to run, turn your shoulders to steer like a steering wheel: hold the turn to keep turning, face front to go straight (touch: hold a drag on the right zone). You walk anywhere on the streets and sidewalks; buildings block you, and letting go near a street's direction settles you onto it. The pace readout under the timer shows walking or running and your steps per minute: marching faster walks faster (0.6 to 1.25 times walking pace), and high knees or 150+ steps per minute runs at 2.5 times walking pace.
+- Point left or right for a quick 90 degree turn onto the cross street.
 - Both hands overhead turns you around.
 - Walk to destinations at real intersections (Herald Square, Times Square, Grand Central, Columbus Circle and more). HUD shows the street sign, next cross street, distance to the corner, direction to the destination and a minimap.
 - Movement runs at 3x real walking pace so blocks pass at a game pace; distance in the summary is city distance.
@@ -27,8 +27,6 @@ Spoken instructions wait their turn and leave 2 s between lines, so you have tim
 The warm-up records up to 28 s of camera landmarks. After the walk, "Save warm-up clip" downloads it so the engine can be tuned on real data. During the walk, a three-finger tap shows the stick figure again.
 
 Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and torso turn drift all work on camera.
-
-Add `?loco=engine` to the URL to try the milestone 5 prototype: movement runs on the engine's locomotion state machine, and you point at the corner itself (within 15 m) instead of anywhere on the block.
 
 ## Not built yet
 

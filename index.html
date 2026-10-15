@@ -2584,8 +2584,8 @@
     <p>Midtown, 14th to 59th Street, avenue by avenue. Walk it for real.</p>
     <ul>
       <li>March in place to walk; march faster to walk faster, high knees to run</li>
-      <li>Point left or right before a corner to turn there</li>
-      <li>Turn your shoulders to look and veer across the sidewalk</li>
+      <li>Point left or right for a quick turn onto the cross street</li>
+      <li>Turn your shoulders to steer, like a steering wheel; face front to go straight</li>
       <li>Both hands overhead to turn around</li>
     </ul>
     <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
@@ -2629,16 +2629,12 @@
     runMps: 3.5,           // high knees pace
     speedScale: 3,         // game moves 3x real pace so blocks pass at a fun clip
     runCadence: 150,
-    sidewalkSlide: 1.6,    // meters either side of the sidewalk center you can veer (keeps you between curb and facade)
-    lookMax: 0.6,          // radians the view turns at full torso turn (about 35 degrees)
-    veer: 0.35,            // share of walking speed that carries you sideways while you face off the path
+    centerWithin: 12,      // degrees: not steering and this close to a street's direction, you settle onto it
+    centerRate: 1.5,       // how fast that self-centering pulls (per second)
     eyeHeight: 1.7,
     drawDistance: 520,
     arriveRadius: 30,
-    cornerWindow: 3,       // ?loco=engine: meters either side of a corner that count as at the intersection
   };
-  // ?loco=engine runs movement on the engine's locomotion state machine (milestone 5 prototype)
-  const ENGINE_LOCO = new URLSearchParams(location.search).get('loco') === 'engine';
 
   // ---------- Midtown grid: avenues west to east (x), streets south to north (z) ----------
   // Spacing follows Manhattan's real proportions: long crosstown blocks, short uptown blocks.
@@ -2706,51 +2702,56 @@
     }
   })();
 
-  // ---------- player on sidewalk rails ----------
-  // dir: 0 north (+z), 1 east (+x), 2 south (-z), 3 west (-x)
-  const DIRS = [{ x: 0, z: 1 }, { x: 1, z: 0 }, { x: 0, z: -1 }, { x: -1, z: 0 }];
-  const P = { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, look: 0, speed: 0, yaw: Math.PI / 2, running: false, cadence: 0 };
-  let queued = null; // { side: 'left' | 'right', at: ms }
-
-  const nextNode = (ai, st, dir) => {
-    const d = DIRS[dir];
-    const nai = ai + d.x, nst = st + d.z;
-    return nai >= 0 && nai < NA && nst >= FIRST_ST && nst <= LAST_ST ? { ai: nai, st: nst } : null;
-  };
-  const edgeLen = (ai, st, dir) => {
-    const n = nextNode(ai, st, dir);
-    if (!n) return 0;
-    return Math.abs(aveX(n.ai) - aveX(ai)) + Math.abs(stZ(n.st) - stZ(st));
-  };
-  const turnDir = (dir, side) => (dir + (side === 'right' ? 1 : 3)) % 4;
-  const dirYaw = (dir) => [0, Math.PI / 2, Math.PI, -Math.PI / 2][dir];
-
-  // world position: along the current edge, on the right-hand sidewalk
-  function playerPos() {
-    const d = DIRS[P.dir];
-    const bx = aveX(P.ai) + d.x * P.t, bz = stZ(P.st) + d.z * P.t;
-    const rx = d.z, rz = -d.x; // right of heading
-    const half = d.x !== 0 ? ST_HALF : AVE_HALF;
-    const off = half + WALK_OFF + P.lateral;
-    return { x: bx + rx * off, z: bz + rz * off };
+  // ---------- player: free walking, steered like a wheel ----------
+  // The engine's free movement model: torso turn sets the turn rate (hold it and you keep turning,
+  // face front and you go straight), marching and high knees set speed, and you walk wherever you
+  // face on streets and sidewalks, never through a building.
+  // yaw: radians, 0 north (+z), clockwise (east is pi/2); the engine's facing is the same in degrees.
+  const START = { x: aveX(4) + AVE_HALF + 6, z: stZ(34) - ST_HALF - WALK_OFF, yaw: Math.PI / 2 }; // 8th Ave at W 34th St, facing east
+  const P = { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 };
+  const RADIUS = 0.6;
+  const BOUNDS = { x0: aveX(0) - AVE_HALF, x1: aveX(NA - 1) + AVE_HALF, z0: stZ(FIRST_ST) - ST_HALF, z1: stZ(LAST_ST) + ST_HALF };
+  // building footprints: each block inside its 4 m sidewalk
+  const solid = blocks.map((b) => ({ x0: b.x0 + 4, x1: b.x1 - 4, z0: b.z0 + 4, z1: b.z1 - 4 }));
+  function blocked(x, z) {
+    if (x < BOUNDS.x0 || x > BOUNDS.x1 || z < BOUNDS.z0 || z > BOUNDS.z1) return true;
+    for (const b of solid) if (x > b.x0 - RADIUS && x < b.x1 + RADIUS && z > b.z0 - RADIUS && z < b.z1 + RADIUS) return true;
+    return false;
   }
+  function nearestAve(x) {
+    let best = 0;
+    for (let i = 1; i < NA; i++) if (Math.abs(x - aveX(i)) < Math.abs(x - aveX(best))) best = i;
+    return best;
+  }
+  const nearestSt = (z) => Math.max(FIRST_ST, Math.min(LAST_ST, Math.round(z / ST_GAP) + FIRST_ST));
+  // the block-sized cell around the player, for counting blocks walked
+  function cellOf(x, z) {
+    let i = 0;
+    while (i < NA - 1 && x > (aveX(i) + aveX(i + 1)) / 2) i++;
+    return i * 1000 + nearestSt(z);
+  }
+  const playerPos = () => P;
 
-  // the street or avenue you are walking on, and the next cross street
+  // the street or avenue you are heading along, and the next cross street ahead
   function whereAmI() {
-    const d = DIRS[P.dir];
-    const ahead = nextNode(P.ai, P.st, P.dir);
-    if (d.x !== 0) {
-      const crossAi = ahead ? ahead.ai : P.ai;
-      return { on: streetName(P.st, P.ai), next: ahead ? AVES[crossAi][0] : null };
+    const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
+    const ai = nearestAve(P.x), st = nearestSt(P.z);
+    if (Math.abs(hz) >= Math.abs(hx)) {
+      const k = P.z / ST_GAP, n = (hz > 0 ? Math.floor(k + 0.02) + 1 : Math.ceil(k - 0.02) - 1) + FIRST_ST;
+      const ok = n >= FIRST_ST && n <= LAST_ST;
+      return { on: AVES[ai][0], next: ok ? streetName(n, ai) : null, dist: ok ? Math.abs(stZ(n) - P.z) : 0 };
     }
-    return { on: AVES[P.ai][0], next: ahead ? streetName(ahead.st, P.ai) : null };
+    let n = -1;
+    if (hx > 0) { for (let i = 0; i < NA; i++) if (aveX(i) > P.x + 2) { n = i; break; } }
+    else { for (let i = NA - 1; i >= 0; i--) if (aveX(i) < P.x - 2) { n = i; break; } }
+    return { on: streetName(st, ai), next: n >= 0 ? AVES[n][0] : null, dist: n >= 0 ? Math.abs(aveX(n) - P.x) : 0 };
   }
 
   // ---------- session ----------
   const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0 };
 
   function pickDestination() {
-    const here = { ai: P.ai, st: P.st };
+    const here = { ai: nearestAve(P.x), st: nearestSt(P.z) };
     const far = PLACES.filter((p) => Math.abs(p.ai - here.ai) + Math.abs(p.st - here.st) >= 6);
     const pool = far.length ? far : PLACES;
     let next = pool[Math.floor(Math.random() * pool.length)];
@@ -2764,143 +2765,54 @@
   engine.on('step', () => { if (G.state === 'walk') G.steps++; });
   engine.on('run_start', () => { P.running = true; });
   engine.on('run_end', () => { P.running = false; });
+  engine.on('run_start', () => { if (G.state === 'walk') { say('Running', 'feedback'); banner('Running', 1500); } });
+  // point: a quick 90 degree turn onto the cross street (steering does the rest)
   engine.on('point', (e) => {
     if (G.state !== 'walk') return;
-    if (ENGINE_LOCO) return; // the engine holds the point until the next corner
-    // standing at a corner: turn right away; otherwise queue it for the next corner
-    if (P.speed < 0.3 && P.t <= 0.01 && nextNode(P.ai, P.st, turnDir(P.dir, e.side))) {
-      P.dir = turnDir(P.dir, e.side);
-      return;
-    }
-    // remembered until the next corner; pointing the other way replaces it
-    queued = { side: e.side, at: performance.now() };
+    const facing = (P.yaw * 180) / Math.PI;
+    engine.set_facing(Math.round(facing / 90) * 90 + (e.side === 'right' ? 90 : -90));
   });
-  engine.on('turn_around', () => {
-    if (G.state !== 'walk' || ENGINE_LOCO) return;
-    reverse();
-  });
-  function reverse() {
-    const n = nextNode(P.ai, P.st, P.dir);
-    const len = edgeLen(P.ai, P.st, P.dir);
-    if (n && P.t > 0) { P.ai = n.ai; P.st = n.st; P.t = len - P.t; }
-    P.dir = (P.dir + 2) % 4;
-    queued = null;
-  }
-
-  // ---------- engine locomotion (milestone 5 prototype) ----------
-  // Engine facing is the game bearing in degrees (north 0, clockwise, so dir * 90): each walk
-  // sets it with set_facing. A point made mid-block waits in the engine (queued) for the corner.
-  const L = { facing: 0, queued: null };
-  const toCorner = () => Math.max(0, edgeLen(P.ai, P.st, P.dir) - P.t);
-  function atIntersection() {
-    return G.state === 'walk' && (edgeLen(P.ai, P.st, P.dir) === 0 || P.t <= T.cornerWindow || toCorner() <= T.cornerWindow);
-  }
-  // the corner a turn happens at: the one just passed, or the one just ahead
-  const turnCorner = () => (P.t <= T.cornerWindow || !nextNode(P.ai, P.st, P.dir) ? { ai: P.ai, st: P.st } : nextNode(P.ai, P.st, P.dir));
-  if (ENGINE_LOCO) {
-    engine.set_movement({
-      rails: true,
-      at_intersection: atIntersection,
-      branch_bearing(side) {
-        const c = turnCorner();
-        const nd = turnDir(P.dir, side);
-        return nextNode(c.ai, c.st, nd) ? nd * 90 : null; // null: no street that way, keep going
-      },
-    });
-  }
-
-  function updateEngineLoco(dt, now) {
-    const m = engine.locomotion();
-    L.facing = m.facing;
-    L.queued = m.queued;
-    P.running = m.state === 'run';
-    P.speed = m.speed * T.speedScale;
-    if (P.running && P.speed > 1) G.runMs += dt * 1000;
-    G.peakCadence = Math.max(G.peakCadence, engine.signals().cadence_spm || 0);
-    P.cadence = engine.signals().cadence_spm || 0;
-    steer(m.lateral, dt); // on rails the engine's lateral is the torso turn, -1..1
-
-    const want = (Math.round(m.facing / 90) + 400) % 4;
-    const d = (want - P.dir + 4) % 4;
-    if (d === 2) reverse();
-    else if (d) {
-      // a point at a corner: snap onto that corner and take the street
-      if (P.t > T.cornerWindow && nextNode(P.ai, P.st, P.dir)) {
-        const room = toCorner();
-        const n = nextNode(P.ai, P.st, P.dir);
-        G.meters += room; G.blocks++;
-        P.ai = n.ai; P.st = n.st;
-        if (G.dest && P.ai === G.dest.ai && P.st === G.dest.st) arrive(now);
-      }
-      P.t = 0;
-      P.dir = want;
-    }
-    advance(P.speed * dt, now);
-  }
+  // turn around: the engine's free movement model adds 180 itself
 
   // ---------- update ----------
   function update(dt, now) {
     if (G.state !== 'walk') return;
-    if (ENGINE_LOCO) { updateEngineLoco(dt, now); easeYaw(dt); return; }
+    const m = engine.locomotion();
     const s = engine.signals();
-    const cadence = s.cadence_spm || 0;
-    G.peakCadence = Math.max(G.peakCadence, cadence);
-    const running = P.running || cadence >= T.runCadence;
-    let target = 0;
-    if (cadence > 0) target = running ? T.runMps : T.walkMps * Math.min(1.25, Math.max(0.6, cadence / 110));
-    target *= T.speedScale;
-    P.speed += (target - P.speed) * Math.min(1, dt * 3);
-    if (running && P.speed > 1) G.runMs += dt * 1000;
+    P.cadence = s.cadence_spm || 0;
+    G.peakCadence = Math.max(G.peakCadence, P.cadence);
+    P.running = m.state === 'run';
+    P.speed = m.speed * T.speedScale;
+    if (P.running && P.speed > 1) G.runMs += dt * 1000;
 
-    P.cadence = cadence;
-    steer(s.turn || 0, dt);
-
-    advance(P.speed * dt, now);
-    easeYaw(dt);
-  }
-
-  // Torso turn (deadzoned by the engine, -1..1) turns your view, and walking while you face off the
-  // path veers you across the sidewalk the way a diagonal step would. Rails still own the street.
-  function steer(turn, dt) {
-    P.look += (turn * T.lookMax - P.look) * Math.min(1, dt * 5);
-    const drift = P.speed * Math.sin(P.look) * T.veer * dt;
-    P.lateral = Math.max(-T.sidewalkSlide, Math.min(T.sidewalkSlide, P.lateral + drift));
-  }
-
-  // walk the rails: along the edge, through corners, taking a queued turn there
-  function advance(move, now) {
-    while (move > 0) {
-      const len = edgeLen(P.ai, P.st, P.dir);
-      if (len === 0) {
-        // facing the edge of the map: wait for a point
-        P.speed = 0;
-        if (queued && nextNode(P.ai, P.st, turnDir(P.dir, queued.side))) { P.dir = turnDir(P.dir, queued.side); queued = null; }
-        break;
+    // self-centering, like a steering wheel letting go: not steering and walking within a few
+    // degrees of a street's direction, you settle onto it and go straight down the block
+    let facing = m.facing;
+    if (Math.abs(s.turn || 0) < 0.05 && P.speed > 0.5) {
+      const diff = Math.round(facing / 90) * 90 - facing;
+      if (Math.abs(diff) > 0.05 && Math.abs(diff) < T.centerWithin) {
+        facing += diff * Math.min(1, dt * T.centerRate);
+        engine.set_facing(facing);
       }
-      const room = len - P.t;
-      if (move < room) { P.t += move; G.meters += move; move = 0; break; }
-      // reached the corner
-      G.meters += room;
-      move -= room;
-      const n = nextNode(P.ai, P.st, P.dir);
-      P.ai = n.ai; P.st = n.st; P.t = 0;
-      G.blocks++;
-      if (queued && nextNode(P.ai, P.st, turnDir(P.dir, queued.side))) {
-        P.dir = turnDir(P.dir, queued.side);
-        queued = null;
-      } else if (!nextNode(P.ai, P.st, P.dir)) {
-        move = 0;
-      }
-      if (G.dest && P.ai === G.dest.ai && P.st === G.dest.st) arrive(now);
     }
-  }
+    P.yaw = (facing * Math.PI) / 180;
 
-  // ease the view toward the walking direction
-  function easeYaw(dt) {
-    let dy = dirYaw(P.dir) - P.yaw;
+    // walk where you face, sliding along building fronts
+    const step = P.speed * dt, ox = P.x, oz = P.z;
+    const nx = P.x + Math.sin(P.yaw) * step, nz = P.z + Math.cos(P.yaw) * step;
+    if (!blocked(nx, P.z)) P.x = nx;
+    if (!blocked(P.x, nz)) P.z = nz;
+    G.meters += Math.hypot(P.x - ox, P.z - oz);
+    const cell = cellOf(P.x, P.z);
+    if (P.cell !== null && cell !== P.cell) G.blocks++;
+    P.cell = cell;
+    if (G.dest && Math.hypot(P.x - aveX(G.dest.ai), P.z - stZ(G.dest.st)) < T.arriveRadius) arrive(now);
+
+    // the view follows the heading; a point or turn around swings it over smoothly
+    let dy = P.yaw - P.view;
     while (dy > Math.PI) dy -= 2 * Math.PI;
     while (dy < -Math.PI) dy += 2 * Math.PI;
-    P.yaw += dy * Math.min(1, dt * 6);
+    P.view += dy * Math.min(1, dt * 8);
   }
 
   function arrive(now) {
@@ -2983,12 +2895,14 @@
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     W = innerWidth; H = innerHeight;
-    F = Math.max(W, H) * 0.55;
+    // running widens the view a little, so a run reads at a glance
+    P.runBlend += ((P.running ? 1 : 0) - P.runBlend) * 0.08;
+    F = Math.max(W, H) * 0.55 * (1 - 0.15 * P.runBlend);
 
     const pos = playerPos();
-    const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * Math.min(1, P.speed / 4) : 0;
+    const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * (1 + P.runBlend) * Math.min(1, P.speed / 4) : 0;
     const pitch = -0.12; // look slightly up at the skyline
-    cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.yaw + P.look), sy: Math.sin(P.yaw + P.look), cp: Math.cos(pitch), sp: Math.sin(pitch) };
+    cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
     const horizon = H / 2 - F * (cam.sp / cam.cp);
     const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
@@ -3042,16 +2956,12 @@
     ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(w.on, 26, top + 7);
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
 
-    const len = edgeLen(P.ai, P.st, P.dir);
-    const toCorner = Math.max(0, len - P.t);
-    if (w.next) line(`${w.next} in ${Math.round(toCorner)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
-    else line('End of the grid: point left or right', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
-    const waiting = ENGINE_LOCO ? L.queued : queued && queued.side;
-    if (waiting) line(`Turning ${waiting} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
+    if (w.next) line(`${w.next} in ${Math.round(w.dist)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
+    else line('Edge of the grid: turn around', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
 
     // destination
     if (G.dest) {
-      const dAve = G.dest.ai - P.ai, dSt = G.dest.st - P.st;
+      const dAve = G.dest.ai - nearestAve(P.x), dSt = G.dest.st - nearestSt(P.z);
       const parts = [];
       if (dSt) parts.push(`${Math.abs(dSt)} ${dSt > 0 ? 'north' : 'south'}`);
       if (dAve) parts.push(`${Math.abs(dAve)} ave ${dAve > 0 ? 'east' : 'west'}`);
@@ -3065,7 +2975,7 @@
     line(`${Math.floor(mins)}:${String(Math.floor((mins % 1) * 60)).padStart(2, '0')}`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
     line(`${miles.toFixed(2)} mi · ${G.steps} steps`, W - 14, top + 142, 'right', '600 13px system-ui, sans-serif');
     // pace: marching faster walks faster, high knees run
-    const pace = P.speed < 0.3 ? 'Stopped' : P.running || P.cadence >= T.runCadence ? 'Running' : 'Walking';
+    const pace = P.speed < 0.3 ? 'Stopped' : P.running ? 'Running' : 'Walking';
     line(P.cadence > 0 ? `${pace} · ${Math.round(P.cadence)} spm` : pace, W - 14, top + 160, 'right', '700 13px system-ui, sans-serif', pace === 'Running' ? '#ffcf3f' : '#fff');
 
     if (now < G.bannerUntil) {
@@ -3101,7 +3011,7 @@
     // player arrow
     const px = sx(pos.x), py = sy(pos.z);
     ctx.translate(px, py);
-    ctx.rotate(P.yaw + P.look);
+    ctx.rotate(P.view);
     ctx.fillStyle = '#5be37c';
     ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(5, 5); ctx.lineTo(-5, 5); ctx.closePath(); ctx.fill();
     ctx.restore();
@@ -3113,9 +3023,8 @@
   }
 
   function startWalk() {
-    Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, look: 0, speed: 0, yaw: Math.PI / 2, running: false, cadence: 0 });
-    queued = null;
-    if (ENGINE_LOCO) { engine.set_facing(P.dir * 90); L.facing = P.dir * 90; L.queued = null; }
+    Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
+    engine.set_facing((START.yaw * 180) / Math.PI);
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
     pickDestination();
     show(null);
@@ -3155,7 +3064,7 @@
   $('playDemo').addEventListener('click', () => {
     enableTouch();
     startWalk();
-    note('Tap the left zone to walk, double-tap and hold to run. Drag the right zone to look and veer. Point before a corner to turn there.', 7000);
+    note('Tap the left zone to walk, double-tap and hold to run. Hold a drag on the right zone to steer. Point for a quick turn onto the cross street.', 7000);
   });
   // ---------- camera setup and warm-up ----------
   // Every camera session: the engine's framing check and stand-still baseline (no move test, so a
@@ -3553,7 +3462,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, engine, whereAmI, runCamera, engineLoco: ENGINE_LOCO, get queued() { return queued; } };
+  window.__game = { G, P, T, Warm, engine, whereAmI, runCamera, blocked };
 })();
 </script>
 </body>
