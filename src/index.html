@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Manhattan Miles</title>
+<style>
+  :root { --ink: #fff; --muted: #c9d1dd; --panel: rgba(12, 16, 24, .92); --accent: #ffcf3f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0f18; color: var(--ink); font: 16px/1.4 system-ui, -apple-system, sans-serif; overflow: hidden; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #demo { position: fixed; inset: 0; z-index: 2; }
+  #demo .re-demo { top: auto; height: 52%; }
+  #demo .re-demo-buttons button[hidden] { display: none; }
+  #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
+  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 172px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #endBtn[hidden] { display: none; }
+  .screen { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(6, 9, 15, .74); }
+  .screen[hidden] { display: none; }
+  .card { width: min(440px, 100%); background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 22px 20px; text-align: center; }
+  .card h1 { margin: 0 0 4px; font-size: 32px; color: var(--accent); }
+  .card h2 { margin: 0 0 8px; font-size: 24px; }
+  .card p { margin: 6px 0; color: var(--muted); }
+  .card ul { text-align: left; margin: 10px 0 14px; padding-left: 20px; color: var(--muted); }
+  .btns { display: grid; gap: 10px; margin-top: 14px; }
+  button.main { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; color: #231a00; background: var(--accent); }
+  button.secondary { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; background: #2a3344; color: var(--ink); }
+  table.stats { width: 100%; border-collapse: collapse; margin: 10px 0; font-variant-numeric: tabular-nums; }
+  table.stats td { padding: 5px 4px; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; }
+  table.stats td:last-child { text-align: right; font-weight: 700; }
+  .payoff { text-align: left; font-size: 14px; }
+  #note { position: fixed; left: 50%; bottom: calc(52% + 10px); transform: translateX(-50%); z-index: 4; background: rgba(0,0,0,.62); padding: 6px 12px; border-radius: 10px; font-size: 13px; color: var(--muted); max-width: 92vw; text-align: center; pointer-events: none; }
+  #note[hidden] { display: none; }
+</style>
+<!-- rep-engine:inline -->
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="demo"></div>
+<video id="pip" playsinline muted></video>
+<div id="note" hidden></div>
+<button id="endBtn" hidden>End walk</button>
+
+<div id="title" class="screen">
+  <div class="card">
+    <h1>Manhattan Miles</h1>
+    <p>Midtown, 14th to 59th Street, avenue by avenue. Walk it for real.</p>
+    <ul>
+      <li>March in place to walk, high knees to run</li>
+      <li>Point left or right before a corner to turn there</li>
+      <li>Lean to drift across the sidewalk</li>
+      <li>Both hands overhead to turn around</li>
+    </ul>
+    <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
+    <div class="btns">
+      <button id="playDemo" class="main">Walk with touch controls</button>
+      <button id="playCamera" class="secondary">Walk with camera</button>
+    </div>
+  </div>
+</div>
+
+<div id="summary" class="screen" hidden>
+  <div class="card">
+    <h2>Walk complete</h2>
+    <table class="stats" id="sumStats"></table>
+    <div class="payoff" id="payoff"></div>
+    <div class="btns"><button id="again" class="main">Walk again</button></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  const RE = window.RepEngine;
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('game');
+  const ctx = canvas.getContext('2d');
+
+  // ---------- tuning ----------
+  const T = {
+    walkMps: 1.4,          // real walking pace at 110 steps per minute
+    runMps: 3.5,           // high knees pace
+    speedScale: 3,         // game moves 3x real pace so blocks pass at a fun clip
+    runCadence: 150,
+    leanDeadzone: 0.06,
+    leanFull: 0.25,
+    sidewalkSlide: 2.4,    // meters of lean slide either side of the sidewalk center
+    eyeHeight: 1.7,
+    drawDistance: 520,
+    arriveRadius: 30,
+  };
+
+  // ---------- Midtown grid: avenues west to east (x), streets south to north (z) ----------
+  // Spacing follows Manhattan's real proportions: long crosstown blocks, short uptown blocks.
+  const AVES = [
+    ['12th Ave', 0], ['11th Ave', 280], ['10th Ave', 560], ['9th Ave', 840], ['8th Ave', 1120],
+    ['7th Ave', 1400], ['6th Ave', 1680], ['5th Ave', 1960], ['Madison Ave', 2140], ['Park Ave', 2320],
+    ['Lexington Ave', 2500], ['3rd Ave', 2700], ['2nd Ave', 2930], ['1st Ave', 3160],
+  ];
+  const FIRST_ST = 14, LAST_ST = 59, ST_GAP = 80;
+  const AVE_HALF = 15, ST_HALF = 9, WALK_OFF = 3.2; // half widths in meters; sidewalk center sits outside the roadway
+  const FIFTH = 7;
+  const aveX = (i) => AVES[i][1];
+  const stZ = (n) => (n - FIRST_ST) * ST_GAP;
+  const NA = AVES.length, NS = LAST_ST - FIRST_ST + 1;
+
+  const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+  const streetName = (n, ai) => `${ai >= FIFTH ? 'E' : 'W'} ${ordinal(n)} St`;
+
+  // Destinations at real intersections (approximate where the grid simplifies).
+  const PLACES = [
+    { name: 'Herald Square', ai: 6, st: 34 },
+    { name: 'Times Square', ai: 5, st: 42 },
+    { name: 'Bryant Park', ai: 6, st: 41 },
+    { name: 'Grand Central', ai: 9, st: 42 },
+    { name: 'Madison Square Park', ai: 7, st: 23 },
+    { name: 'Columbus Circle', ai: 4, st: 59 },
+    { name: 'Union Square', ai: 9, st: 14 },
+    { name: 'Hudson Yards', ai: 2, st: 33 },
+    { name: 'Sutton Place', ai: 13, st: 57 },
+    { name: 'Chelsea Market', ai: 3, st: 15 },
+  ];
+
+  // ---------- buildings ----------
+  function rng(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let r = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const TONES = [[188, 170, 150], [150, 160, 176], [176, 140, 120], [204, 196, 182], [128, 136, 150], [168, 176, 168], [196, 168, 140], [110, 122, 140]];
+  const buildings = [];
+  const blocks = [];
+  (function buildCity() {
+    const r = rng(1811); // the year of the grid plan
+    for (let i = 0; i < NA - 1; i++) {
+      for (let s = FIRST_ST; s < LAST_ST; s++) {
+        const x0 = aveX(i) + AVE_HALF + 4, x1 = aveX(i + 1) - AVE_HALF - 4;
+        const z0 = stZ(s) + ST_HALF + 4, z1 = stZ(s + 1) - ST_HALF - 4;
+        blocks.push({ x0: x0 - 4, x1: x1 + 4, z0: z0 - 4, z1: z1 + 4 });
+        const midtown = s >= 33 && s <= 59 && i >= 4 && i <= 10;
+        const zMid = (z0 + z1) / 2;
+        for (const [za, zb] of [[z0, zMid], [zMid, z1]]) {
+          let x = x0;
+          while (x < x1 - 6) {
+            const w = Math.min(x1 - x, 14 + r() * 30);
+            const tall = midtown ? 40 + r() * 190 : 14 + r() * 55;
+            const h = r() < 0.08 ? tall * 1.6 : tall;
+            buildings.push({ x: x + w / 2, z: (za + zb) / 2, hx: w / 2 - 0.4, hz: (zb - za) / 2 - 0.4, h, col: TONES[Math.floor(r() * TONES.length)] });
+            x += w;
+          }
+        }
+      }
+    }
+  })();
+
+  // ---------- player on sidewalk rails ----------
+  // dir: 0 north (+z), 1 east (+x), 2 south (-z), 3 west (-x)
+  const DIRS = [{ x: 0, z: 1 }, { x: 1, z: 0 }, { x: 0, z: -1 }, { x: -1, z: 0 }];
+  const P = { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, speed: 0, yaw: Math.PI / 2, running: false };
+  let queued = null; // { side: 'left' | 'right', at: ms }
+
+  const nextNode = (ai, st, dir) => {
+    const d = DIRS[dir];
+    const nai = ai + d.x, nst = st + d.z;
+    return nai >= 0 && nai < NA && nst >= FIRST_ST && nst <= LAST_ST ? { ai: nai, st: nst } : null;
+  };
+  const edgeLen = (ai, st, dir) => {
+    const n = nextNode(ai, st, dir);
+    if (!n) return 0;
+    return Math.abs(aveX(n.ai) - aveX(ai)) + Math.abs(stZ(n.st) - stZ(st));
+  };
+  const turnDir = (dir, side) => (dir + (side === 'right' ? 1 : 3)) % 4;
+  const dirYaw = (dir) => [0, Math.PI / 2, Math.PI, -Math.PI / 2][dir];
+
+  // world position: along the current edge, on the right-hand sidewalk
+  function playerPos() {
+    const d = DIRS[P.dir];
+    const bx = aveX(P.ai) + d.x * P.t, bz = stZ(P.st) + d.z * P.t;
+    const rx = d.z, rz = -d.x; // right of heading
+    const half = d.x !== 0 ? ST_HALF : AVE_HALF;
+    const off = half + WALK_OFF + P.lateral;
+    return { x: bx + rx * off, z: bz + rz * off };
+  }
+
+  // the street or avenue you are walking on, and the next cross street
+  function whereAmI() {
+    const d = DIRS[P.dir];
+    const ahead = nextNode(P.ai, P.st, P.dir);
+    if (d.x !== 0) {
+      const crossAi = ahead ? ahead.ai : P.ai;
+      return { on: streetName(P.st, P.ai), next: ahead ? AVES[crossAi][0] : null };
+    }
+    return { on: AVES[P.ai][0], next: ahead ? streetName(ahead.st, P.ai) : null };
+  }
+
+  // ---------- session ----------
+  const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0 };
+
+  function pickDestination() {
+    const here = { ai: P.ai, st: P.st };
+    const far = PLACES.filter((p) => Math.abs(p.ai - here.ai) + Math.abs(p.st - here.st) >= 6);
+    const pool = far.length ? far : PLACES;
+    let next = pool[Math.floor(Math.random() * pool.length)];
+    if (G.dest && next.name === G.dest.name) next = pool[(pool.indexOf(next) + 1) % pool.length];
+    G.dest = next;
+  }
+
+  // ---------- engine ----------
+  const engine = RE.create({ video: $('pip'), preset: 'living_room' });
+  engine.on('step', () => { if (G.state === 'walk') G.steps++; });
+  engine.on('run_start', () => { P.running = true; });
+  engine.on('run_end', () => { P.running = false; });
+  engine.on('point', (e) => {
+    if (G.state !== 'walk') return;
+    // standing at a corner: turn right away; otherwise queue it for the next corner
+    if (P.speed < 0.3 && P.t <= 0.01 && nextNode(P.ai, P.st, turnDir(P.dir, e.side))) {
+      P.dir = turnDir(P.dir, e.side);
+      return;
+    }
+    // remembered until the next corner; pointing the other way replaces it
+    queued = { side: e.side, at: performance.now() };
+  });
+  engine.on('turn_around', () => {
+    if (G.state !== 'walk') return;
+    const n = nextNode(P.ai, P.st, P.dir);
+    const len = edgeLen(P.ai, P.st, P.dir);
+    if (n && P.t > 0) { P.ai = n.ai; P.st = n.st; P.t = len - P.t; }
+    P.dir = (P.dir + 2) % 4;
+    queued = null;
+  });
+
+  // ---------- update ----------
+  function update(dt, now) {
+    if (G.state !== 'walk') return;
+    const s = engine.signals();
+    const cadence = s.cadence_spm || 0;
+    G.peakCadence = Math.max(G.peakCadence, cadence);
+    const running = P.running || cadence >= T.runCadence;
+    let target = 0;
+    if (cadence > 0) target = running ? T.runMps : T.walkMps * Math.min(1.25, Math.max(0.6, cadence / 110));
+    target *= T.speedScale;
+    P.speed += (target - P.speed) * Math.min(1, dt * 3);
+    if (running && P.speed > 1) G.runMs += dt * 1000;
+
+    const lean = s.lean || 0;
+    const mag = Math.min(1, Math.max(0, Math.abs(lean) - T.leanDeadzone) / (T.leanFull - T.leanDeadzone));
+    P.lateral += (Math.sign(lean) * mag * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
+
+    let move = P.speed * dt;
+    while (move > 0) {
+      const len = edgeLen(P.ai, P.st, P.dir);
+      if (len === 0) {
+        // facing the edge of the map: wait for a point
+        P.speed = 0;
+        if (queued && nextNode(P.ai, P.st, turnDir(P.dir, queued.side))) { P.dir = turnDir(P.dir, queued.side); queued = null; }
+        break;
+      }
+      const room = len - P.t;
+      if (move < room) { P.t += move; G.meters += move; move = 0; break; }
+      // reached the corner
+      G.meters += room;
+      move -= room;
+      const n = nextNode(P.ai, P.st, P.dir);
+      P.ai = n.ai; P.st = n.st; P.t = 0;
+      G.blocks++;
+      if (queued && nextNode(P.ai, P.st, turnDir(P.dir, queued.side))) {
+        P.dir = turnDir(P.dir, queued.side);
+        queued = null;
+      } else if (!nextNode(P.ai, P.st, P.dir)) {
+        move = 0;
+      }
+      if (G.dest && P.ai === G.dest.ai && P.st === G.dest.st) arrive(now);
+    }
+
+    // ease the view toward the walking direction
+    let dy = dirYaw(P.dir) - P.yaw;
+    while (dy > Math.PI) dy -= 2 * Math.PI;
+    while (dy < -Math.PI) dy += 2 * Math.PI;
+    P.yaw += dy * Math.min(1, dt * 6);
+  }
+
+  function arrive(now) {
+    G.arrived++;
+    G.banner = `Arrived at ${G.dest.name}`;
+    G.bannerUntil = now + 3500;
+    pickDestination();
+  }
+
+  // ---------- rendering ----------
+  const NEAR = 0.3;
+  const SKY = [150, 182, 214];
+  let W = 0, H = 0, F = 0, cam = null;
+
+  function toCam(x, y, z) {
+    const dx = x - cam.x, dy = y - cam.y, dz = z - cam.z;
+    const xr = dx * cam.cy - dz * cam.sy;
+    const zr = dx * cam.sy + dz * cam.cy;
+    return { x: xr, y: dy * cam.cp + zr * cam.sp, z: -dy * cam.sp + zr * cam.cp };
+  }
+  function project(poly) {
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const ain = a.z >= NEAR, bin = b.z >= NEAR;
+      if (ain) out.push(a);
+      if (ain !== bin) { const t = (NEAR - a.z) / (b.z - a.z); out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: NEAR }); }
+    }
+    if (out.length < 3) return null;
+    return out.map((p) => ({ x: W / 2 + (F * p.x) / p.z, y: H / 2 - (F * p.y) / p.z }));
+  }
+  function shade(col, k, depth) {
+    const fog = Math.min(1, Math.max(0, depth / T.drawDistance)) ** 1.3;
+    const c = col.map((v, i) => Math.round(Math.min(255, v * k) * (1 - fog) + SKY[i] * fog));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+  function fillPoly(pts, color) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  // axis-aligned building box: visible faces only
+  function buildingFaces(out, b, depth) {
+    const x0 = b.x - b.hx, x1 = b.x + b.hx, z0 = b.z - b.hz, z1 = b.z + b.hz, h = b.h;
+    const add = (pts, k, cx, cz) => {
+      const cp = pts.map((p) => toCam(p[0], p[1], p[2]));
+      if (cp.every((p) => p.z < NEAR)) return;
+      out.push({ cp, color: shade(b.col, k, depth), depth, sub: Math.hypot(cx - cam.x, cz - cam.z), win: k < 1.05 && depth < 220 ? { pts, h } : null });
+    };
+    if (cam.z < z0) add([[x0, 0, z0], [x1, 0, z0], [x1, h, z0], [x0, h, z0]], 0.94, b.x, z0);
+    if (cam.z > z1) add([[x0, 0, z1], [x1, 0, z1], [x1, h, z1], [x0, h, z1]], 0.88, b.x, z1);
+    if (cam.x < x0) add([[x0, 0, z0], [x0, 0, z1], [x0, h, z1], [x0, h, z0]], 0.8, x0, b.z);
+    if (cam.x > x1) add([[x1, 0, z0], [x1, 0, z1], [x1, h, z1], [x1, h, z0]], 0.84, x1, b.z);
+    if (cam.y > h) add([[x0, h, z0], [x1, h, z0], [x1, h, z1], [x0, h, z1]], 1.1, b.x, b.z);
+  }
+
+  // window bands on near facades, so speed reads at street level
+  function windows(face) {
+    const [a, b] = face.win.pts;
+    const step = 4;
+    ctx.strokeStyle = 'rgba(30, 40, 56, .18)';
+    ctx.lineWidth = 1;
+    for (let y = 4; y < Math.min(face.win.h - 1, 90); y += step) {
+      const p = project([toCam(a[0], y, a[2]), toCam(b[0], y, b[2]), toCam(b[0], y + 0.01, b[2])]);
+      if (!p) continue;
+      ctx.beginPath(); ctx.moveTo(p[0].x, p[0].y); ctx.lineTo(p[1].x, p[1].y); ctx.stroke();
+    }
+  }
+
+  function render(now) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    W = innerWidth; H = innerHeight;
+    F = Math.max(W, H) * 0.55;
+
+    const pos = playerPos();
+    const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * Math.min(1, P.speed / 4) : 0;
+    const pitch = -0.12; // look slightly up at the skyline
+    cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.yaw), sy: Math.sin(P.yaw), cp: Math.cos(pitch), sp: Math.sin(pitch) };
+
+    const horizon = H / 2 - F * (cam.sp / cam.cp);
+    const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
+    sky.addColorStop(0, '#6f9cc9'); sky.addColorStop(1, `rgb(${SKY.join(',')})`);
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, Math.max(0, horizon));
+    ctx.fillStyle = 'rgb(84, 88, 96)'; ctx.fillRect(0, Math.max(0, horizon), W, H);
+
+    // sidewalk slabs (block footprints) near the player
+    for (const bl of blocks) {
+      const cx = (bl.x0 + bl.x1) / 2, cz = (bl.z0 + bl.z1) / 2;
+      const depth = Math.hypot(cx - cam.x, cz - cam.z);
+      if (depth > T.drawDistance) continue;
+      const pts = project([[bl.x0, bl.z0], [bl.x1, bl.z0], [bl.x1, bl.z1], [bl.x0, bl.z1]].map(([x, z]) => toCam(x, 0.15, z)));
+      if (pts) fillPoly(pts, shade([158, 156, 150], 1, depth));
+    }
+
+    const faces = [];
+    for (const b of buildings) {
+      const dx = b.x - cam.x, dz = b.z - cam.z;
+      if (Math.abs(dx) > T.drawDistance + 60 || Math.abs(dz) > T.drawDistance + 60) continue;
+      const depth = Math.hypot(dx, dz);
+      if (depth > T.drawDistance + 40) continue;
+      const c = toCam(b.x, 0, b.z);
+      if (c.z < -Math.max(b.hx, b.hz) - 2) continue; // fully behind
+      buildingFaces(faces, b, depth);
+    }
+    faces.sort((a, b) => b.depth - a.depth || b.sub - a.sub);
+    for (const f of faces) {
+      const pts = project(f.cp);
+      if (!pts) continue;
+      fillPoly(pts, f.color);
+      if (f.win) windows(f);
+    }
+
+    if (G.state === 'walk') { hud(now); minimap(); }
+  }
+
+  function hud(now) {
+    const top = 14;
+    const w = whereAmI();
+    ctx.textBaseline = 'top';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+    const line = (txt, x, y, align, font, color = '#fff') => { ctx.font = font; ctx.textAlign = align; ctx.fillStyle = color; ctx.strokeText(txt, x, y); ctx.fillText(txt, x, y); };
+
+    // green street sign
+    ctx.font = '800 20px system-ui, sans-serif';
+    const signW = Math.max(150, ctx.measureText(w.on).width + 28);
+    ctx.fillStyle = '#106b3c';
+    ctx.fillRect(12, top, signW, 34);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(14, top + 2, signW - 4, 30);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(w.on, 26, top + 7);
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+
+    const len = edgeLen(P.ai, P.st, P.dir);
+    const toCorner = Math.max(0, len - P.t);
+    if (w.next) line(`${w.next} in ${Math.round(toCorner)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
+    else line('End of the grid: point left or right', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
+    if (queued) line(`Turning ${queued.side} at the next corner`, 14, top + 62, 'left', '700 15px system-ui, sans-serif', '#ffcf3f');
+
+    // destination
+    if (G.dest) {
+      const dAve = G.dest.ai - P.ai, dSt = G.dest.st - P.st;
+      const parts = [];
+      if (dSt) parts.push(`${Math.abs(dSt)} ${dSt > 0 ? 'north' : 'south'}`);
+      if (dAve) parts.push(`${Math.abs(dAve)} ave ${dAve > 0 ? 'east' : 'west'}`);
+      line(`To ${G.dest.name}`, 14, top + 86, 'left', '700 15px system-ui, sans-serif');
+      line(parts.length ? parts.join(', ') : 'right here', 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
+    }
+
+    // session numbers
+    const mins = (now - G.start) / 60000;
+    const miles = G.meters / 1609.34;
+    line(`${Math.floor(mins)}:${String(Math.floor((mins % 1) * 60)).padStart(2, '0')}`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
+    line(`${miles.toFixed(2)} mi · ${G.steps} steps`, W - 14, top + 142, 'right', '600 13px system-ui, sans-serif');
+
+    if (now < G.bannerUntil) {
+      ctx.font = '800 22px system-ui, sans-serif';
+      const tw = ctx.measureText(G.banner).width;
+      ctx.fillStyle = 'rgba(16, 107, 60, .92)';
+      ctx.fillRect(W / 2 - tw / 2 - 16, H * 0.3, tw + 32, 44);
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+      ctx.fillText(G.banner, W / 2, H * 0.3 + 10);
+    }
+  }
+
+  // north-up minimap of nearby blocks
+  function minimap() {
+    const size = 104, m = 10, x0 = W - size - m, y0 = m;
+    const span = 700; // meters shown
+    const k = size / span;
+    const pos = playerPos();
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(x0, y0, size, size);
+    ctx.beginPath(); ctx.rect(x0, y0, size, size); ctx.clip();
+    const sx = (x) => x0 + size / 2 + (x - pos.x) * k;
+    const sy = (z) => y0 + size / 2 - (z - pos.z) * k;
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
+    for (let i = 0; i < NA; i++) { const x = sx(aveX(i)); ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + size); ctx.stroke(); }
+    for (let s = FIRST_ST; s <= LAST_ST; s++) { const y = sy(stZ(s)); ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + size, y); ctx.stroke(); }
+    if (G.dest) {
+      const dx = sx(aveX(G.dest.ai)), dy = sy(stZ(G.dest.st));
+      ctx.fillStyle = '#ffcf3f';
+      ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, dx)), Math.max(y0 + 4, Math.min(y0 + size - 4, dy)), 4, 0, Math.PI * 2); ctx.fill();
+    }
+    // player arrow
+    const px = sx(pos.x), py = sy(pos.z);
+    ctx.translate(px, py);
+    ctx.rotate(P.yaw);
+    ctx.fillStyle = '#5be37c';
+    ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(5, 5); ctx.lineTo(-5, 5); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // ---------- flow ----------
+  const DEMO_BUTTONS = ['Point L', 'Point R', 'Turn 180'];
+  function enableTouch() {
+    engine.enable_demo($('demo'));
+    const bar = document.querySelector('#demo .re-demo-buttons');
+    if (!bar) return;
+    for (const b of bar.querySelectorAll('button')) b.hidden = !DEMO_BUTTONS.includes(b.textContent.trim());
+    bar.style.gridTemplateColumns = `repeat(${DEMO_BUTTONS.length}, 1fr)`;
+  }
+
+  function startWalk() {
+    Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, speed: 0, yaw: Math.PI / 2, running: false });
+    queued = null;
+    Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
+    pickDestination();
+    show(null);
+    $('endBtn').hidden = false;
+  }
+
+  function endWalk() {
+    const now = performance.now();
+    G.state = 'summary';
+    $('endBtn').hidden = true;
+    const ms = now - G.start;
+    const fmt = (t) => `${Math.floor(t / 60000)}:${String(Math.floor((t % 60000) / 1000)).padStart(2, '0')}`;
+    const miles = G.meters / 1609.34;
+    $('sumStats').innerHTML = [
+      ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
+      ['Blocks', G.blocks], ['Destinations reached', G.arrived], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+    ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+    const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
+    if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of high knees between corners works hip flexor endurance and pushes your heart rate up.</p>`);
+    $('payoff').innerHTML = lines.join('');
+    show('summary');
+  }
+
+  function show(id) {
+    for (const s of ['title', 'summary']) $(s).hidden = s !== id;
+    if (id) note('');
+  }
+  function note(msg, ms = 6000) {
+    const el = $('note');
+    el.textContent = msg;
+    el.hidden = !msg;
+    clearTimeout(note.t);
+    if (msg && ms) note.t = setTimeout(() => { el.hidden = true; }, ms);
+  }
+
+  $('playDemo').addEventListener('click', () => {
+    enableTouch();
+    startWalk();
+    note('Tap the left zone to walk, double-tap and hold to run. Point before a corner to turn there.', 7000);
+  });
+  $('playCamera').addEventListener('click', async () => {
+    show(null);
+    $('pip').style.display = 'block';
+    note('Starting camera...', 0);
+    try {
+      await engine.start('living_room');
+    } catch (err) {
+      $('pip').style.display = 'none';
+      note('Camera unavailable: ' + err.message + '. Using touch controls.');
+      enableTouch();
+      startWalk();
+      return;
+    }
+    const off = engine.on('calibration', (s) => note(s.prompt, 0));
+    if (!engine.is_calibrated()) await engine.calibrate('living_room').catch(() => {});
+    off();
+    const missing = ['step', 'point', 'turn_around'].filter((e) => !RE.detectors.has(e));
+    note(missing.length ? 'Lean works on camera now. Marching, pointing and turning around arrive with the next engine update.' : 'Calibrated. Start marching.', 7000);
+    startWalk();
+  });
+  $('endBtn').addEventListener('click', endWalk);
+  $('again').addEventListener('click', () => { G.state = 'title'; show('title'); });
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    update(dt, now);
+    render(now);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // test hook for automated checks
+  window.__game = { G, P, T, whereAmI, get queued() { return queued; } };
+})();
+</script>
+</body>
+</html>
