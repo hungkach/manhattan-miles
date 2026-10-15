@@ -71,6 +71,8 @@ else:
 
 ### Police radio and crimes in progress
 
+Done 10/15: the phone's police radio (`radio`, `CALL_TYPES`, `Calls`), timed calls you run to, officers who arrive after the fight (`OFFICER_LINES`), as recommended below. Pedestrians with a right-hand wave are done too (`Peds`, `greet`, `PED_LINES`).
+
 - An in-game police radio lets you hear crimes in progress and go stop them.
 - Police interactions (Claude's recommendation, Mark to confirm):
 

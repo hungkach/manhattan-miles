@@ -74,7 +74,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.5.2 from hungkach/body-arcade@96b523a, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.5.3 from hungkach/body-arcade@354b091, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -83,7 +83,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.5.2';
+  RE.version = '0.5.3';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -2249,7 +2249,7 @@
 //   Left thumb zone: tap in rhythm = march (tap speed sets cadence).
 //                    Double-tap and hold = run.
 //   Right thumb zone: drag sideways = turn.
-//   Buttons: point L/R, turn around, jab, cross, hook, uppercut, guard
+//   Buttons: point L/R, turn around, wave L/R, jab, cross, hook, uppercut, guard
 //            (hold), slip L/R, stance (orthodox / southpaw), squat (held
 //            1.5 s), drive up, jump (an explosive drive up off the floor),
 //            stomp. Jab and hook throw the lead hand, cross and uppercut the rear.
@@ -2330,6 +2330,8 @@
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
         case 'turn_around': this.emit('turn_around', {}); break;
+        case 'wave_left': this.emit('wave', { hand: 'left' }); break;
+        case 'wave_right': this.emit('wave', { hand: 'right' }); break;
         case 'jab': strike(this.lead(), 'jab'); break;
         case 'cross': strike(this.rear(), 'cross'); break;
         case 'hook': strike(this.lead(), 'hook'); break;
@@ -2376,7 +2378,7 @@
   RE.DemoInput = DemoInput;
 
   const BUTTONS = [
-    ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'],
+    ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'], ['wave_left', 'Wave L'], ['wave_right', 'Wave'],
     ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
     ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
@@ -3375,9 +3377,12 @@
     G.dest = G.route[0];
   }
   const leftMs = () => G.minutes * 60000 - G.playMs;
+  // where directions point: an answered police call first, else the route stop
+  const target = () => Calls.active || G.dest;
   // blocks and avenues to the stop, in words
   function destWords() {
-    const dAve = G.dest.ai - nearestAve(P.x), dSt = G.dest.st - nearestSt(P.z);
+    const tg = target();
+    const dAve = tg.ai - nearestAve(P.x), dSt = tg.st - nearestSt(P.z);
     const parts = [];
     if (dSt) parts.push(`${Math.abs(dSt)} ${Math.abs(dSt) === 1 ? 'block' : 'blocks'} ${dSt > 0 ? 'north' : 'south'}`);
     if (dAve) parts.push(`${Math.abs(dAve)} ${Math.abs(dAve) === 1 ? 'avenue' : 'avenues'} ${dAve > 0 ? 'east' : 'west'}`);
@@ -3404,7 +3409,8 @@
   // what to do at crossing c to reach the stop: go straight while there is still ground to cover
   // this way, then turn toward it; the wrong way is a turn around
   function adviceAt(c) {
-    const dA = G.dest.ai - c.ai, dS = G.dest.st - c.st;
+    const tg = target();
+    const dA = tg.ai - c.ai, dS = tg.st - c.st;
     if (!dA && !dS) return { turn: 0, arrive: true };
     const along = [dS, dA, -dS, -dA][c.h];
     if (along > 0) return { turn: 0 };
@@ -3415,11 +3421,24 @@
   }
   function navTick() {
     if (!G.dest) return;
+    // at a corner right now (within 25 m of its center) and the turn is here: say so, rather than
+    // sending you on to the next corner and back
+    const ai0 = nearestAve(P.x), st0 = nearestSt(P.z), h0 = headingOf(P.yaw);
+    if (Math.hypot(P.x - aveX(ai0), P.z - stZ(st0)) < 25) {
+      const a0 = adviceAt({ ai: ai0, st: st0, h: h0 });
+      if (a0.turn === 1 || a0.turn === 3) {
+        const side = a0.turn === 1 ? 'right' : 'left', onto = h0 % 2 === 0 ? streetName(st0, ai0) : AVES[ai0][0];
+        G.nav = `Turn ${side} here onto ${onto}`;
+        const key = `${ai0},${st0},${h0}`;
+        if (key !== G.cueKey) { G.cueKey = key; say(`Turn ${side} here, onto ${onto}.`, 'prompt'); }
+        return;
+      }
+    }
     const c = crossingAhead();
     if (!c) { G.nav = 'Turn around'; return; }
     const a = adviceAt(c);
     const side = a.turn === 1 ? 'right' : 'left';
-    G.nav = a.arrive ? `${G.dest.name} at ${c.name}` : a.turn === 0 ? `Straight through ${c.name}` : a.turn === 2 ? 'Wrong way: turn around' : `Turn ${side} at ${c.name}`;
+    G.nav = a.arrive ? `${target().name} at ${c.name}` : a.turn === 0 ? `Straight through ${c.name}` : a.turn === 2 ? 'Wrong way: turn around' : `Turn ${side} at ${c.name}`;
     const key = `${c.ai},${c.st},${c.h}`;
     if (c.dist > SESSION.cueAhead || c.dist < 5 || key === G.cueKey) return;
     G.cueKey = key;
@@ -3456,7 +3475,7 @@
     const iv = G.interval;
     if (!iv) {
       if (P.speed > 0.5) G.intervalIn -= dt;
-      if (G.intervalIn <= 0 && leftMs() > (SESSION.intervalS + 20) * 1000) {
+      if (G.intervalIn <= 0 && !Calls.active && leftMs() > (SESSION.intervalS + 20) * 1000) {
         G.interval = { left: SESSION.intervalS, ran: 0, tenSaid: false };
         say(`Interval! High knees for ${SESSION.intervalS} seconds.`, 'prompt');
         banner('High knees!', 1800, now);
@@ -3490,6 +3509,128 @@
   });
   // turn around: the engine's free movement model adds 180 itself
 
+  // ---------- police radio: crimes in progress you choose to answer ----------
+  // The phone's police radio puts out a call at a corner a few blocks away with a time limit set so
+  // you need some high knees to make it: getting there is the interval. Directions switch to the
+  // call; arrive in time and the fight is there, and when it is over the police walk up and take it
+  // from there. Police here are allies who show up after you have done the work (see
+  // docs/design-notes.md): generic uniforms, no department names, and the jokes land on you.
+  const CALL_TYPES = [
+    { what: 'Phone snatcher', line: 'Phone snatcher working the crowd. Suspect is in a red hoodie and is, quote, very proud of himself.' },
+    { what: 'Hot dog shakedown', line: 'Someone shaking down a hot dog vendor. Vendor says he did not even pay for the onions.' },
+    { what: 'Road rage', line: 'Road rage turned fistfight. One driver is still holding his coffee.' },
+    { what: 'Bike thief', line: 'Bike thief cutting locks. Caller says he is terrible at it and it has been ten minutes.' },
+    { what: 'Mime in trouble', line: 'Man harassing a street performer. The performer is a mime, so he could not call it in himself.' },
+    { what: 'Purse snatcher', line: 'Purse snatching in progress. Victim reports her purse is, and I quote, worth more than his life.' },
+  ];
+  const OFFICER_LINES = [
+    'We will take it from here. Nice work. Maybe call us first next time.',
+    'Police. We got him. You might want to stretch, champ.',
+    'Thanks for the assist. Paperwork is on us. Lucky us.',
+    'Was the jumping really necessary? Do not answer that. Good work.',
+  ];
+  const Calls = { active: null, answered: 0, missed: 0 };
+  const CALL = { minM: 350, maxM: 750, walkMps: T.walkMps * T.speedScale, slack: 0.85, extraS: 15, arriveM: 35 };
+  function radio(now) {
+    if (Calls.active) {
+      const c = Calls.active;
+      say(`Still on it: ${c.what.toLowerCase()} at ${c.name}. ${Math.ceil((c.until - now) / 1000)} seconds.`, 'prompt');
+      return;
+    }
+    // a corner minM to maxM away (walking distance on the grid), inside the map
+    const options = [];
+    for (let ai = 0; ai < NA; ai++) for (let st = FIRST_ST; st <= LAST_ST; st++) {
+      const d = Math.abs(aveX(ai) - P.x) + Math.abs(stZ(st) - P.z);
+      if (d >= CALL.minM && d <= CALL.maxM) options.push({ ai, st, d });
+    }
+    if (!options.length) { say('Radio is quiet.', 'prompt'); return; }
+    const o = options[Math.floor(Math.random() * options.length)];
+    const kind = pick(CALL_TYPES);
+    const secs = Math.round((o.d / CALL.walkMps) * CALL.slack + CALL.extraS);
+    Calls.active = { ai: o.ai, st: o.st, what: kind.what, name: `${AVES[o.ai][0]} and ${streetName(o.st, o.ai)}`, until: now + secs * 1000, secs };
+    G.cueKey = '';
+    G.interval = null; // the run to the call is the interval
+    say(`Dispatch: ${kind.line} ${Calls.active.name}. You have ${secs} seconds. High knees.`, 'instruction');
+    banner(`Call: ${kind.what}`, 2500, now);
+  }
+  function callTick(now) {
+    const c = Calls.active;
+    if (!c || Fight.active) return;
+    if (now > c.until) {
+      Calls.active = null; Calls.missed++; G.cueKey = '';
+      say('Dispatch: that call is cleared. Another unit got there first.', 'prompt');
+      return;
+    }
+    if (Math.hypot(P.x - aveX(c.ai), P.z - stZ(c.st)) < CALL.arriveM) {
+      // on scene: the fight is right there
+      Calls.active = null; G.cueKey = '';
+      Fight.foes = []; Fight.people = [];
+      spawnFoes(12);
+      Fight.callFight = true;
+    }
+  }
+
+  // ---------- pedestrians: wave your right hand to say hi ----------
+  // People walk the sidewalks around you at a real walking pace (you pass them at game pace). Wave
+  // your right hand at someone within a few meters ahead and they wave back with a line.
+  const PED = { max: 8, near: 40, far: 150, drop: 200, greetM: 9 };
+  const PED_LINES = [
+    'Do not wave at me. I am from here.',
+    'Nice knees. Very high. Very concerning.',
+    'Is this for TikTok? Am I in it? Get my good side.',
+    'Hi! Wait, do we know each other? No? Okay, bye.',
+    'Wave all you want, I am still not giving you my seat on the train.',
+    'Sorry, I do not have any change. Or feelings.',
+    'Good morning! Or whatever. Time is fake in Midtown.',
+    'You are sweating on my sidewalk.',
+    'My therapist said to wave back at people. So. Hi.',
+  ];
+  const PED_FIGHT_LINES = [
+    'Hey, it is the guy who punches people! Love your work.',
+    'Please do not take me down. I just got these pants.',
+    'I saw you on six phones today. Ugly in all of them. Kidding! Mostly.',
+  ];
+  const Peds = { list: [], waves: 0 };
+  // a sidewalk point d meters ahead of you, along your street or avenue, on either side
+  function sidewalkAhead(d) {
+    const h = headingOf(P.yaw), side = Math.random() < 0.5 ? -1 : 1;
+    if (h === 0 || h === 2) {
+      const ai = nearestAve(P.x);
+      return { x: aveX(ai) + side * (AVE_HALF + WALK_OFF + rand(-0.8, 0.8)), z: P.z + (h === 0 ? d : -d), dx: 0, dz: Math.random() < 0.5 ? 1 : -1 };
+    }
+    const st = nearestSt(P.z);
+    return { x: P.x + (h === 1 ? d : -d), z: stZ(st) + side * (ST_HALF + WALK_OFF + rand(-0.8, 0.8)), dx: Math.random() < 0.5 ? 1 : -1, dz: 0 };
+  }
+  function pedTick(dt, now) {
+    Peds.list = Peds.list.filter((p) => Math.hypot(p.x - P.x, p.z - P.z) < PED.drop);
+    if (Peds.list.length < PED.max && Math.random() < dt * 1.5) {
+      const sp = sidewalkAhead(rand(PED.near, PED.far));
+      if (!blocked(sp.x, sp.z)) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.6), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, look: null });
+    }
+    for (const p of Peds.list) {
+      if (now < (p.stopUntil || 0)) { p.walking = false; p.look = P; continue; }
+      const nx = p.x + p.dx * p.v * dt, nz = p.z + p.dz * p.v * dt;
+      if (blocked(nx, nz)) { p.dx = -p.dx; p.dz = -p.dz; } else { p.x = nx; p.z = nz; }
+      p.walking = true;
+      p.look = { x: p.x + p.dx * 5, z: p.z + p.dz * 5 };
+    }
+  }
+  function greet(now) {
+    const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
+    let best = null, bestD = PED.greetM;
+    for (const p of Peds.list) {
+      const dx = p.x - P.x, dz = p.z - P.z, d = Math.hypot(dx, dz);
+      if (d < bestD && (dx * hx + dz * hz) / (d || 1) > 0.2) { best = p; bestD = d; }
+    }
+    if (!best) { note('Nobody close enough to wave at.', 1800); return; }
+    best.stopUntil = now + 2600;
+    best.waveUntil = now + 1800;
+    Peds.waves++;
+    const line = pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
+    say(line, 'feedback');
+    note(`\u201c${line}\u201d`, 4500);
+  }
+
   // ---------- the phone: wave your left hand to open it ----------
   // From 4 ft away you cannot tap the screen, so the menu runs on the moves you already know: a
   // left-hand wave opens it, a shoulder turn moves the highlight (it does not steer while the phone
@@ -3497,6 +3638,7 @@
   // Touch players use the Phone button and tap.
   const PHONE_ITEMS = [
     { id: 'resume', label: 'Back to the walk' },
+    { id: 'radio', label: 'Police radio' },
     { id: 'repeat', label: 'Repeat directions' },
     { id: 'skip', label: 'Skip this stop' },
     { id: 'end', label: 'End session' },
@@ -3521,7 +3663,8 @@
   function pickPhone(i = Phone.idx) {
     const it = PHONE_ITEMS[i];
     closePhone();
-    if (it.id === 'repeat') say(`${G.nav || 'Keep going'}. ${G.dest.name}: ${destWords()}.`, 'prompt');
+    if (it.id === 'repeat') say(`${G.nav || 'Keep going'}. ${target().name}: ${destWords()}.`, 'prompt');
+    else if (it.id === 'radio') radio(performance.now());
     else if (it.id === 'skip') { say(`Skipping ${G.dest.name}.`, 'feedback'); nextStop(performance.now()); sayRoute(false); }
     else if (it.id === 'end') endWalk();
   }
@@ -3538,7 +3681,7 @@
   }
   engine.on('wave', (e) => {
     if (G.state !== 'walk' || Fight.active) return;
-    if (!Phone.open) { if (e.hand === 'left') openPhone(); }
+    if (!Phone.open) { if (e.hand === 'left') openPhone(); else greet(performance.now()); }
     else if (e.hand === 'right') pickPhone();
     else closePhone();
   });
@@ -3551,6 +3694,7 @@
     if (Phone.open) { phoneTick(now); P.speed = 0; easeView(dt); return; }
     sessionTick(dt, now);
     if (G.state !== 'walk') return;
+    pedTick(dt, now);
     if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
     const s = engine.signals();
@@ -3583,6 +3727,7 @@
     P.cell = cell;
     if (G.dest && Math.hypot(P.x - aveX(G.dest.ai), P.z - stZ(G.dest.st)) < T.arriveRadius) arrive(now);
     navTick();
+    callTick(now);
     updateEncounters(dt, now);
     easeView(dt);
   }
@@ -3788,6 +3933,20 @@
     for (const p of Fight.people) p.look = P; // everyone turns to you
     if (how === 'won' && foe) Fight.people.push({ kind: 'ko', x: foe.x, z: foe.z, look: P, col: foe.col, seed: 0 });
     if (how === 'won' || how === 'fled') for (const p of Fight.people) p.cheerUntil = now + 2500;
+    const call = Fight.callFight;
+    Fight.callFight = false;
+    if (call && (how === 'won' || how === 'fled')) {
+      Calls.answered++;
+      // two officers walk up from down the block
+      const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
+      for (const k of [-1, 1]) {
+        const tx = P.x + hx * 3 + hz * k * 1.2, tz = P.z + hz * 3 - hx * k * 1.2;
+        if (blocked(tx, tz)) continue;
+        Fight.people.push({ kind: 'crowd', officer: true, x: tx, z: tz, tx, tz, sx: tx + hx * 14, sz: tz + hz * 14, joinAt: now + 1500, look: P, col: [34, 44, 86], seed: Math.random() });
+      }
+      const ol = pick(OFFICER_LINES);
+      setTimeout(() => { if (G.state === 'walk') { say(ol, 'confirm'); note(`Officer: \u201c${ol}\u201d`, 6000); } }, 6500);
+    }
     if (!victim) return;
     const pool = how === 'won' ? (Math.random() < 0.6 ? LINES.thanks : LINES.roast) : LINES[how];
     const line = pick(pool);
@@ -4034,7 +4193,7 @@
     // the crowd and the person you helped stay behind as you walk on
     if (Fight.people.length && !Fight.foes.length && Fight.people.every((p) => Math.hypot(p.x - P.x, p.z - P.z) > 60)) Fight.people = [];
     if (!Fight.foes.length) {
-      if (P.speed > 0.5) Fight.waitS -= dt;
+      if (P.speed > 0.5 && !Calls.active) Fight.waitS -= dt;
       if (Fight.waitS <= 0) spawnFoes();
       return;
     }
@@ -4321,14 +4480,18 @@
         const ph = Math.sin(t * 8);
         j.knL = [-0.12, 0.52, 0.12 * ph]; j.knR = [0.12, 0.52, -0.12 * ph]; j.ftL = [-0.12, 0.06, 0.25 * ph]; j.ftR = [0.12, 0.06, -0.25 * ph];
       }
-      if (now < (p.cheerUntil || 0)) {
+      if (now < (p.waveUntil || 0)) {
+        // waving back: right hand up, side to side
+        const sw = Math.sin(t * 12) * 0.08;
+        j.elR = [0.3, 1.5, 0.06]; j.fiR = [0.34 + sw, 1.82, 0.08];
+      } else if (now < (p.cheerUntil || 0)) {
         const up = 0.05 * Math.abs(Math.sin(t * 9));
         j.elL = [-0.3, 1.62 + up, 0.04]; j.elR = [0.3, 1.62 + up, 0.04]; j.fiL = [-0.34, 1.9 + up, 0.06]; j.fiR = [0.34, 1.9 + up, 0.06];
       } else if (p.kind === 'victim' && Fight.active) {
         // scared: hands up by the face
         j.elL = [-0.2, 1.3, 0.14]; j.elR = [0.2, 1.3, 0.14]; j.fiL = [-0.1, 1.58, 0.2]; j.fiR = [0.1, 1.58, 0.2];
         j.head[2] -= 0.05;
-      } else if (p.phone) {
+      } else if (p.phone && !p.officer) {
         // filming: phone held up at eye height
         j.elR = [0.2, 1.32, 0.22]; j.fiR = [0.08, 1.56, 0.34]; j.elL = [-0.16, 1.3, 0.2]; j.fiL = [-0.02, 1.54, 0.33];
       }
@@ -4355,8 +4518,13 @@
       capsule(list, c['kn' + sd], c['ft' + sd], 0.06, PANTS, F);
       ball(list, c['ft' + sd], 0.055, SHOE, F);
     }
+    if (p.officer) {
+      // a flat cap
+      const w = toWorld(p, fr, [j.head[0], j.head[1] + 0.09, j.head[2]]);
+      ball(list, toCam(w.x, w.y, w.z), 0.1, [24, 28, 50], F);
+    }
     // the phone: a lit screen between the hands
-    if (p.phone && p.kind === 'crowd' && !(now < (p.cheerUntil || 0))) {
+    if (p.phone && !p.officer && p.kind === 'crowd' && !(now < (p.cheerUntil || 0))) {
       const w = toWorld(p, fr, [0.03, 1.56, 0.36]);
       ball(list, toCam(w.x, w.y, w.z), 0.05, [210, 235, 255], F);
     }
@@ -4659,7 +4827,7 @@
     if (G.state === 'walk') {
       // opponents, far to near
       // opponents, the crowd and the person they were hassling, far to near
-      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f, foe: false })));
+      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f, foe: false })), Peds.list.filter((p) => foeDist(p) < 120).map((f) => ({ f, foe: false })));
       for (const it of all.sort((a, b) => foeDist(b.f) - foeDist(a.f))) { if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
     ctx.restore();
@@ -4689,7 +4857,12 @@
     else line('Edge of the grid: turn around', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
 
     // the stop, how far, and what to do at the next corner
-    if (G.dest) {
+    if (Calls.active) {
+      const c = Calls.active, secs = Math.max(0, Math.ceil((c.until - now) / 1000));
+      line(`Call: ${c.what} \u00b7 ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, 14, top + 86, 'left', '800 15px system-ui, sans-serif', '#ff7a6e');
+      line(destWords(), 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
+      if (G.nav) line(G.nav, 14, top + 126, 'left', '700 14px system-ui, sans-serif', '#ffcf3f');
+    } else if (G.dest) {
       const label = G.leg < SESSION.legs ? `Stop ${G.leg + 1} of ${SESSION.legs}` : 'Bonus stop';
       line(`${label}: ${G.dest.name}`, 14, top + 86, 'left', '700 15px system-ui, sans-serif');
       line(destWords(), 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
@@ -4742,6 +4915,11 @@
       ctx.fillStyle = '#ffcf3f';
       ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, dx)), Math.max(y0 + 4, Math.min(y0 + size - 4, dy)), 4, 0, Math.PI * 2); ctx.fill();
     }
+    if (Calls.active) {
+      const k = 3.5 + 1.5 * Math.sin(performance.now() / 150);
+      ctx.strokeStyle = '#ff5a4f'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(Math.max(x0 + 6, Math.min(x0 + size - 6, sx(aveX(Calls.active.ai)))), Math.max(y0 + 6, Math.min(y0 + size - 6, sy(stZ(Calls.active.st)))), k + 2, 0, Math.PI * 2); ctx.stroke();
+    }
     for (const f of Fight.foes) {
       ctx.fillStyle = '#ff5a4f';
       ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, sx(f.x))), Math.max(y0 + 4, Math.min(y0 + size - 4, sy(f.z))), 3.5, 0, Math.PI * 2); ctx.fill();
@@ -4757,10 +4935,10 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 session route, crowd and aftermath, phone menu, quick start';
+  const BUILD = '2026-10-15 \u00b7 police radio calls, pedestrians, wave to say hi';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
-    walk: ['point_left', 'point_right', 'turn_around'],
+    walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
     fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up', 'jump'],
   };
   function enableTouch() {
@@ -4782,6 +4960,8 @@
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0,
       minutes: sessionMinutes(), playMs: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: SESSION.intervalEveryS, intervals: 0, halfSaid: false, finishAt: 0 });
     Phone.open = false; $('phone').hidden = true;
+    Object.assign(Calls, { active: null, answered: 0, missed: 0 });
+    Object.assign(Peds, { list: [], waves: 0 });
     Object.assign(Fight, { people: [], foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
     if (engine.mode() === 'combat') engine.exit_combat();
     planRoute();
@@ -4805,7 +4985,7 @@
     const miles = G.meters / 1609.34;
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
-      ['Blocks', G.blocks], ['Stops reached', `${G.arrived} of ${Math.max(SESSION.legs, G.arrived)}`], ['High knees intervals', G.intervals], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+      ['Blocks', G.blocks], ['Stops reached', `${G.arrived} of ${Math.max(SESSION.legs, G.arrived)}`], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
       ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
@@ -5255,7 +5435,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, crossingAhead, adviceAt, endWalk };
+  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, radio, greet, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, crossingAhead, adviceAt, endWalk };
 })();
 </script>
 </body>

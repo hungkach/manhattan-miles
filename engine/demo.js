@@ -3,7 +3,7 @@
 //   Left thumb zone: tap in rhythm = march (tap speed sets cadence).
 //                    Double-tap and hold = run.
 //   Right thumb zone: drag sideways = turn.
-//   Buttons: point L/R, turn around, jab, cross, hook, uppercut, guard
+//   Buttons: point L/R, turn around, wave L/R, jab, cross, hook, uppercut, guard
 //            (hold), slip L/R, stance (orthodox / southpaw), squat (held
 //            1.5 s), drive up, jump (an explosive drive up off the floor),
 //            stomp. Jab and hook throw the lead hand, cross and uppercut the rear.
@@ -84,6 +84,8 @@
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
         case 'turn_around': this.emit('turn_around', {}); break;
+        case 'wave_left': this.emit('wave', { hand: 'left' }); break;
+        case 'wave_right': this.emit('wave', { hand: 'right' }); break;
         case 'jab': strike(this.lead(), 'jab'); break;
         case 'cross': strike(this.rear(), 'cross'); break;
         case 'hook': strike(this.lead(), 'hook'); break;
@@ -130,7 +132,7 @@
   RE.DemoInput = DemoInput;
 
   const BUTTONS = [
-    ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'],
+    ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'], ['wave_left', 'Wave L'], ['wave_right', 'Wave'],
     ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
     ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],

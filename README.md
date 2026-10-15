@@ -9,7 +9,9 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 - Point left or right for a quick 90 degree turn onto the cross street.
 - Both hands overhead turns you around.
 - Sessions of 10, 15 or 20 minutes (title screen). Each plans a route of three stops at real intersections (Herald Square, Times Square, Grand Central, Columbus Circle and more), sized to the time; finish early and you get a bonus stop. Directions are spoken as you near each corner ("At 7th Ave, turn left", or "Wrong way"), and the HUD shows the stop, blocks to go and the next turn. Every two minutes of walking a 30 s high knees interval is called, with a countdown bar; walking is the recovery. The clock counts down and the session ends itself.
-- Wave your left hand to open the phone (touch: the Phone button): turn your shoulders to move the highlight, wave your right hand to pick, your left to close. Back to the walk, repeat directions, skip this stop, end session. The walk and the clock pause while it is open.
+- Wave your left hand to open the phone (touch: the Phone button): turn your shoulders to move the highlight, wave your right hand to pick, your left to close. Back to the walk, police radio, repeat directions, skip this stop, end session. The walk and the clock pause while it is open.
+- Police radio (phone menu): dispatch puts out a crime in progress at a corner a few blocks away, with a time limit you need some high knees to beat. Directions switch to the call; get there in time and the fight is on the corner, and afterwards two officers walk up and take it from there. Miss it and another unit got it. Police are allies here: generic uniforms, no department names, and the jokes are on you.
+- Pedestrians walk the sidewalks. Wave your right hand at someone a few meters ahead (touch: the Wave button) and they stop, wave back and say something.
 - Movement runs at 3x real walking pace so blocks pass at a game pace; distance in the summary is city distance.
 - Summary names the S&C payoff: aerobic base from marching, intervals from high knees.
 
@@ -52,7 +54,7 @@ Runs on rep-engine 0.2.0: marching, high knees, pointing, turning around and tor
 
 - The existing street-by-street Manhattan map (swap in for the generated grid).
 - Subway, bus and taxi as fast travel and logged rest.
-- Pedestrians to wave at, traffic, police radio.
+- Traffic, enterable businesses, transit.
 - Locomotion still lives in the game; body-arcade milestone 5 moves it onto the engine's locomotion state machine (`engine.locomotion()`).
 
 ## Repo layout
