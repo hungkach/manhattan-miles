@@ -3078,7 +3078,7 @@
       <li>Point left or right for a quick turn onto the cross street</li>
       <li>Turn your shoulders to steer, like a steering wheel; face front to go straight</li>
       <li>Both hands overhead to turn around</li>
-      <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape</li>
+      <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape. Your view follows your slips and level changes.</li>
     </ul>
     <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
     <div class="btns">
@@ -3327,19 +3327,19 @@
   // Every 75 to 110 s of walking an opponent (later sometimes two) waits on the street ahead. Walk
   // up to them and the fight starts: the engine's combat mode stops your walking and locks you on,
   // and opponents keep the range themselves. You punch for real (your gloves mirror engine.arms()),
-  // guard or slip their punches, sprawl their shots, march in when they step back, and squat then
+  // guard or slip their punches, sprawl their shots, wait out a step back, and squat then
   // drive up for the double leg and strike down from the top. Knock them out, or escape with 3 s
   // of high knees. Fights run 20 to 40 s; the walking between is the active recovery.
   const FT = {
     firstAhead: 32, // m: the first opponent waits about 10 marching steps ahead of the start (they walk to meet you)
     everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
-    rangeIn: 1.9, rangeOut: 3.4, pressSteps: 3,
+    rangeIn: 1.9, rangeOut: 3.4, outMs: [1200, 2000],
     hp: [12, 16], playerHp: 10,
-    windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, outMs: 4500,
+    windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, swingMs: 220,
     damage: { jab: 0.8, cross: 1.1, hook: 1.2, uppercut: 1.2, down: 1.0, down_strike: 1.0 },
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
   };
-  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
+  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
   const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -3366,7 +3366,7 @@
   function startFight(now) {
     const foe = current();
     if (!foe) return;
-    Fight.active = { start: now, foe, range: 'in', press: 0 };
+    Fight.active = { start: now, foe, range: 'in' };
     Fight.hp = FT.playerHp;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
     engine.enter_combat({
@@ -3405,7 +3405,7 @@
     if (!a) return;
     const foe = a.foe;
     Fight.stats.thrown++;
-    if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Too far: march in'); return; }
+    if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Out of range'); return; }
     if (kind === 'down_strike' && foe.state !== 'down') return;
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
@@ -3452,12 +3452,6 @@
     fightMsg('Sprawl!');
   });
   engine.on('escape', () => { if (Fight.active) endFight('escaped', performance.now()); });
-  engine.on('step', () => {
-    const a = Fight.active;
-    if (!a || a.range !== 'out') return;
-    // marching in place presses forward
-    if (++a.press >= FT.pressSteps) { a.range = 'in'; a.press = 0; a.foe.state = 'guard'; a.foe.until = performance.now() + 700; fightMsg('In range'); }
-  });
 
   // the opponent: guard, then a telegraphed attack, a step back or a cover-up
   function foeThink(a, now) {
@@ -3484,6 +3478,7 @@
       if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
       else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); }
       else hurtPlayer(now, 1);
+      foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
     }
@@ -3494,14 +3489,14 @@
       foe.state = 'guard'; foe.until = now + 1500;
       return;
     }
-    if (foe.state === 'out') { a.range = 'in'; a.press = 0; foe.state = 'guard'; foe.until = now + 900; return; }
+    if (foe.state === 'out') { a.range = 'in'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
     // choose the next move from guard (or after hurt, stuffed, cover)
     const elapsed = now - a.start;
     const r = Math.random();
-    if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; }
-    else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; }
+    if (r < 0.38) { foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
+    else if (r < 0.6) { foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
-    else if (r < 0.82 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; a.press = 0; foe.until = now + FT.outMs; if (Fight.stats.landed < 20) say('March in.', 'feedback'); }
+    else if (r < 0.8 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
     else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
     else { foe.state = 'guard'; foe.until = now + rand(600, 1200); }
   }
@@ -3522,7 +3517,7 @@
     P.yaw = (m.facing * Math.PI) / 180;
     // the opponent keeps the range: close in, or a step back
     const foe = a.foe;
-    const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 1.0 : FT.rangeIn;
+    const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : FT.rangeIn;
     const d = foeDist(foe) || 1;
     const k = Math.min(1, dt * 4) * (d - want) / d;
     foe.x += (P.x - foe.x) * k;
@@ -3543,6 +3538,7 @@
     if (d > 150) { Fight.foes = []; Fight.waitS = 20; return; } // walked away from them
     // they walk toward you once they see you
     if (d < FT.sees && d > FT.engage) {
+      foe.walk = (foe.walk || 0) + dt * 6;
       const k = Math.min(1, dt * 1.2 / d);
       foe.x += (P.x - foe.x) * k;
       foe.z += (P.z - foe.z) * k;
@@ -3550,95 +3546,259 @@
     if (d <= FT.engage) startFight(now);
   }
 
-  // ---------- fight drawing ----------
-  // an opponent as a chunky figure facing you, feet at (x, z) on the ground
-  function drawFoe(f, now) {
-    const c = toCam(f.x, 0, f.z);
-    if (c.z < 0.5) return;
-    const sc = F / c.z; // pixels per meter at that depth
-    const gx = W / 2 + (F * c.x) / c.z;
-    const gy = H / 2 - (F * c.y) / c.z;
-    const t = now / 1000;
-    const hurt = now < f.hurtUntil;
-    const col = hurt ? '#fff' : `rgb(${f.col.join(',')})`;
-    const skin = '#d9a77f';
-    ctx.save();
-    ctx.translate(gx, gy);
-    ctx.scale(sc, sc);
-    ctx.lineCap = ctx.lineJoin = 'round';
-    if (f.state === 'down' || f.state === 'ko') {
-      // on the ground
-      ctx.fillStyle = col;
-      ctx.beginPath(); ctx.ellipse(0, -0.18, 0.9, 0.18, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = skin;
-      ctx.beginPath(); ctx.arc(0.95, -0.22, 0.13, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-      return;
-    }
-    const crouch = f.state === 'shoot' ? 0.45 : f.state === 'stuffed' ? 0.3 : 0;
-    const sway = Math.sin(t * 2.4) * 0.05;
-    const lean = f.state === 'hurt' || hurt ? -0.12 : f.state === 'shoot' ? 0.35 : 0;
-    const hip = { x: sway, y: -0.95 + crouch };
-    const neck = { x: hip.x + Math.sin(lean) * 0.55, y: hip.y - 0.55 * Math.cos(lean) };
-    const line = (pts, w, color) => { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y); ctx.stroke(); };
-    // legs
-    line([{ x: hip.x - 0.12, y: hip.y }, { x: -0.2, y: -0.45 + crouch * 0.5 }, { x: -0.18, y: 0 }], 0.14, '#2a2f3a');
-    line([{ x: hip.x + 0.12, y: hip.y }, { x: 0.2, y: -0.45 + crouch * 0.5 }, { x: 0.18, y: 0 }], 0.14, '#2a2f3a');
-    // torso
-    line([hip, neck], 0.34, col);
-    // arms by pose: fists in front of the face, one drawn back for a wind-up
-    const sh = (k) => ({ x: neck.x + k * 0.2, y: neck.y + 0.04 });
-    let fl = { x: neck.x - 0.1, y: neck.y - 0.08 }, fr = { x: neck.x + 0.1, y: neck.y - 0.08 };
-    if (f.state === 'cover') { fl = { x: neck.x - 0.06, y: neck.y - 0.2 }; fr = { x: neck.x + 0.06, y: neck.y - 0.2 }; }
-    if (f.state === 'windup' && f.kind === 'straight') fr = { x: neck.x + 0.32, y: neck.y + 0.02 };
-    if (f.state === 'windup' && f.kind === 'hook') fl = { x: neck.x - 0.55, y: neck.y - 0.02 };
-    if (f.state === 'shoot') { fl = { x: hip.x - 0.35, y: hip.y + 0.1 }; fr = { x: hip.x + 0.35, y: hip.y + 0.1 }; }
-    line([sh(-1), { x: (sh(-1).x + fl.x) / 2 - 0.08, y: (sh(-1).y + fl.y) / 2 + 0.12 }, fl], 0.11, col);
-    line([sh(1), { x: (sh(1).x + fr.x) / 2 + 0.08, y: (sh(1).y + fr.y) / 2 + 0.12 }, fr], 0.11, col);
-    // head and gloves
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.arc(neck.x, neck.y - 0.17, 0.13, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#1b1e26';
-    for (const q of [fl, fr]) { ctx.beginPath(); ctx.arc(q.x, q.y, 0.075, 0, Math.PI * 2); ctx.fill(); }
-    // the telegraph: a glow on the hand that is coming
-    if (f.state === 'windup' || f.state === 'shoot') {
-      const k = 0.5 + 0.5 * Math.sin(t * 20);
-      ctx.strokeStyle = `rgba(255, 207, 63, ${0.5 + 0.5 * k})`;
-      ctx.lineWidth = 0.04;
-      const q = f.state === 'shoot' ? { x: hip.x, y: hip.y } : f.kind === 'hook' ? fl : fr;
-      ctx.beginPath(); ctx.arc(q.x, q.y, f.state === 'shoot' ? 0.5 : 0.16, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
+  // ---------- fight drawing: a 3D mannequin and your 3D arms ----------
+  // Everything is built from capsules (rounded limbs) and spheres in real 3D, projected through
+  // the game camera with near-plane clipping and drawn far to near, so you can read how far a
+  // punch is from you. The opponent's joints ease toward each state's pose every frame, so
+  // stances, punches, shots and falls move rather than snap.
+
+  // Opponent poses in their own frame: x = their right, y = up, z = toward you (meters).
+  // Orthodox: left hand and left foot lead.
+  const GUARD_POSE = {
+    pelvis: [0, 0.98, 0], chest: [0, 1.36, 0.02], neck: [0, 1.5, 0.03], head: [0, 1.63, 0.05],
+    shL: [-0.19, 1.42, 0.02], shR: [0.19, 1.42, -0.02], elL: [-0.22, 1.18, 0.2], elR: [0.22, 1.18, 0.12],
+    fiL: [-0.1, 1.5, 0.32], fiR: [0.1, 1.5, 0.2], hipL: [-0.1, 0.95, 0], hipR: [0.1, 0.95, 0],
+    knL: [-0.14, 0.52, 0.16], knR: [0.15, 0.52, -0.08], ftL: [-0.16, 0.06, 0.22], ftR: [0.16, 0.06, -0.2],
+  };
+  const SHOOT_POSE = {
+    pelvis: [0, 0.6, -0.12], chest: [0, 0.86, 0.32], neck: [0, 0.93, 0.45], head: [0, 0.97, 0.58],
+    shL: [-0.2, 0.9, 0.38], shR: [0.2, 0.9, 0.38], elL: [-0.26, 0.7, 0.56], elR: [0.26, 0.7, 0.56],
+    fiL: [-0.2, 0.58, 0.74], fiR: [0.2, 0.58, 0.74], hipL: [-0.1, 0.58, -0.12], hipR: [0.1, 0.58, -0.12],
+    knL: [-0.15, 0.18, 0.22], knR: [0.15, 0.34, -0.2], ftL: [-0.16, 0.06, -0.05], ftR: [0.16, 0.06, -0.55],
+  };
+  const STUFFED_POSE = {
+    pelvis: [0, 0.32, -0.25], chest: [0, 0.36, 0.18], neck: [0, 0.38, 0.32], head: [0, 0.4, 0.45],
+    shL: [-0.2, 0.38, 0.22], shR: [0.2, 0.38, 0.22], elL: [-0.3, 0.12, 0.3], elR: [0.3, 0.12, 0.3],
+    fiL: [-0.25, 0.08, 0.5], fiR: [0.25, 0.08, 0.5], hipL: [-0.1, 0.3, -0.25], hipR: [0.1, 0.3, -0.25],
+    knL: [-0.15, 0.08, -0.5], knR: [0.15, 0.08, -0.5], ftL: [-0.16, 0.08, -0.85], ftR: [0.16, 0.08, -0.85],
+  };
+  const DOWN_POSE = { // on their back, head away from you, knees up, hands up to cover
+    pelvis: [0, 0.14, 0.02], chest: [0, 0.17, -0.42], neck: [0, 0.17, -0.55], head: [0, 0.16, -0.7],
+    shL: [-0.2, 0.17, -0.48], shR: [0.2, 0.17, -0.48], elL: [-0.3, 0.3, -0.3], elR: [0.3, 0.3, -0.3],
+    fiL: [-0.12, 0.48, -0.42], fiR: [0.12, 0.48, -0.42], hipL: [-0.1, 0.12, 0.05], hipR: [0.1, 0.12, 0.05],
+    knL: [-0.16, 0.45, 0.34], knR: [0.16, 0.45, 0.34], ftL: [-0.18, 0.06, 0.62], ftR: [0.18, 0.06, 0.62],
+  };
+  const KO_POSE = Object.assign({}, DOWN_POSE, {
+    elL: [-0.45, 0.1, -0.35], elR: [0.45, 0.1, -0.35], fiL: [-0.62, 0.08, -0.2], fiR: [0.62, 0.08, -0.2],
+    knL: [-0.2, 0.12, 0.42], knR: [0.2, 0.12, 0.42], ftL: [-0.26, 0.06, 0.82], ftR: [0.26, 0.06, 0.82],
+  });
+  const vadd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const vlerp = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+
+  // the opponent's frame in the world: facing you
+  function foeFrame(f) {
+    let fx = P.x - f.x, fz = P.z - f.z;
+    const n = Math.hypot(fx, fz) || 1;
+    fx /= n; fz /= n;
+    return { fx, fz, rx: fz, rz: -fx };
+  }
+  const toWorld = (f, fr, j) => ({ x: f.x + fr.rx * j[0] + fr.fx * j[2], y: j[1], z: f.z + fr.rz * j[0] + fr.fz * j[2] });
+  const toLocal = (f, fr, w) => { const dx = w.x - f.x, dz = w.z - f.z; return [dx * fr.rx + dz * fr.rz, w.y, dx * fr.fx + dz * fr.fz]; };
+
+  // a fist reaching from shoulder sh toward target (local), arm length reach, stopping short
+  function reachTo(sh, target, reach, short) {
+    const d = [target[0] - sh[0], target[1] - sh[1], target[2] - sh[2]];
+    const n = Math.hypot(...d) || 1;
+    const k = Math.min(reach, n - short) / n;
+    return [sh[0] + d[0] * k, sh[1] + d[1] * k, sh[2] + d[2] * k];
   }
 
-  // your gloves, mirrored from the engine's arm pose: each fist is placed in front of your eye
-  // (shoulder widths to meters, the shoulders a little below and ahead of the eye) and projected
-  // through the game camera, so at the guard they frame the opponent's face and a punch travels
-  // into the scene, shrinking with distance
-  function drawGloves(now) {
+  function targetPose(f, now) {
+    const t = now / 1000;
+    const st = f.state;
+    if (st === 'ko') return KO_POSE;
+    if (st === 'down') return DOWN_POSE;
+    if (st === 'shoot') return SHOOT_POSE;
+    if (st === 'stuffed') return STUFFED_POSE;
+    const p = {};
+    for (const k in GUARD_POSE) p[k] = GUARD_POSE[k].slice();
+    const bob = Math.sin(t * 2.4) * 0.015, sway = Math.sin(t * 1.3) * 0.03;
+    for (const k in p) { p[k][1] += k.startsWith('ft') ? 0 : bob; p[k][0] += k.startsWith('ft') ? 0 : sway; }
+    if (st === 'wait') {
+      // walking toward you, hands down
+      const ph = Math.sin(f.walk || 0);
+      p.elL = [-0.23, 1.15, 0.02 + 0.1 * ph]; p.elR = [0.23, 1.15, 0.02 - 0.1 * ph];
+      p.fiL = [-0.24, 0.9, 0.08 + 0.18 * ph]; p.fiR = [0.24, 0.9, 0.08 - 0.18 * ph];
+      p.knL = [-0.12, 0.52, 0.08 + 0.12 * ph]; p.knR = [0.12, 0.52, 0.08 - 0.12 * ph];
+      p.ftL = [-0.12, 0.06, 0.25 * ph]; p.ftR = [0.12, 0.06, -0.25 * ph];
+      return p;
+    }
+    if (st === 'cover') {
+      p.fiL = [-0.07, 1.67, 0.2]; p.fiR = [0.07, 1.67, 0.2]; p.elL = [-0.13, 1.32, 0.24]; p.elR = [0.13, 1.32, 0.24];
+    }
+    if (st === 'hurt' || now < f.hurtUntil) {
+      p.head = [p.head[0], 1.6, -0.06]; p.neck = [p.neck[0], 1.48, -0.02]; p.chest[2] -= 0.04;
+    }
+    const aim = f.aim ? toLocal(f, foeFrame(f), f.aim) : [0, 1.6, 1.9];
+    if (st === 'windup' && f.kind === 'straight') {
+      p.fiR = [0.2, 1.42, -0.06]; p.elR = [0.32, 1.2, -0.12]; p.shR[2] -= 0.06; p.shL[2] += 0.06;
+    }
+    if (st === 'windup' && f.kind === 'hook') {
+      p.fiL = [-0.52, 1.44, 0.04]; p.elL = [-0.44, 1.4, -0.06]; p.shL[2] -= 0.05;
+    }
+    if (now < (f.swingUntil || 0)) {
+      // the punch itself, thrown at where your head was when they wound up
+      if (f.swingKind === 'straight') {
+        p.shR[2] += 0.12; p.shL[2] -= 0.08;
+        p.fiR = reachTo(p.shR, aim, 0.66, 0.12);
+        p.elR = vlerp(p.shR, p.fiR, 0.5); p.elR[1] -= 0.04; p.elR[0] += 0.05;
+      } else {
+        p.shL[2] += 0.1;
+        p.fiL = reachTo(p.shL, [aim[0] * 0.7, aim[1] - 0.05, aim[2]], 0.6, 0.15);
+        p.elL = [p.shL[0] - 0.22, p.shL[1] + 0.02, (p.shL[2] + p.fiL[2]) / 2];
+      }
+    }
+    return p;
+  }
+
+  // ease the opponent's joints toward the target pose
+  function poseFoe(f, now) {
+    const tgt = targetPose(f, now);
+    const dt = Math.min(0.1, (now - (f.poseT || now)) / 1000);
+    f.poseT = now;
+    const k = Math.min(1, dt * (now < (f.swingUntil || 0) ? 30 : f.state === 'shoot' ? 10 : 12));
+    if (!f.pose) { f.pose = {}; for (const j in tgt) f.pose[j] = tgt[j].slice(); }
+    for (const j in tgt) f.pose[j] = vlerp(f.pose[j], tgt[j], k);
+    return f.pose;
+  }
+
+  // ---- capsule renderer ----
+  const NEAR3 = 0.12;
+  // project a camera-space point with lens fv
+  const projC = (c, fv) => ({ x: W / 2 + (fv * c.x) / c.z, y: H / 2 - (fv * c.y) / c.z, s: fv / c.z });
+  // a limb from a to b (camera space), radius r (m): queued for depth sorting
+  function capsule(list, a, b, r, col, fv) {
+    if (a.z < NEAR3 && b.z < NEAR3) return;
+    if (a.z < NEAR3 || b.z < NEAR3) {
+      const [i, o] = a.z < NEAR3 ? [b, a] : [a, b];
+      const t = (NEAR3 - i.z) / (o.z - i.z);
+      const c = { x: i.x + (o.x - i.x) * t, y: i.y + (o.y - i.y) * t, z: NEAR3 };
+      if (a.z < NEAR3) a = c; else b = c;
+    }
+    list.push({ kind: 'cap', a: projC(a, fv), b: projC(b, fv), r, col, depth: (a.z + b.z) / 2 });
+  }
+  function ball(list, c, r, col, fv) {
+    if (c.z < NEAR3 + r * 0.5) return;
+    list.push({ kind: 'ball', c: projC(c, fv), r, col, depth: c.z });
+  }
+  const rgb = (c, k = 1) => `rgb(${c.map((v) => Math.max(0, Math.min(255, Math.round(v * k)))).join(',')})`;
+  function drawPrims(list) {
+    list.sort((p, q) => q.depth - p.depth);
+    for (const p of list) {
+      if (p.kind === 'ball') {
+        const R = p.r * p.c.s;
+        const g = ctx.createRadialGradient(p.c.x - R * 0.35, p.c.y - R * 0.4, R * 0.1, p.c.x, p.c.y, R);
+        g.addColorStop(0, rgb(p.col, 1.35)); g.addColorStop(1, rgb(p.col, 0.8));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p.c.x, p.c.y, R, 0, Math.PI * 2); ctx.fill();
+        continue;
+      }
+      const ra = p.r * p.a.s, rb = p.r * p.b.s;
+      const dx = p.b.x - p.a.x, dy = p.b.y - p.a.y, L = Math.hypot(dx, dy) || 1e-6;
+      const nx = -dy / L, ny = dx / L;
+      ctx.fillStyle = rgb(p.col, 0.9);
+      ctx.beginPath();
+      ctx.moveTo(p.a.x + nx * ra, p.a.y + ny * ra); ctx.lineTo(p.b.x + nx * rb, p.b.y + ny * rb);
+      ctx.lineTo(p.b.x - nx * rb, p.b.y - ny * rb); ctx.lineTo(p.a.x - nx * ra, p.a.y - ny * ra);
+      ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.a.x, p.a.y, ra, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.b.x, p.b.y, rb, 0, Math.PI * 2); ctx.fill();
+      // a soft highlight down one side reads as roundness
+      const side = ny < 0 ? 1 : -1;
+      ctx.strokeStyle = rgb(p.col, 1.3);
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = (ra + rb) * 0.35;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p.a.x + side * nx * ra * 0.45, p.a.y + side * ny * ra * 0.45);
+      ctx.lineTo(p.b.x + side * nx * rb * 0.45, p.b.y + side * ny * rb * 0.45);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  const SKIN = [214, 166, 128], PANTS = [44, 48, 60], SHOE = [30, 30, 34], GLOVE = [28, 30, 38];
+  function drawFoe(f, now) {
+    const j = poseFoe(f, now);
+    const fr = foeFrame(f);
+    const C = (name) => { const w = toWorld(f, fr, j[name]); return toCam(w.x, w.y, w.z); };
+    const hurt = now < f.hurtUntil;
+    const shirt = hurt ? [250, 250, 250] : f.col;
+    const list = [];
+    const c = {};
+    for (const k in j) c[k] = C(k);
+    // a soft shadow on the ground under them anchors where they are
+    const mid = toWorld(f, fr, [(j.pelvis[0] + j.chest[0]) / 2, 0, (j.pelvis[2] + j.chest[2]) / 2]);
+    const lying = f.state === 'down' || f.state === 'ko' || f.state === 'stuffed';
+    const sh = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2, along = Math.cos(a) * (lying ? 0.8 : 0.42), across = Math.sin(a) * 0.38;
+      sh.push(toCam(mid.x + fr.fx * along + fr.rx * across, 0.02, mid.z + fr.fz * along + fr.rz * across));
+    }
+    const shp = project(sh);
+    if (shp) fillPoly(shp, 'rgba(0, 0, 0, .28)');
+    capsule(list, c.pelvis, c.chest, 0.15, shirt, F);
+    capsule(list, c.shL, c.shR, 0.075, shirt, F);
+    capsule(list, c.hipL, c.hipR, 0.1, PANTS, F);
+    capsule(list, c.chest, c.neck, 0.06, SKIN, F);
+    ball(list, c.head, 0.115, SKIN, F);
+    for (const s of ['L', 'R']) {
+      capsule(list, c['sh' + s], c['el' + s], 0.055, shirt, F);
+      capsule(list, c['el' + s], c['fi' + s], 0.047, SKIN, F);
+      ball(list, c['fi' + s], 0.075, GLOVE, F);
+      capsule(list, c['hip' + s], c['kn' + s], 0.08, PANTS, F);
+      capsule(list, c['kn' + s], c['ft' + s], 0.062, PANTS, F);
+      ball(list, c['ft' + s], 0.06, SHOE, F);
+    }
+    drawPrims(list);
+    // the telegraph: a pulsing ring on the hand that is coming, or around the hips on a shot
+    if (f.state === 'windup' || f.state === 'shoot') {
+      const q = f.state === 'shoot' ? c.pelvis : f.kind === 'hook' ? c.fiL : c.fiR;
+      if (q.z > NEAR3) {
+        const pt = projC(q, F), k = 0.5 + 0.5 * Math.sin(now / 50);
+        ctx.strokeStyle = `rgba(255, 207, 63, ${0.5 + 0.5 * k})`;
+        ctx.lineWidth = Math.max(2, pt.s * 0.03);
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.s * (f.state === 'shoot' ? 0.45 : 0.15), 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+  }
+
+  // Your arms, from the engine's arm pose (shoulder widths, x right, y up, z toward the camera,
+  // which is toward the opponent here), placed in camera space below and just ahead of your eye
+  // and drawn with a wider lens, the way first-person games draw the player's own arms.
+  function drawArms(now) {
     const arms = engine.arms();
     if (!arms) return;
-    const S = 0.4; // meters per shoulder width
+    const S = 0.4, fv = F * 0.5;
+    const at = (q) => ({ x: q.x * S * 0.85, y: -0.2 + q.y * S, z: 0.16 + Math.max(-0.1, q.z) * S });
+    const list = [];
     for (const side of ['left', 'right']) {
       const a = arms[side];
       if (!a || !a.wrist) continue;
-      // the eye sits about 0.45 m behind the fists at the guard; sideways spread is narrowed a little
-      // because the head turns with a bladed stance while the frame stays square to the camera
-      const rx = a.wrist.x * S * 0.7, up = -0.25 + a.wrist.y * S, fwd = 0.45 + Math.max(0, a.wrist.z) * S;
-      const yc = up * cam.cp + fwd * cam.sp, zc = Math.max(0.15, -up * cam.sp + fwd * cam.cp);
-      const x = W / 2 + (F * rx) / zc, y = H / 2 - (F * yc) / zc;
-      const r = Math.min(Math.min(W, H) * 0.14, (F * 0.065) / zc);
-      const sx = W / 2 + (side === 'left' ? -1 : 1) * W * 0.45;
-      ctx.strokeStyle = 'rgba(40, 44, 54, .92)';
-      ctx.lineWidth = r * 0.85;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(sx, H + r); ctx.lineTo(x, y + r * 0.4); ctx.stroke();
+      const sh = at(a.shoulder), el = at(a.elbow), wr = at(a.wrist);
       const flash = now < Fight.fistFlash[side];
-      ctx.fillStyle = flash ? '#ffe27a' : side === 'left' ? '#c8322b' : '#b02a24';
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,.18)';
-      ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.35, r * 0.35, 0, Math.PI * 2); ctx.fill();
+      capsule(list, sh, el, 0.06, [52, 56, 68], fv);
+      capsule(list, el, wr, 0.05, SKIN, fv);
+      ball(list, wr, 0.08, flash ? [255, 226, 122] : side === 'left' ? [200, 50, 43] : [176, 42, 36], fv);
     }
+    drawPrims(list);
+  }
+
+  // Your view follows your body: a slip moves and tilts it to that side, a squat drops it, a
+  // shot lunges it in at their hips, and on top you look down at them.
+  function povUpdate() {
+    const pv = Fight.pov;
+    let lat = 0, dy = 0, fwd = 0, roll = 0;
+    if (Fight.active) {
+      const s = engine.signals();
+      const phase = engine.combat().phase;
+      lat = (s.slip || 0) * 0.3;
+      roll = (s.slip || 0) * 0.07;
+      dy = -Math.min(1, s.squat_depth || 0) * 0.6;
+      if (phase === 'shot') { fwd = 0.6; dy = Math.min(dy, -0.55); }
+    }
+    pv.lat += (lat - pv.lat) * 0.3; pv.dy += (dy - pv.dy) * 0.3; pv.fwd += (fwd - pv.fwd) * 0.3; pv.roll += (roll - pv.roll) * 0.3;
+    return pv;
   }
 
   function fightHud(now) {
@@ -3654,7 +3814,7 @@
     bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     const s = engine.signals();
     const phase = engine.combat().phase;
-    const tag = phase === 'top' ? 'On top: stay low, strike down' : a.range === 'out' ? 'Out of range: march in' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
+    const tag = phase === 'top' ? 'On top: stay low, strike down' : a.range === 'out' ? 'Out of range' : s.guard_up ? `Guard up · ${s.stance}` : 'Guard down';
     ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
     ctx.strokeText(tag, W / 2, 68); ctx.fillText(tag, W / 2, 68);
@@ -3742,19 +3902,30 @@
 
     const pos = playerPos();
     const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * (1 + P.runBlend) * Math.min(1, P.speed / 4) : 0;
-    // look slightly up at the skyline; in a fight, tilt so the opponent's head sits a third of the way down
+    // in a fight the view follows your body (slip, squat, shot): see povUpdate
+    const pv = povUpdate();
+    const hx = Math.sin(P.view), hz = Math.cos(P.view), rx = hz, rz = -hx;
+    const eye = { x: pos.x + rx * pv.lat + hx * pv.fwd, y: T.eyeHeight + bob + pv.dy, z: pos.z + rz * pv.lat + hz * pv.fwd };
+    Fight.head = eye;
+    // look slightly up at the skyline; in a fight, tilt so the opponent sits a third of the way
+    // down, or down at them when they are on the ground
     let pitch = -0.12;
     if (Fight.active) {
-      const d = Math.max(1, foeDist(Fight.active.foe));
-      pitch = Math.max(-0.12, Math.min(0.45, (0.17 * H) / F - (1.75 - T.eyeHeight) / d));
+      const foe = Fight.active.foe;
+      const d = Math.max(0.8, Math.hypot(foe.x - eye.x, foe.z - eye.z));
+      const ty = foe.state === 'down' || foe.state === 'ko' ? 0.3 : foe.state === 'shoot' || foe.state === 'stuffed' ? 0.8 : 1.6;
+      pitch = Math.max(-0.12, Math.min(0.8, (0.17 * H) / F + (eye.y - ty) / d));
     }
-    cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
+    cam = { x: eye.x, y: eye.y, z: eye.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
+    // a slip tilts the whole scene a little
+    ctx.save();
+    if (pv.roll) { ctx.translate(W / 2, H / 2); ctx.rotate(-pv.roll); ctx.translate(-W / 2, -H / 2); }
     const horizon = H / 2 - F * (cam.sp / cam.cp);
     const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
     sky.addColorStop(0, '#6f9cc9'); sky.addColorStop(1, `rgb(${SKY.join(',')})`);
-    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, Math.max(0, horizon));
-    ctx.fillStyle = 'rgb(84, 88, 96)'; ctx.fillRect(0, Math.max(0, horizon), W, H);
+    ctx.fillStyle = sky; ctx.fillRect(-W, -H, W * 3, Math.max(0, horizon) + H);
+    ctx.fillStyle = 'rgb(84, 88, 96)'; ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
 
     // sidewalk slabs (block footprints) near the player
     for (const bl of blocks) {
@@ -3786,7 +3957,10 @@
     if (G.state === 'walk') {
       // opponents, far to near
       for (const f of Fight.foes.slice().sort((a, b) => foeDist(b) - foeDist(a))) drawFoe(f, now);
-      if (Fight.active) { drawGloves(now); fightHud(now); }
+    }
+    ctx.restore();
+    if (G.state === 'walk') {
+      if (Fight.active) { drawArms(now); fightHud(now); }
       else { hud(now); minimap(); }
     }
   }
@@ -3874,7 +4048,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 first opponent 10 steps ahead';
+  const BUILD = '2026-10-15 \u00b7 3D fighters, view follows slips and shots';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],
@@ -3897,7 +4071,7 @@
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0 });
-    Object.assign(Fight, { foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp });
+    Object.assign(Fight, { foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
     spawnFoes(FT.firstAhead);
     if (engine.mode() === 'combat') engine.exit_combat();
     pickDestination();

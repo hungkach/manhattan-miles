@@ -19,9 +19,11 @@ Every minute and a half or so of walking, an opponent (later sometimes two) wait
 - Punch for real: jab, cross, hook, uppercut. Your gloves on screen follow your actual fists.
 - Guard up (fists by your face) blocks. Slip your head off the center line to dodge a straight and land a counter.
 - When they shoot for your legs (they glow low and you hear "Sprawl"), squat to sprawl, then hit them while they recover.
-- When they step back, march in place to close in.
+- When they step back you can't reach them; they step back in on their own a moment later.
 - Squat then drive up fast for a double leg takedown, then stay low and strike down. Stand up and they scramble free.
 - Three seconds of high knees escapes.
+
+The fighters are 3D: the opponent is a jointed figure that moves between guard, punches, shots and falls, and your own arms come up from the bottom of the screen, following your real shoulders, elbows and fists. Your view follows your body: a slip moves and tilts it, a squat drops it, a double leg lunges it in at their hips, and on top you look down at them.
 
 Fights run about 20 to 40 seconds; the walking between them is the active recovery. Touch play swaps to fight buttons during a fight.
 
