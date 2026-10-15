@@ -77,6 +77,7 @@
       this.lastHighAt = -Infinity;
       this.running = false;
       this.peaks = [];
+      this.heights = [];
       // legs start held, so nothing fires until the knee is seen down
       const leg = () => ({ active: true, lastFire: -Infinity, lastStep: -Infinity, counted: false, interval: Infinity, peakPitch: 0, peakLift: 0 });
       this.legs = { left: leg(), right: leg() };
@@ -122,6 +123,10 @@
       out.cadence = RE.cadenceFromSteps(this.steps, t, this.m.cadenceWindowMs);
       out.running = this.running;
       out.kneeLift = this.peaks.length ? this.peaks.reduce((a, b) => a + b, 0) / this.peaks.length : 0;
+      // stride: 1 at a reference step, shorter for low knees, longer for high ones
+      const sc = this.m.stride;
+      const hAvg = this.heights.length ? this.heights.reduce((a, b) => a + b, 0) / this.heights.length : 1;
+      out.stride = RE.clamp(0.5 + 0.5 * hAvg, sc.min, sc.max);
       const active = out.cadence > 0;
       out.effort = active
         ? RE.clamp(0.7 * RE.clamp(out.cadence / this.e.fullCadence, 0, 1) + 0.3 * RE.clamp(out.kneeLift / this.e.fullLift, 0, 1), 0, 1)
@@ -173,6 +178,10 @@
       leg.counted = false;
       this.peaks.push(leg.peakLift);
       if (this.peaks.length > 4) this.peaks.shift();
+      // how high this step was, for the stride
+      const sc = this.m.stride;
+      this.heights.push(Math.max(leg.peakPitch / sc.refPitch, leg.peakLift / sc.refLift));
+      if (this.heights.length > sc.steps) this.heights.shift();
       const high = leg.peakLift >= this.r.lift || leg.peakPitch >= this.r.pitch;
       const fast = leg.interval <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }

@@ -89,6 +89,8 @@
         if (ctx.upperLow || !(l && r)) { this.up = false; this.since = null; }
       }
       out.guard = this.up;
+      // each hand on its own (a hand by the ear covers that side against a hook)
+      out.guardHands = { left: nl, right: nr };
     }
   }
 
@@ -281,23 +283,82 @@
     }
   }
 
+  // Arm depth (0.6.0, after the first camera fights: hooks and uppercuts
+  // landed, straights did not). MediaPipe's world landmarks judge depth
+  // poorly, and a straight goes right at the camera, so its world depth comes
+  // out squashed: the arm reads short and bent. The image shows the same punch
+  // as foreshortening, the arm looking shorter on screen than it is. fix()
+  // gives the elbow and wrist back the depth that foreshortening implies,
+  // against each segment's reference length (the longest it has looked lately,
+  // in meters at the body's scale, decaying slowly), toward the camera. World
+  // depth wins when it already says more, or says the segment points back.
+  class ArmDepth {
+    constructor(cfg) { this.c = cfg.combat.depth; this.ref = {}; this.t = null; }
+    fix(ctx, frame) {
+      const world = ctx.world, pts = ctx.points, c = this.c;
+      const dt = this.t == null ? 0 : Math.max(0, (ctx.t - this.t) / 1000);
+      this.t = ctx.t;
+      if (!pts) return world;
+      const ipx = RE.dist(RE.mid(pts[L.L_SHOULDER], pts[L.R_SHOULDER]), RE.mid(pts[L.L_HIP], pts[L.R_HIP]));
+      const wm = len(sub(RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER]), RE.mid3(world[L.L_HIP], world[L.R_HIP])));
+      if (!(ipx > 0) || !(wm > 0)) return world;
+      const k = wm / ipx; // meters per pixel at the body
+      // perspective: a fist nearer the camera looks bigger, which hides part
+      // of its foreshortening. With the camera's focal length (from fovDeg on
+      // the long side) the body's distance is D = f * k, and a point d meters
+      // nearer than the body maps back to the body's scale by (D - d) / D.
+      const f = Math.max(ctx.w, ctx.h) / 2 / Math.tan((c.fovDeg * Math.PI) / 360);
+      const D = f * k, cx = ctx.w / 2, cy = ctx.h / 2;
+      const at = (p, d) => { const m = Math.max(0.2, (D - d) / D); return { x: cx + (p.x - cx) * m, y: cy + (p.y - cy) * m }; };
+      const out = world.slice();
+      const move = (p, d) => Object.assign({}, p, { x: p.x + frame.fwd.x * d, y: p.y + frame.fwd.y * d, z: p.z + frame.fwd.z * d });
+      for (const [S, E, W, side] of [[L.L_SHOULDER, L.L_ELBOW, L.L_WRIST, 'l'], [L.R_SHOULDER, L.R_ELBOW, L.R_WRIST, 'r']]) {
+        const zE = dot(sub(world[E], world[S]), frame.fwd), zF = dot(sub(world[W], world[E]), frame.fwd);
+        const l3u = len(sub(world[E], world[S])), l3f = len(sub(world[W], world[E]));
+        // two passes: depths from the image lengths, then the image lengths again
+        // with each point scaled back by its own depth
+        let dE = Math.max(0, zE), dW = dE + Math.max(0, zF), du = 0, df = 0, lu = 0, lf = 0;
+        for (let pass = 0; pass < 2; pass++) {
+          const s0 = at(pts[S], 0), e0 = at(pts[E], dE), w0 = at(pts[W], dW);
+          lu = RE.dist(s0, e0) * k; lf = RE.dist(e0, w0) * k;
+          const refU = Math.max(this.ref[side + 'u'] == null ? 0 : this.ref[side + 'u'] - c.decay * dt, pass ? 0 : Math.max(lu, l3u));
+          const refF = Math.max(this.ref[side + 'f'] == null ? 0 : this.ref[side + 'f'] - c.decay * dt, pass ? 0 : Math.max(lf, l3f));
+          const ru = RE.clamp(refU, c.minLen, c.maxLen), rf = RE.clamp(refF, c.minLen, c.maxLen);
+          du = Math.sqrt(Math.max(0, ru * ru - (lu / c.inPlane) ** 2));
+          df = Math.sqrt(Math.max(0, rf * rf - (lf / c.inPlane) ** 2));
+          if (!pass) { this.ref[side + 'u'] = ru; this.ref[side + 'f'] = rf; }
+          const nE = zE > -c.behind && du > zE ? du : zE;
+          const nF = zF > -c.behind && df > zF ? df : zF;
+          dE = Math.max(0, nE); dW = dE + Math.max(0, nF);
+        }
+        const nE = zE > -c.behind && du > zE ? du : zE;
+        const nF = zF > -c.behind && df > zF ? df : zF;
+        out[E] = move(world[E], nE - zE);
+        out[W] = move(world[W], nE - zE + nF - zF);
+      }
+      return out;
+    }
+  }
+
   // The arm pose for this frame, shared by the strike and stance detectors.
   class ArmPose {
+    constructor(cfg) { this.depth = new ArmDepth(cfg); }
     update(ctx, out) {
       out.arms = null;
       const frame = frameOf(ctx);
-      const pose = RE.armPose(ctx.world, frame, ctx.cal.shoulderWidthW);
+      const world = frame && ctx.world ? this.depth.fix(ctx, frame) : ctx.world;
+      const pose = RE.armPose(world, frame, ctx.cal.shoulderWidthW);
       if (!pose) return;
       pose.unitM = ctx.cal.shoulderWidthW || len(sub(ctx.world[L.R_SHOULDER], ctx.world[L.L_SHOULDER])) || 0.4;
       // the same arms in the torso's own frame (turns with the shoulders): hooks
       // sweep around the body, so a bladed stance must not tilt them toward the camera
-      pose.torso = RE.armPose(ctx.world, RE.bodyFrame(ctx.world, ctx.cal.up) || frame, ctx.cal.shoulderWidthW);
+      pose.torso = RE.armPose(world, RE.bodyFrame(world, ctx.cal.up) || frame, ctx.cal.shoulderWidthW);
       out.arms = pose;
     }
   }
 
   // run after the locomotion detectors (stance reads the turn detector's yaw)
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all

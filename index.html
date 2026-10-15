@@ -13,9 +13,9 @@
   #demo .re-demo { top: auto; height: 52%; }
   body.fighting #demo .re-demo { height: 34%; }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
-  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 190px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 212px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
-  #phoneBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 234px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #phoneBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 256px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #phoneBtn[hidden], #phone[hidden] { display: none; }
   #phone { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 6; width: min(290px, 82vw); background: #0d1320; border: 3px solid #3a4459; border-radius: 28px; padding: 16px 14px 14px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
   #phone h3 { margin: 0 0 10px; text-align: center; font: 800 15px system-ui, sans-serif; color: var(--muted); }
@@ -74,7 +74,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.5.3 from hungkach/body-arcade@354b091, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.6.0 from hungkach/body-arcade@3653ce3, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -83,7 +83,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.5.3';
+  RE.version = '0.6.0';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -229,10 +229,10 @@
       // two read the 2D image, so either source can carry a step alone.
       march: {
         cues: {
-          pitch: { on: 25, off: 12 },     // world: thigh angle from the calibrated vertical (degrees), above the other thigh's
-          lift: { on: 0.15, off: 0.08 },  // world: knee height above standing (T), above the other knee's
-          rise: { on: 0.16, off: 0.07 },  // image: knee height above its standing spot (T)
-          lead: { on: 0.14, off: 0.05 },  // image: this knee's rise minus the other knee's (T)
+          pitch: { on: 20, off: 10 },     // world: thigh angle from the calibrated vertical (degrees), above the other thigh's
+          lift: { on: 0.12, off: 0.06 },  // world: knee height above standing (T), above the other knee's
+          rise: { on: 0.12, off: 0.05 },  // image: knee height above its standing spot (T)
+          lead: { on: 0.11, off: 0.04 },  // image: this knee's rise minus the other knee's (T)
         },
         need: 2,
         refractoryMs: 250,   // per leg, after it fires
@@ -240,7 +240,12 @@
         // Warm-up tuning (engine.apply_capture): each cue's on is set to tuneFrac of
         // the weakest captured round that reached seenFrac of the default on, kept
         // within [minFrac, maxFrac] of the default; off goes to half of that.
-        tune: { tuneFrac: 0.5, seenFrac: 0.5, minFrac: 0.4, maxFrac: 1.5 },
+        tune: { tuneFrac: 0.4, seenFrac: 0.5, minFrac: 0.35, maxFrac: 1.5 }, // 0.6.0: 0.4 of the weakest round, room for tired knees
+        // stride from knee height (0.6.0, Mark: higher knees, longer strides; a
+        // tired player's lower knees still count, they just step shorter): each
+        // step's peak thigh angle over refPitch, or peak knee lift over refLift,
+        // averaged over the last `steps` steps, maps to a stride of min to max
+        stride: { refPitch: 50, refLift: 0.3, min: 0.7, max: 1.3, steps: 4 },
         squatPauseDrop: 0.2, // squat beats march: hip drop (T) past this pauses stepping
         liftSource: 'auto',  // 'auto' uses world landmarks when the profile has them, 'image' forces 2D
         cadenceWindowMs: 3000,
@@ -339,6 +344,14 @@
           downSpeed: 1.2,    // m/s downward
           refSpeed: 5,       // m/s of fist speed that is power 1
         },
+        // arm depth from foreshortening (ArmDepth in combat.js)
+        depth: {
+          decay: 0.02,    // m/s the reference segment length shrinks back
+          inPlane: 0.88,  // a segment at least this share of its reference reads as in the image plane
+          behind: 0.05,   // m: world depth saying the segment points back this much is kept
+          minLen: 0.15, maxLen: 0.42, // m, reference length bounds
+          fovDeg: 75,     // camera field of view on the long side of the frame (front cameras run 65 to 80)
+        },
         slip: {
           deadzone: 0.25,  // S, nose off the hip midpoint
           full: 0.55,
@@ -369,6 +382,7 @@
         walkCadence: 70,       // below this cadence the player stops
         refCadence: 110,       // cadence that gives exactly walkSpeed
         walkScale: [0.8, 1.2], // walk speed range as a multiple of walkSpeed
+        strideMax: 1.3,        // high knees on a run can lengthen the stride this far
         rampMs: 300,           // speed reaches its target over this long
         stopMs: 400,           // coast to a stop over this long
         stopAfterMs: 600,      // no step for this long (or 1.5 step intervals, if longer) stops you
@@ -776,6 +790,7 @@
       this.lastHighAt = -Infinity;
       this.running = false;
       this.peaks = [];
+      this.heights = [];
       // legs start held, so nothing fires until the knee is seen down
       const leg = () => ({ active: true, lastFire: -Infinity, lastStep: -Infinity, counted: false, interval: Infinity, peakPitch: 0, peakLift: 0 });
       this.legs = { left: leg(), right: leg() };
@@ -821,6 +836,10 @@
       out.cadence = RE.cadenceFromSteps(this.steps, t, this.m.cadenceWindowMs);
       out.running = this.running;
       out.kneeLift = this.peaks.length ? this.peaks.reduce((a, b) => a + b, 0) / this.peaks.length : 0;
+      // stride: 1 at a reference step, shorter for low knees, longer for high ones
+      const sc = this.m.stride;
+      const hAvg = this.heights.length ? this.heights.reduce((a, b) => a + b, 0) / this.heights.length : 1;
+      out.stride = RE.clamp(0.5 + 0.5 * hAvg, sc.min, sc.max);
       const active = out.cadence > 0;
       out.effort = active
         ? RE.clamp(0.7 * RE.clamp(out.cadence / this.e.fullCadence, 0, 1) + 0.3 * RE.clamp(out.kneeLift / this.e.fullLift, 0, 1), 0, 1)
@@ -872,6 +891,10 @@
       leg.counted = false;
       this.peaks.push(leg.peakLift);
       if (this.peaks.length > 4) this.peaks.shift();
+      // how high this step was, for the stride
+      const sc = this.m.stride;
+      this.heights.push(Math.max(leg.peakPitch / sc.refPitch, leg.peakLift / sc.refLift));
+      if (this.heights.length > sc.steps) this.heights.shift();
       const high = leg.peakLift >= this.r.lift || leg.peakPitch >= this.r.pitch;
       const fast = leg.interval <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }
@@ -1227,10 +1250,14 @@
         const interval = isFinite(this.interval) ? Math.min(this.interval, 60000 / c.walkCadence) : 0;
         const quiet = t - this.lastStepAt > Math.max(c.stopAfterMs, c.stopIntervals * interval);
         const cadence = sig.cadence_spm || 0;
-        if (this.running && !quiet) {
-          this.targetSpeed = c.runSpeed;
+        // speed is stride times cadence: faster knees step faster, higher knees
+        // step longer (sig.stride, from the knee height of the last few steps)
+        const stride = sig.stride || 1;
+        this.runTarget = this.running && !quiet;
+        if (this.runTarget) {
+          this.targetSpeed = c.runSpeed * RE.clamp(stride, 1, c.strideMax);
         } else if (cadence >= c.walkCadence && !quiet) {
-          this.targetSpeed = c.walkSpeed * RE.clamp(cadence / c.refCadence, c.walkScale[0], c.walkScale[1]);
+          this.targetSpeed = c.walkSpeed * RE.clamp(cadence / c.refCadence, c.walkScale[0], c.walkScale[1]) * stride;
         } else {
           this.targetSpeed = 0;
         }
@@ -1252,7 +1279,7 @@
         const diff = this.targetSpeed - this.speed;
         this.speed = Math.abs(diff) <= step ? this.targetSpeed : this.speed + Math.sign(diff) * step;
       }
-      this.state = this.speed === 0 && this.targetSpeed === 0 ? 'idle' : this.running && this.targetSpeed === c.runSpeed ? 'run' : 'walk';
+      this.state = this.speed === 0 && this.targetSpeed === 0 ? 'idle' : this.running && this.runTarget && this.targetSpeed > 0 ? 'run' : 'walk';
 
       if (dt > 0 && this.state !== 'idle') {
         const cad = sig.cadence_spm || 0;
@@ -1391,6 +1418,8 @@
         if (ctx.upperLow || !(l && r)) { this.up = false; this.since = null; }
       }
       out.guard = this.up;
+      // each hand on its own (a hand by the ear covers that side against a hook)
+      out.guardHands = { left: nl, right: nr };
     }
   }
 
@@ -1583,23 +1612,82 @@
     }
   }
 
+  // Arm depth (0.6.0, after the first camera fights: hooks and uppercuts
+  // landed, straights did not). MediaPipe's world landmarks judge depth
+  // poorly, and a straight goes right at the camera, so its world depth comes
+  // out squashed: the arm reads short and bent. The image shows the same punch
+  // as foreshortening, the arm looking shorter on screen than it is. fix()
+  // gives the elbow and wrist back the depth that foreshortening implies,
+  // against each segment's reference length (the longest it has looked lately,
+  // in meters at the body's scale, decaying slowly), toward the camera. World
+  // depth wins when it already says more, or says the segment points back.
+  class ArmDepth {
+    constructor(cfg) { this.c = cfg.combat.depth; this.ref = {}; this.t = null; }
+    fix(ctx, frame) {
+      const world = ctx.world, pts = ctx.points, c = this.c;
+      const dt = this.t == null ? 0 : Math.max(0, (ctx.t - this.t) / 1000);
+      this.t = ctx.t;
+      if (!pts) return world;
+      const ipx = RE.dist(RE.mid(pts[L.L_SHOULDER], pts[L.R_SHOULDER]), RE.mid(pts[L.L_HIP], pts[L.R_HIP]));
+      const wm = len(sub(RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER]), RE.mid3(world[L.L_HIP], world[L.R_HIP])));
+      if (!(ipx > 0) || !(wm > 0)) return world;
+      const k = wm / ipx; // meters per pixel at the body
+      // perspective: a fist nearer the camera looks bigger, which hides part
+      // of its foreshortening. With the camera's focal length (from fovDeg on
+      // the long side) the body's distance is D = f * k, and a point d meters
+      // nearer than the body maps back to the body's scale by (D - d) / D.
+      const f = Math.max(ctx.w, ctx.h) / 2 / Math.tan((c.fovDeg * Math.PI) / 360);
+      const D = f * k, cx = ctx.w / 2, cy = ctx.h / 2;
+      const at = (p, d) => { const m = Math.max(0.2, (D - d) / D); return { x: cx + (p.x - cx) * m, y: cy + (p.y - cy) * m }; };
+      const out = world.slice();
+      const move = (p, d) => Object.assign({}, p, { x: p.x + frame.fwd.x * d, y: p.y + frame.fwd.y * d, z: p.z + frame.fwd.z * d });
+      for (const [S, E, W, side] of [[L.L_SHOULDER, L.L_ELBOW, L.L_WRIST, 'l'], [L.R_SHOULDER, L.R_ELBOW, L.R_WRIST, 'r']]) {
+        const zE = dot(sub(world[E], world[S]), frame.fwd), zF = dot(sub(world[W], world[E]), frame.fwd);
+        const l3u = len(sub(world[E], world[S])), l3f = len(sub(world[W], world[E]));
+        // two passes: depths from the image lengths, then the image lengths again
+        // with each point scaled back by its own depth
+        let dE = Math.max(0, zE), dW = dE + Math.max(0, zF), du = 0, df = 0, lu = 0, lf = 0;
+        for (let pass = 0; pass < 2; pass++) {
+          const s0 = at(pts[S], 0), e0 = at(pts[E], dE), w0 = at(pts[W], dW);
+          lu = RE.dist(s0, e0) * k; lf = RE.dist(e0, w0) * k;
+          const refU = Math.max(this.ref[side + 'u'] == null ? 0 : this.ref[side + 'u'] - c.decay * dt, pass ? 0 : Math.max(lu, l3u));
+          const refF = Math.max(this.ref[side + 'f'] == null ? 0 : this.ref[side + 'f'] - c.decay * dt, pass ? 0 : Math.max(lf, l3f));
+          const ru = RE.clamp(refU, c.minLen, c.maxLen), rf = RE.clamp(refF, c.minLen, c.maxLen);
+          du = Math.sqrt(Math.max(0, ru * ru - (lu / c.inPlane) ** 2));
+          df = Math.sqrt(Math.max(0, rf * rf - (lf / c.inPlane) ** 2));
+          if (!pass) { this.ref[side + 'u'] = ru; this.ref[side + 'f'] = rf; }
+          const nE = zE > -c.behind && du > zE ? du : zE;
+          const nF = zF > -c.behind && df > zF ? df : zF;
+          dE = Math.max(0, nE); dW = dE + Math.max(0, nF);
+        }
+        const nE = zE > -c.behind && du > zE ? du : zE;
+        const nF = zF > -c.behind && df > zF ? df : zF;
+        out[E] = move(world[E], nE - zE);
+        out[W] = move(world[W], nE - zE + nF - zF);
+      }
+      return out;
+    }
+  }
+
   // The arm pose for this frame, shared by the strike and stance detectors.
   class ArmPose {
+    constructor(cfg) { this.depth = new ArmDepth(cfg); }
     update(ctx, out) {
       out.arms = null;
       const frame = frameOf(ctx);
-      const pose = RE.armPose(ctx.world, frame, ctx.cal.shoulderWidthW);
+      const world = frame && ctx.world ? this.depth.fix(ctx, frame) : ctx.world;
+      const pose = RE.armPose(world, frame, ctx.cal.shoulderWidthW);
       if (!pose) return;
       pose.unitM = ctx.cal.shoulderWidthW || len(sub(ctx.world[L.R_SHOULDER], ctx.world[L.L_SHOULDER])) || 0.4;
       // the same arms in the torso's own frame (turns with the shoulders): hooks
       // sweep around the body, so a bladed stance must not tilt them toward the camera
-      pose.torso = RE.armPose(ctx.world, RE.bodyFrame(ctx.world, ctx.cal.up) || frame, ctx.cal.shoulderWidthW);
+      pose.torso = RE.armPose(world, RE.bodyFrame(world, ctx.cal.up) || frame, ctx.cal.shoulderWidthW);
       out.arms = pose;
     }
   }
 
   // run after the locomotion detectors (stance reads the turn detector's yaw)
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all
@@ -2368,6 +2456,9 @@
         squat_depth: now < this.squatUntil ? 1 : 0,
         level_low: now < this.squatUntil,
         guard_up: this.guard,
+        guard_left: this.guard,
+        guard_right: this.guard,
+        stride: 1,
         stance: this.stance,
         slip: now < this.slipUntil ? this.slip : 0,
         confidence: 1,
@@ -2813,7 +2904,7 @@
         if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
         const det = st.det;
-        st.loco.update(raw.t, { cadence_spm: det ? det.cadence : 0, turn: det ? det.turn : 0 }, st.mode);
+        st.loco.update(raw.t, { cadence_spm: det ? det.cadence : 0, turn: det ? det.turn : 0, stride: det && det.stride ? det.stride : 1 }, st.mode);
         st.snapshot = Object.assign(emptySnapshot(), {
           cadence_spm: det ? det.cadence : 0,
           effort: det ? det.effort : 0,
@@ -2822,6 +2913,9 @@
           lean: det ? det.lean : 0,
           squat_depth: sig.squatDepth != null && sig.levelDrop != null ? sig.squatDepth : 0,
           guard_up: det ? det.guard : false,
+          guard_left: det && det.guardHands ? det.guardHands.left : false,
+          guard_right: det && det.guardHands ? det.guardHands.right : false,
+          stride: det && det.stride ? det.stride : 1,
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
           level_low: det ? !!det.levelLow : false,
@@ -3129,7 +3223,7 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, level_low: false, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, stride: 1, confidence: 0 };
   }
 })(globalThis);
 </script>
@@ -3166,7 +3260,7 @@
       <li>Both hands overhead to turn around</li>
       <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape. Your view follows your slips and level changes.</li>
     </ul>
-    <p>Pick a session length: the game plans three stops, talks you through each turn and calls high knees intervals. Marching is easy on tired days; the intervals make it a real session. Wave your left hand to open the phone menu.</p>
+    <p>Explore the city: there is always a next stop, the game talks you through each turn, calls high knees intervals and nudges you when you stand around. Twenty active minutes is a full session. Wave your left hand to open the phone menu.</p>
     <div class="btns">
       <button id="playDemo" class="main">Walk with touch controls</button>
       <label class="pick">Camera setup
@@ -3180,13 +3274,6 @@
       </label>
       <p id="modeHint" class="hint"></p>
       <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
-      <label class="pick">Session
-        <select id="len">
-          <option value="10">10 minutes</option>
-          <option value="15" selected>15 minutes</option>
-          <option value="20">20 minutes</option>
-        </select>
-      </label>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
     <p class="stamp" id="buildStamp"></p>
@@ -3336,20 +3423,23 @@
 
   // ---------- session ----------
   const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0, fightsDone: 0,
-    minutes: 15, playMs: 0, route: [], leg: 0, nav: '', cueKey: '', interval: null, intervalIn: 0, intervals: 0, halfSaid: false, finishAt: 0 };
+    playMs: 0, activeMs: 0, idleS: 0, idleSaid: 0, milestone: 0, route: [], leg: 0, nav: '', cueKey: '', interval: null, intervalIn: 0, intervals: 0 };
 
-  // ---------- the session: a route of stops, spoken directions, run intervals ----------
-  // A session is G.minutes long (10, 15 or 20, picked on the title screen). The route is three
-  // stops sized to the time; finish early and a bonus stop is picked for the time left. Directions
-  // are spoken as you near each corner (turn here, or the wrong way), and every couple of minutes
-  // of walking a high knees interval is called: the work, with walking as the recovery.
+  // ---------- the walk: stops, spoken directions, run intervals, staying active ----------
+  // No countdown (Mark: this is an RPG, explore but stay active). There is always a next stop, a
+  // real place a solid walk away, with directions spoken as you near each corner (turn here, or
+  // the wrong way). Every couple of minutes of walking a high knees interval is called: the work,
+  // with walking as the recovery. Standing around gets a nudge; active minutes get milestones, and
+  // at 20 the game says that is a full session (the fitness target) without ending anything.
   const SESSION = {
-    legs: 3,
-    metersPerMin: 190,   // game meters a minute of the session covers, fights and stops included
+    stopM: 900,          // about how far each next stop is (game meters)
+    idleNudgeS: 20,      // standing still this long (not fighting, not in the phone) gets a nudge
+    milestones: [10, 15, 20, 30], // active minutes that get a line; 20 is a full session
     cueAhead: 55,        // m before a corner that its direction is spoken
     intervalEveryS: 120, // walking between intervals (a fight resets it: the fight was the work)
     intervalS: 30,
   };
+  const IDLE_LINES = ['Keep your feet moving.', 'March in place. The city is not going to walk itself.', 'Still there? Knees up.'];
   const placeXZ = (p) => ({ x: aveX(p.ai), z: stZ(p.st) });
   const legMeters = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
   // the unvisited place whose walk from `from` is closest to `want` meters
@@ -3365,18 +3455,10 @@
     return best || PLACES.find((p) => !used.includes(p.name)) || PLACES[0];
   }
   function planRoute() {
-    const want = (G.minutes * SESSION.metersPerMin) / SESSION.legs;
-    G.route = [];
-    let from = { x: P.x, z: P.z };
-    for (let i = 0; i < SESSION.legs; i++) {
-      const p = pickStop(from, want, G.route.map((r) => r.name));
-      G.route.push(p);
-      from = placeXZ(p);
-    }
+    G.route = [pickStop({ x: P.x, z: P.z }, SESSION.stopM, [])];
     G.leg = 0;
     G.dest = G.route[0];
   }
-  const leftMs = () => G.minutes * 60000 - G.playMs;
   // where directions point: an answered police call first, else the route stop
   const target = () => Calls.active || G.dest;
   // blocks and avenues to the stop, in words
@@ -3446,36 +3528,38 @@
     else if (a.turn === 2) say('Wrong way. Turn around.', 'prompt');
   }
   function sayRoute(first) {
-    const lead = first ? `Today: ${G.route.map((r) => r.name).join(', then ')}. First stop, ${G.dest.name}` : `Next stop, ${G.dest.name}`;
+    const lead = first ? `First stop, ${G.dest.name}` : `Next stop, ${G.dest.name}`;
     say(`${lead}: ${destWords()}.`, 'instruction');
   }
   function nextStop(now) {
     G.leg++;
-    if (G.leg >= G.route.length) {
-      // the route is done with time left: a bonus stop sized to the time
-      const want = Math.max(400, (leftMs() / 60000) * SESSION.metersPerMin * 0.8);
-      G.route.push(pickStop({ x: P.x, z: P.z }, want, G.route.map((r) => r.name).slice(-4)));
-    }
+    if (G.leg >= G.route.length) G.route.push(pickStop({ x: P.x, z: P.z }, SESSION.stopM, G.route.map((r) => r.name).slice(-4)));
     G.dest = G.route[G.leg];
     G.cueKey = '';
   }
-  // the session clock, run intervals and the finish (walking only: fights pause intervals)
+  // active time, milestones, the idle nudge and run intervals (fights count as active and pause
+  // intervals)
   function sessionTick(dt, now) {
-    if (G.finishAt) { if (now >= G.finishAt && !Fight.active) { G.finishAt = 0; endWalk(); } return; }
     G.playMs += dt * 1000;
-    if (!G.halfSaid && G.playMs >= G.minutes * 30000) { G.halfSaid = true; say('Halfway. Keep it going.', 'feedback'); }
-    if (leftMs() <= 0 && !Fight.active) {
-      G.finishAt = now + 4000;
-      G.interval = null;
-      say(`Time. Session complete: ${G.arrived} ${G.arrived === 1 ? 'stop' : 'stops'} and ${(G.meters / 1609.34).toFixed(1)} city miles.`, 'instruction');
-      banner('Session complete', 4000, now);
-      return;
+    const moving = Fight.active || P.speed > 0.5;
+    if (moving) { G.activeMs += dt * 1000; G.idleS = 0; G.idleSaid = 0; } else G.idleS += dt;
+    const mins = G.activeMs / 60000;
+    let next = null;
+    while (G.milestone < SESSION.milestones.length && mins >= SESSION.milestones[G.milestone]) next = SESSION.milestones[G.milestone++];
+    if (next) {
+      say(next === 20 ? '20 active minutes. That is a full session. Keep exploring, or end it from the phone.' : `${next} active minutes. Nice.`, 'confirm');
+      banner(`${next} active minutes`, 2500, now);
+    }
+    // standing around: a nudge at idleNudgeS, then every 30 s
+    if (!moving && G.idleS >= SESSION.idleNudgeS + 30 * G.idleSaid && !Phone.open) {
+      G.idleSaid++;
+      say(G.idleSaid >= 3 ? 'Taking a breather? March to keep going, or end the session from the phone.' : pick(IDLE_LINES), 'confirm');
     }
     if (Fight.active) return;
     const iv = G.interval;
     if (!iv) {
       if (P.speed > 0.5) G.intervalIn -= dt;
-      if (G.intervalIn <= 0 && !Calls.active && leftMs() > (SESSION.intervalS + 20) * 1000) {
+      if (G.intervalIn <= 0 && !Calls.active) {
         G.interval = { left: SESSION.intervalS, ran: 0, tenSaid: false };
         say(`Interval! High knees for ${SESSION.intervalS} seconds.`, 'prompt');
         banner('High knees!', 1800, now);
@@ -3775,7 +3859,7 @@
     // in front of your shoulders, that ends over their head or body on screen lands. One hit per
     // punch: the hand re-arms once it comes back `rearm` from its furthest point. An engine strike
     // from the same hand within pairMs is the same punch.
-    hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3 },
+    hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3, gnpSpeed: 2.0, gnpRearm: 1.0, gnpExtend: 1.2 },
     // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
     // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
@@ -3787,7 +3871,7 @@
     // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
     fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
   };
-  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
+  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
     armTilt: 0, impacts: [], clip: null, recording: false, people: [] };
   const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
@@ -4122,11 +4206,15 @@
     // a state just ran out
     if (foe.state === 'windup') {
       // the punch lands now unless you covered or slipped it (a little grace for camera lag)
-      const guarded = s.guard_up || now - Fight.lastGuardAt < FT.graceMs;
+      // a straight needs the full guard; a hook only the hand on its side, up by your ear (their
+      // left hook comes at your right side)
+      const yours = foe.hookSide === 'R' ? 'left' : 'right';
+      const guarded = s.guard_up || now - Fight.lastGuardAt < FT.graceMs ||
+        (foe.kind === 'hook' && (s['guard_' + yours] || now - Fight.lastGuardSide[yours] < FT.graceMs));
       const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
       if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
       else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); }
-      else hurtPlayer(now, 1);
+      else { hurtPlayer(now, 1); if (foe.kind === 'hook') fightMsg(`Hook to your ${yours}: hand up by that ear`, 1300); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -4148,7 +4236,7 @@
     const r = Math.random();
     // they step in to punch: that is when your hooks reach
     if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + FT.windupMs; foe.aim = Object.assign({}, Fight.head); }
-    else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
+    else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.hookSide = Math.random() < 0.5 ? 'L' : 'R'; foe.until = now + FT.windupMs + 100; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
     else if (r < 0.8 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
     else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
@@ -4166,6 +4254,7 @@
     const m = engine.locomotion();
     const s = engine.signals();
     if (s.guard_up) Fight.lastGuardAt = now;
+    for (const side of ['left', 'right']) if (s['guard_' + side]) Fight.lastGuardSide[side] = now;
     if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
     P.speed = 0;
     P.yaw = (m.facing * Math.PI) / 180;
@@ -4312,7 +4401,8 @@
       p.fiR = [0.2, 1.42, -0.06]; p.elR = [0.32, 1.2, -0.12]; p.shR[2] -= 0.06; p.shL[2] += 0.06;
     }
     if (st === 'windup' && f.kind === 'hook') {
-      p.fiL = [-0.52, 1.44, 0.04]; p.elL = [-0.44, 1.4, -0.06]; p.shL[2] -= 0.05;
+      const k = f.hookSide === 'R' ? 1 : -1, H = f.hookSide === 'R' ? 'R' : 'L';
+      p['fi' + H] = [0.52 * k, 1.44, 0.04]; p['el' + H] = [0.44 * k, 1.4, -0.06]; p['sh' + H][2] -= 0.05;
     }
     if (now < (f.swingUntil || 0)) {
       // the punch itself, thrown at where your head was when they wound up
@@ -4321,9 +4411,10 @@
         p.fiR = reachTo(p.shR, aim, 0.66, 0.12);
         p.elR = vlerp(p.shR, p.fiR, 0.5); p.elR[1] -= 0.04; p.elR[0] += 0.05;
       } else {
-        p.shL[2] += 0.1;
-        p.fiL = reachTo(p.shL, [aim[0] * 0.7, aim[1] - 0.05, aim[2]], 0.6, 0.15);
-        p.elL = [p.shL[0] - 0.22, p.shL[1] + 0.02, (p.shL[2] + p.fiL[2]) / 2];
+        const k = f.hookSide === 'R' ? 1 : -1, H = f.hookSide === 'R' ? 'R' : 'L';
+        p['sh' + H][2] += 0.1;
+        p['fi' + H] = reachTo(p['sh' + H], [aim[0] * 0.7, aim[1] - 0.05, aim[2]], 0.6, 0.15);
+        p['el' + H] = [p['sh' + H][0] + 0.22 * k, p['sh' + H][1] + 0.02, (p['sh' + H][2] + p['fi' + H][2]) / 2];
       }
     }
     return p;
@@ -4444,7 +4535,7 @@
     drawPrims(list);
     // the telegraph: a pulsing ring on the hand that is coming, or around the hips on a shot
     if (f.state === 'windup' || f.state === 'shoot') {
-      const q = f.state === 'shoot' ? c.pelvis : f.kind === 'hook' ? c.fiL : c.fiR;
+      const q = f.state === 'shoot' ? c.pelvis : f.kind === 'hook' ? (f.hookSide === 'R' ? c.fiR : c.fiL) : c.fiR;
       if (q.z > NEAR3) {
         const pt = projC(q, F), k = 0.5 + 0.5 * Math.sin(now / 50);
         ctx.strokeStyle = `rgba(255, 207, 63, ${0.5 + 0.5 * k})`;
@@ -4592,21 +4683,38 @@
   // mostly up an uppercut, else a jab with your lead hand or a cross with the rear one.
   function gloveHits(arms, now) {
     const a = Fight.active;
-    if (!a || !a.foe.hit) return;
+    if (!a) return;
     const foe = a.foe, c = FT.hit;
     const top = engine.combat().phase === 'top';
+    if (!top && !foe.hit) return;
     for (const side of ['left', 'right']) {
       const h = Fight.hand[side], q = arms[side] && arms[side].wrist;
       if (!q) { h.hist = []; continue; }
-      h.hist.push({ t: now, x: q.x, y: q.y, z: q.z });
+      const sh = arms[side].shoulder;
+      h.hist.push({ t: now, x: q.x, y: q.y, z: q.z, r: Math.hypot(q.x - sh.x, q.y - sh.y, q.z - sh.z) });
       while (h.hist.length > 2 && now - h.hist[0].t > 120) h.hist.shift();
       // re-arm once the fist comes back from its furthest point
       if (h.armed) h.peak = q.z;
       else { h.peak = Math.max(h.peak, q.z); if (h.peak - q.z >= c.rearm && now - h.last >= 200) { h.armed = true; h.peak = q.z; } }
       const f0 = h.hist[0], dt = (now - f0.t) / 1000;
-      if (!h.armed || dt < 0.04 || !h.scr || q.z < c.reach) continue;
+      if (dt < 0.04) continue;
       const vx = (q.x - f0.x) / dt, vy = (q.y - f0.y) / dt, vz = (q.z - f0.z) / dt;
       const speed = Math.hypot(vx, vy, vz);
+      if (top) {
+        // ground and pound: no aiming (Mark: targeting on the ground does not matter). Any fast
+        // punch from either hand lands, once per punch: the fist has to be extending (moving away
+        // from its shoulder, so pulling it back never counts) and re-arms once it slows down
+        const vr = (h.hist[h.hist.length - 1].r - f0.r) / dt;
+        if (speed < c.gnpRearm) h.gnpArmed = true;
+        if (h.gnpArmed && speed >= c.gnpSpeed && vr >= c.gnpExtend && claim(side, now)) {
+          h.gnpArmed = false;
+          Fight.stats.glove++;
+          Fight.fistFlash[side] = now + 180;
+          landed('down_strike', Math.max(0.5, Math.min(1.5, speed / 5)), now, side, 'body');
+        }
+        continue;
+      }
+      if (!h.armed || !h.scr || q.z < c.reach) continue;
       if (speed < c.speed || vz < -0.5) continue;
       const g = h.scr, slop = c.slop;
       const onHead = !top && Math.hypot(g.x - foe.hit.head.x, g.y - foe.hit.head.y) <= foe.hit.head.r * slop + g.r * 0.6;
@@ -4863,20 +4971,22 @@
       line(destWords(), 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
       if (G.nav) line(G.nav, 14, top + 126, 'left', '700 14px system-ui, sans-serif', '#ffcf3f');
     } else if (G.dest) {
-      const label = G.leg < SESSION.legs ? `Stop ${G.leg + 1} of ${SESSION.legs}` : 'Bonus stop';
-      line(`${label}: ${G.dest.name}`, 14, top + 86, 'left', '700 15px system-ui, sans-serif');
+      line(`Stop ${G.leg + 1}: ${G.dest.name}`, 14, top + 86, 'left', '700 15px system-ui, sans-serif');
       line(destWords(), 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
       if (G.nav) line(G.nav, 14, top + 126, 'left', '700 14px system-ui, sans-serif', '#ffcf3f');
     }
 
-    // session numbers: time left of the session
-    const left = Math.max(0, leftMs()) / 60000;
+    // session numbers: active time (moving or fighting)
+    const act = G.activeMs / 60000;
     const miles = G.meters / 1609.34;
-    line(`${Math.floor(left)}:${String(Math.floor((left % 1) * 60)).padStart(2, '0')} left`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
+    line(`${Math.floor(act)}:${String(Math.floor((act % 1) * 60)).padStart(2, '0')} active`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
     line(`${miles.toFixed(2)} mi · ${G.steps} steps`, W - 14, top + 142, 'right', '600 13px system-ui, sans-serif');
     // pace: marching faster walks faster, high knees run
     const pace = P.speed < 0.3 ? 'Stopped' : P.running ? 'Running' : 'Walking';
     line(P.cadence > 0 ? `${pace} · ${Math.round(P.cadence)} spm` : pace, W - 14, top + 160, 'right', '700 13px system-ui, sans-serif', pace === 'Running' ? '#ffcf3f' : '#fff');
+    // stride from knee height: higher knees, longer strides
+    const stride = engine.signals().stride || 1;
+    if (P.cadence > 0) line(`Stride ${Math.round(stride * 100)}%${stride < 0.85 ? ' \u00b7 knees up' : ''}`, W - 14, top + 178, 'right', '600 12px system-ui, sans-serif', stride < 0.85 ? '#ffcf3f' : '#c9d1dd');
 
     // a high knees interval: a bar counting down
     if (G.interval) {
@@ -4935,7 +5045,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 police radio calls, pedestrians, wave to say hi';
+  const BUILD = '2026-10-15 \u00b7 straights from foreshortening, aim-free ground and pound, ear blocks, stride, no timer';
   $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
@@ -4958,7 +5068,7 @@
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0,
-      minutes: sessionMinutes(), playMs: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: SESSION.intervalEveryS, intervals: 0, halfSaid: false, finishAt: 0 });
+      playMs: 0, activeMs: 0, idleS: 0, idleSaid: 0, milestone: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: SESSION.intervalEveryS, intervals: 0 });
     Phone.open = false; $('phone').hidden = true;
     Object.assign(Calls, { active: null, answered: 0, missed: 0 });
     Object.assign(Peds, { list: [], waves: 0 });
@@ -4985,7 +5095,7 @@
     const miles = G.meters / 1609.34;
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
-      ['Blocks', G.blocks], ['Stops reached', `${G.arrived} of ${Math.max(SESSION.legs, G.arrived)}`], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
+      ['Blocks', G.blocks], ['Active time', fmt(G.activeMs)], ['Stops reached', G.arrived], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
       ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
@@ -5186,10 +5296,6 @@
   }
   $('mode').value = pickSetup();
   showModeHint();
-  const LEN_KEY = 'manhattan-miles-minutes';
-  try { const v = localStorage.getItem(LEN_KEY); if (v) $('len').value = v; } catch (_) {}
-  $('len').addEventListener('change', () => { try { localStorage.setItem(LEN_KEY, $('len').value); } catch (_) {} });
-  function sessionMinutes() { return Number($('len').value) || 15; }
   $('mode').addEventListener('change', () => {
     showModeHint();
     try { localStorage.setItem(MODE_KEY, $('mode').value); } catch (_) {}

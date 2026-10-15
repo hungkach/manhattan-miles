@@ -95,10 +95,14 @@
         const interval = isFinite(this.interval) ? Math.min(this.interval, 60000 / c.walkCadence) : 0;
         const quiet = t - this.lastStepAt > Math.max(c.stopAfterMs, c.stopIntervals * interval);
         const cadence = sig.cadence_spm || 0;
-        if (this.running && !quiet) {
-          this.targetSpeed = c.runSpeed;
+        // speed is stride times cadence: faster knees step faster, higher knees
+        // step longer (sig.stride, from the knee height of the last few steps)
+        const stride = sig.stride || 1;
+        this.runTarget = this.running && !quiet;
+        if (this.runTarget) {
+          this.targetSpeed = c.runSpeed * RE.clamp(stride, 1, c.strideMax);
         } else if (cadence >= c.walkCadence && !quiet) {
-          this.targetSpeed = c.walkSpeed * RE.clamp(cadence / c.refCadence, c.walkScale[0], c.walkScale[1]);
+          this.targetSpeed = c.walkSpeed * RE.clamp(cadence / c.refCadence, c.walkScale[0], c.walkScale[1]) * stride;
         } else {
           this.targetSpeed = 0;
         }
@@ -120,7 +124,7 @@
         const diff = this.targetSpeed - this.speed;
         this.speed = Math.abs(diff) <= step ? this.targetSpeed : this.speed + Math.sign(diff) * step;
       }
-      this.state = this.speed === 0 && this.targetSpeed === 0 ? 'idle' : this.running && this.targetSpeed === c.runSpeed ? 'run' : 'walk';
+      this.state = this.speed === 0 && this.targetSpeed === 0 ? 'idle' : this.running && this.runTarget && this.targetSpeed > 0 ? 'run' : 'walk';
 
       if (dt > 0 && this.state !== 'idle') {
         const cad = sig.cadence_spm || 0;

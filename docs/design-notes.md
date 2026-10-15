@@ -2,6 +2,14 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-15 second camera test
+
+- Hooks and uppercuts land; straights did not. Fixed in engine 0.6.0 (arm depth from foreshortening; MediaPipe squashes depth toward the camera).
+- Takedown works nicely; ground and pound did not. Mark: targeting on the ground is not important. Done: any fast extending punch lands on top.
+- A one-arm block (hand by the ear) stopped a punch from the side. It was not designed (the guard check was both hands); now it is a feature: hooks come from either side and the hand on that side blocks.
+- Marching: knee height should be forgiving when tired; higher knees, longer strides; faster knees, faster strides. Done (engine stride, easier thresholds).
+- The timer suits Homecoming Hero, not this game: this is an RPG, explore but stay active. Done: no countdown, always a next stop, intervals, idle nudges, active-minute milestones (20 is a full session).
+
 ## 2026-10-15 camera test (build "glove hitbox, level changes with knees out of view")
 
 ### What worked

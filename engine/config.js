@@ -44,10 +44,10 @@
       // two read the 2D image, so either source can carry a step alone.
       march: {
         cues: {
-          pitch: { on: 25, off: 12 },     // world: thigh angle from the calibrated vertical (degrees), above the other thigh's
-          lift: { on: 0.15, off: 0.08 },  // world: knee height above standing (T), above the other knee's
-          rise: { on: 0.16, off: 0.07 },  // image: knee height above its standing spot (T)
-          lead: { on: 0.14, off: 0.05 },  // image: this knee's rise minus the other knee's (T)
+          pitch: { on: 20, off: 10 },     // world: thigh angle from the calibrated vertical (degrees), above the other thigh's
+          lift: { on: 0.12, off: 0.06 },  // world: knee height above standing (T), above the other knee's
+          rise: { on: 0.12, off: 0.05 },  // image: knee height above its standing spot (T)
+          lead: { on: 0.11, off: 0.04 },  // image: this knee's rise minus the other knee's (T)
         },
         need: 2,
         refractoryMs: 250,   // per leg, after it fires
@@ -55,7 +55,12 @@
         // Warm-up tuning (engine.apply_capture): each cue's on is set to tuneFrac of
         // the weakest captured round that reached seenFrac of the default on, kept
         // within [minFrac, maxFrac] of the default; off goes to half of that.
-        tune: { tuneFrac: 0.5, seenFrac: 0.5, minFrac: 0.4, maxFrac: 1.5 },
+        tune: { tuneFrac: 0.4, seenFrac: 0.5, minFrac: 0.35, maxFrac: 1.5 }, // 0.6.0: 0.4 of the weakest round, room for tired knees
+        // stride from knee height (0.6.0, Mark: higher knees, longer strides; a
+        // tired player's lower knees still count, they just step shorter): each
+        // step's peak thigh angle over refPitch, or peak knee lift over refLift,
+        // averaged over the last `steps` steps, maps to a stride of min to max
+        stride: { refPitch: 50, refLift: 0.3, min: 0.7, max: 1.3, steps: 4 },
         squatPauseDrop: 0.2, // squat beats march: hip drop (T) past this pauses stepping
         liftSource: 'auto',  // 'auto' uses world landmarks when the profile has them, 'image' forces 2D
         cadenceWindowMs: 3000,
@@ -154,6 +159,14 @@
           downSpeed: 1.2,    // m/s downward
           refSpeed: 5,       // m/s of fist speed that is power 1
         },
+        // arm depth from foreshortening (ArmDepth in combat.js)
+        depth: {
+          decay: 0.02,    // m/s the reference segment length shrinks back
+          inPlane: 0.88,  // a segment at least this share of its reference reads as in the image plane
+          behind: 0.05,   // m: world depth saying the segment points back this much is kept
+          minLen: 0.15, maxLen: 0.42, // m, reference length bounds
+          fovDeg: 75,     // camera field of view on the long side of the frame (front cameras run 65 to 80)
+        },
         slip: {
           deadzone: 0.25,  // S, nose off the hip midpoint
           full: 0.55,
@@ -184,6 +197,7 @@
         walkCadence: 70,       // below this cadence the player stops
         refCadence: 110,       // cadence that gives exactly walkSpeed
         walkScale: [0.8, 1.2], // walk speed range as a multiple of walkSpeed
+        strideMax: 1.3,        // high knees on a run can lengthen the stride this far
         rampMs: 300,           // speed reaches its target over this long
         stopMs: 400,           // coast to a stop over this long
         stopAfterMs: 600,      // no step for this long (or 1.5 step intervals, if longer) stops you

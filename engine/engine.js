@@ -140,7 +140,7 @@
         if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
         const det = st.det;
-        st.loco.update(raw.t, { cadence_spm: det ? det.cadence : 0, turn: det ? det.turn : 0 }, st.mode);
+        st.loco.update(raw.t, { cadence_spm: det ? det.cadence : 0, turn: det ? det.turn : 0, stride: det && det.stride ? det.stride : 1 }, st.mode);
         st.snapshot = Object.assign(emptySnapshot(), {
           cadence_spm: det ? det.cadence : 0,
           effort: det ? det.effort : 0,
@@ -149,6 +149,9 @@
           lean: det ? det.lean : 0,
           squat_depth: sig.squatDepth != null && sig.levelDrop != null ? sig.squatDepth : 0,
           guard_up: det ? det.guard : false,
+          guard_left: det && det.guardHands ? det.guardHands.left : false,
+          guard_right: det && det.guardHands ? det.guardHands.right : false,
+          stride: det && det.stride ? det.stride : 1,
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
           level_low: det ? !!det.levelLow : false,
@@ -456,6 +459,6 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, stance: 'square', slip: 0, level_low: false, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, stride: 1, confidence: 0 };
   }
 })(globalThis);
