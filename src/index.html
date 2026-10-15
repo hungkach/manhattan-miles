@@ -80,6 +80,7 @@
   #note[hidden] { display: none; }
 </style>
 <!-- rep-engine:inline -->
+<!-- world:inline -->
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -106,7 +107,7 @@
 <div id="title" class="screen">
   <div class="card">
     <h1>Manhattan Miles</h1>
-    <p>Midtown, 14th to 59th Street, avenue by avenue. Walk it for real.</p>
+    <p>All of Manhattan, street by street: the real streets, buildings, parks, businesses and subway. Walk it for real.</p>
     <ul>
       <li>March in place to walk; march faster to walk faster, high knees to run</li>
       <li>Point left or right for a quick turn onto the cross street</li>
@@ -128,10 +129,12 @@
       </label>
       <p id="modeHint" class="hint"></p>
       <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
+      <label class="check"><input type="checkbox" id="realNames" checked> Real business names</label>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
     <p class="hint" id="progLine"></p>
     <p class="stamp" id="buildStamp"></p>
+    <p class="stamp">Map data &copy; OpenStreetMap contributors (ODbL). Subway data from the MTA. Businesses are real places; every person in the game is fictional.</p>
   </div>
 </div>
 
@@ -161,119 +164,113 @@
     centerWithin: 12,      // degrees: not steering and this close to a street's direction, you settle onto it
     centerRate: 1.5,       // how fast that self-centering pulls (per second)
     eyeHeight: 1.7,
-    drawDistance: 520,
+    drawDistance: 420,
     arriveRadius: 30,
   };
 
-  // ---------- Midtown grid: avenues west to east (x), streets south to north (z) ----------
-  // Spacing follows Manhattan's real proportions: long crosstown blocks, short uptown blocks.
-  const AVES = [
-    ['12th Ave', 0], ['11th Ave', 280], ['10th Ave', 560], ['9th Ave', 840], ['8th Ave', 1120],
-    ['7th Ave', 1400], ['6th Ave', 1680], ['5th Ave', 1960], ['Madison Ave', 2140], ['Park Ave', 2320],
-    ['Lexington Ave', 2500], ['3rd Ave', 2700], ['2nd Ave', 2930], ['1st Ave', 3160],
-  ];
-  const FIRST_ST = 14, LAST_ST = 59, ST_GAP = 80;
-  const AVE_HALF = 15, ST_HALF = 9, WALK_OFF = 2.2; // half widths in meters; the 4 m sidewalk runs from the curb to the facade, WALK_OFF is its center
-  const FIFTH = 7;
-  const aveX = (i) => AVES[i][1];
-  const stZ = (n) => (n - FIRST_ST) * ST_GAP;
-  const NA = AVES.length, NS = LAST_ST - FIRST_ST + 1;
-
-  const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
-  const streetName = (n, ai) => `${ai >= FIFTH ? 'E' : 'W'} ${ordinal(n)} St`;
-
-  // Destinations at real intersections (approximate where the grid simplifies).
-  const PLACES = [
-    { name: 'Herald Square', ai: 6, st: 34 },
-    { name: 'Times Square', ai: 5, st: 42 },
-    { name: 'Bryant Park', ai: 6, st: 41 },
-    { name: 'Grand Central', ai: 9, st: 42 },
-    { name: 'Madison Square Park', ai: 7, st: 23 },
-    { name: 'Columbus Circle', ai: 4, st: 59 },
-    { name: 'Union Square', ai: 9, st: 14 },
-    { name: 'Hudson Yards', ai: 2, st: 33 },
-    { name: 'Sutton Place', ai: 13, st: 57 },
-    { name: 'Chelsea Market', ai: 3, st: 15 },
-  ];
-
-  // ---------- buildings ----------
-  function rng(seed) {
-    return function () {
-      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
-      let r = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  const TONES = [[188, 170, 150], [150, 160, 176], [176, 140, 120], [204, 196, 182], [128, 136, 150], [168, 176, 168], [196, 168, 140], [110, 122, 140]];
-  const buildings = [];
-  const blocks = [];
-  (function buildCity() {
-    const r = rng(1811); // the year of the grid plan
-    for (let i = 0; i < NA - 1; i++) {
-      for (let s = FIRST_ST; s < LAST_ST; s++) {
-        const x0 = aveX(i) + AVE_HALF + 4, x1 = aveX(i + 1) - AVE_HALF - 4;
-        const z0 = stZ(s) + ST_HALF + 4, z1 = stZ(s + 1) - ST_HALF - 4;
-        blocks.push({ x0: x0 - 4, x1: x1 + 4, z0: z0 - 4, z1: z1 + 4 });
-        const midtown = s >= 33 && s <= 59 && i >= 4 && i <= 10;
-        const zMid = (z0 + z1) / 2;
-        for (const [za, zb] of [[z0, zMid], [zMid, z1]]) {
-          let x = x0;
-          while (x < x1 - 6) {
-            const w = Math.min(x1 - x, 14 + r() * 30);
-            const tall = midtown ? 40 + r() * 190 : 14 + r() * 55;
-            const h = r() < 0.08 ? tall * 1.6 : tall;
-            buildings.push({ x: x + w / 2, z: (za + zb) / 2, hx: w / 2 - 0.4, hz: (zb - za) / 2 - 0.4, h, col: TONES[Math.floor(r() * TONES.length)] });
-            x += w;
-          }
-        }
-      }
+  // ---------- Manhattan, street by street ----------
+  // src/world.js (MMWorld) decodes Mark's Vigil map, inlined by the build: OpenStreetMap streets,
+  // buildings, parks and water, real businesses and the MTA subway, all of Manhattan. x east,
+  // z north, meters, origin at Times Square. The grid runs about 29 degrees off true north, so
+  // headings come from the streets themselves, never from the axes.
+  const MW = window.MMWorld;
+  const World = { ready: false, error: null };
+  async function gunzip(u8) {
+    if (window.DecompressionStream) {
+      const ds = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
+      return new Uint8Array(await new Response(ds).arrayBuffer());
     }
-  })();
+    // older browsers: a small gunzip from the CDN
+    await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js'; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+    return window.fflate.gunzipSync(u8);
+  }
+  // Stops: real places, at the intersection that stands for each (first pair that resolves)
+  const LANDMARKS = [
+    ['Herald Square', ['6th Avenue', 'West 34th Street']], ['Times Square', ['7th Avenue', 'West 45th Street']], ['Bryant Park', ['6th Avenue', 'West 42nd Street']],
+    ['Grand Central', ['Park Avenue', 'East 42nd Street']], ['the Empire State Building', ['5th Avenue', 'West 34th Street']], ['Rockefeller Center', ['5th Avenue', 'West 50th Street']],
+    ['Columbus Circle', ['8th Avenue', 'West 57th Street']], ['the Flatiron Building', ['5th Avenue', 'East 23rd Street']], ['Union Square', ['Broadway', 'East 14th Street']],
+    ['Washington Square Park', ['5th Avenue', 'Washington Square North']], ['Chelsea Market', ['9th Avenue', 'West 15th Street']], ['Hudson Yards', ['10th Avenue', 'West 33rd Street']],
+    ['Madison Square Garden', ['7th Avenue', 'West 33rd Street']], ['Port Authority', ['8th Avenue', 'West 42nd Street']], ['Carnegie Hall', ['7th Avenue', 'West 57th Street']],
+    ['Lincoln Center', ['Columbus Avenue', 'West 65th Street']], ['the Natural History Museum', ['Central Park West', 'West 81st Street']], ['the Met', ['5th Avenue', 'East 82nd Street']],
+    ['the Guggenheim', ['5th Avenue', 'East 89th Street']], ['the Apollo Theater', ['West 125th Street', 'Frederick Douglass Boulevard']], ["Katz's Delicatessen", ['East Houston Street', 'Ludlow Street']],
+    ['Chinatown', ['Canal Street', 'Mott Street']], ['Little Italy', ['Mulberry Street', 'Grand Street']], ['SoHo', ['Prince Street', 'Broadway']], ['Wall Street', ['Wall Street', 'William Street']],
+    ['City Hall', ['Broadway', 'Chambers Street']], ['Tompkins Square Park', ['Avenue A', 'East 7th Street']], ['the Strand', ['Broadway', 'East 12th Street']],
+    ['the United Nations', ['1st Avenue', 'East 45th Street']], ['the Chrysler Building', ['Lexington Avenue', 'East 42nd Street']], ['the High Line', ['10th Avenue', 'West 17th Street']],
+    ['Battery Park', ['State Street', 'Whitehall Street']], ['the Brooklyn Bridge', ['Centre Street', 'Chambers Street']], ['the Stonewall Inn', ['Christopher Street', '7th Avenue South']],
+    ['Radio City', ['6th Avenue', 'West 50th Street']], ["Bloomingdale's", ['Lexington Avenue', 'East 59th Street']],
+  ];
+  let PLACES = [];
+  // a walkable point near (x, z): the nearest street's sidewalk, side picked by side (+1 right of the
+  // street's direction, -1 left), else a spiral search
+  function sidewalkNear(x, z, side = 1) {
+    const n = MW.nearestEdge(x, z, 80, MW.walkEdge);
+    if (n) {
+      const d = MW.edgeDir(n.e, n.k), off = MW.roadW(n.e) / 2 + 2.5;
+      for (const sgn of [side, -side]) { const px = n.x + d.z * off * sgn, pz = n.z - d.x * off * sgn; if (MW.walkable(px, pz)) return { x: px, z: pz, dir: d }; }
+      if (MW.walkable(n.x, n.z)) return { x: n.x, z: n.z, dir: d };
+    }
+    for (let r = 2; r <= 60; r += 2) for (let a = 0; a < 12; a++) { const px = x + Math.cos(a * 0.52) * r, pz = z + Math.sin(a * 0.52) * r; if (MW.walkable(px, pz)) return { x: px, z: pz, dir: null }; }
+    return { x, z, dir: null };
+  }
+  // compass angle of a direction (radians, 0 north, clockwise)
+  const angleOf = (d) => Math.atan2(d.x, d.z);
+  async function loadWorld() {
+    const b64 = $('worldData').textContent.replace(/\s+/g, '');
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    MW.load(await gunzip(u8), JSON.parse($('bizData').textContent), JSON.parse($('subwayData').textContent));
+    PLACES = LANDMARKS.map(([name, pair]) => { const p = MW.intersection(pair[0], pair[1]); return p && { name, x: p.x, z: p.z }; }).filter(Boolean);
+    // start on 8th Ave at W 34th St, by Penn Station, on the south side of 34th facing east
+    const c = MW.intersection('8th Avenue', 'West 34th Street') || { x: 0, z: 0 };
+    const st = MW.nearestEdge(c.x + 30, c.z, 60, (e) => MW.edgeName(e) === 'West 34th Street');
+    let dir = st ? MW.edgeDir(st.e, st.k) : { x: 1, z: 0 };
+    const east = { x: 0.87, z: 0.49 }; // roughly up the grid's east
+    if (dir.x * east.x + dir.z * east.z < 0) dir = { x: -dir.x, z: -dir.z };
+    const sp = sidewalkNear(c.x + dir.x * 28, c.z + dir.z * 28, 1);
+    Object.assign(START, { x: sp.x, z: sp.z, yaw: angleOf(dir) });
+    Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw });
+    World.ready = true;
+  }
 
   // ---------- player: free walking, steered like a wheel ----------
   // The engine's free movement model: torso turn sets the turn rate (hold it and you keep turning,
   // face front and you go straight), marching and high knees set speed, and you walk wherever you
-  // face on streets and sidewalks, never through a building.
+  // face on streets, sidewalks and in parks, never through a building or into the river.
   // yaw: radians, 0 north (+z), clockwise (east is pi/2); the engine's facing is the same in degrees.
-  const START = { x: aveX(4) + AVE_HALF + 6, z: stZ(34) - ST_HALF - WALK_OFF, yaw: Math.PI / 2 }; // 8th Ave at W 34th St, facing east
+  const START = { x: 0, z: 0, yaw: Math.PI / 2 };
   const P = { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 };
   const RADIUS = 0.6;
-  const BOUNDS = { x0: aveX(0) - AVE_HALF, x1: aveX(NA - 1) + AVE_HALF, z0: stZ(FIRST_ST) - ST_HALF, z1: stZ(LAST_ST) + ST_HALF };
-  // building footprints: each block inside its 4 m sidewalk
-  const solid = blocks.map((b) => ({ x0: b.x0 + 4, x1: b.x1 - 4, z0: b.z0 + 4, z1: b.z1 - 4 }));
-  function blocked(x, z) {
-    if (x < BOUNDS.x0 || x > BOUNDS.x1 || z < BOUNDS.z0 || z > BOUNDS.z1) return true;
-    for (const b of solid) if (x > b.x0 - RADIUS && x < b.x1 + RADIUS && z > b.z0 - RADIUS && z < b.z1 + RADIUS) return true;
-    return false;
-  }
-  function nearestAve(x) {
-    let best = 0;
-    for (let i = 1; i < NA; i++) if (Math.abs(x - aveX(i)) < Math.abs(x - aveX(best))) best = i;
-    return best;
-  }
-  const nearestSt = (z) => Math.max(FIRST_ST, Math.min(LAST_ST, Math.round(z / ST_GAP) + FIRST_ST));
-  // the block-sized cell around the player, for counting blocks walked
-  function cellOf(x, z) {
-    let i = 0;
-    while (i < NA - 1 && x > (aveX(i) + aveX(i + 1)) / 2) i++;
-    return i * 1000 + nearestSt(z);
-  }
+  function blocked(x, z) { return !World.ready || !MW.walkable(x, z); }
   const playerPos = () => P;
+  // the street you are on and its heading (radians), within r meters, or null
+  function streetHere(x, z, r = 25) {
+    const n = MW.streetAt(x, z, r);
+    if (!n) return null;
+    return Object.assign(n, { dir: MW.edgeDir(n.e, n.k), name: MW.edgeName(n.e) });
+  }
 
-  // the street or avenue you are heading along, and the next cross street ahead
+  // the street you are heading along, and the next cross street ahead
   function whereAmI() {
-    const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
-    const ai = nearestAve(P.x), st = nearestSt(P.z);
-    if (Math.abs(hz) >= Math.abs(hx)) {
-      const k = P.z / ST_GAP, n = (hz > 0 ? Math.floor(k + 0.02) + 1 : Math.ceil(k - 0.02) - 1) + FIRST_ST;
-      const ok = n >= FIRST_ST && n <= LAST_ST;
-      return { on: AVES[ai][0], next: ok ? streetName(n, ai) : null, dist: ok ? Math.abs(stZ(n) - P.z) : 0 };
+    if (!World.ready) return { on: 'Manhattan', next: null, dist: 0 };
+    const st = MW.streetAt(P.x, P.z, 40);
+    if (!st) return { on: 'Off the street', next: null, dist: 0 };
+    const on = MW.edgeName(st.e);
+    const d = MW.edgeDir(st.e, st.k);
+    // follow this street the way you face to the next corner with a different street
+    let e = st.e, end = Math.sin(P.yaw) * d.x + Math.cos(P.yaw) * d.z >= 0 ? 1 : 0;
+    let dist = end ? MW.ELEN[e] - st.s : st.s;
+    for (let hop = 0; hop < 10 && dist < 700; hop++) {
+      const n = end ? MW.EN1[e] : MW.EN0[e];
+      if (n < 0) break;
+      const cross = MW.nodeNames(n).filter((x) => x !== on);
+      if (cross.length) return { on: MW.short(on), next: MW.short(cross[0]), dist };
+      let next = -1;
+      for (let q = MW.NODE_OFF[n]; q < MW.NODE_OFF[n + 1]; q++) { const ee = MW.NODE_EDGES[q]; if (ee >> 1 !== e && MW.edgeName(ee >> 1) === on) { next = ee; break; } }
+      if (next < 0) break;
+      e = next >> 1; end = next & 1 ? 0 : 1;
+      dist += MW.ELEN[e];
     }
-    let n = -1;
-    if (hx > 0) { for (let i = 0; i < NA; i++) if (aveX(i) > P.x + 2) { n = i; break; } }
-    else { for (let i = NA - 1; i >= 0; i--) if (aveX(i) < P.x - 2) { n = i; break; } }
-    return { on: streetName(st, ai), next: n >= 0 ? AVES[n][0] : null, dist: n >= 0 ? Math.abs(aveX(n) - P.x) : 0 };
+    return { on: MW.short(on), next: null, dist: 0 };
   }
 
   // ---------- session ----------
@@ -295,8 +292,9 @@
     intervalS: 30,
   };
   const IDLE_LINES = ['Keep your feet moving.', 'March in place. The city is not going to walk itself.', 'Still there? Knees up.'];
-  const placeXZ = (p) => ({ x: aveX(p.ai), z: stZ(p.st) });
-  const legMeters = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+  const placeXZ = (p) => ({ x: p.x, z: p.z });
+  // a walk on the grid is about 1.25 times the straight line
+  const legMeters = (a, b) => Math.hypot(a.x - b.x, a.z - b.z) * 1.25;
   // the unvisited place whose walk from `from` is closest to `want` meters
   function pickStop(from, want, used) {
     let best = null, bestErr = Infinity;
@@ -316,71 +314,77 @@
   }
   // where directions point: an answered police call first, else the route stop
   const target = () => Calls.active || G.dest;
-  // blocks and avenues to the stop, in words
+
+  // Directions follow a real route: the shortest walk on the streets (MW.route), refreshed every
+  // 1.5 s from where you are, so a missed turn simply reroutes.
+  const Nav = { route: null, tg: null, at: -Infinity, len: 0 };
+  function routeNow(now) {
+    const tg = target();
+    if (!tg) return null;
+    if (Nav.tg !== tg || now - Nav.at > 1500) {
+      Nav.route = MW.route(P.x, P.z, tg.x, tg.z);
+      Nav.tg = tg; Nav.at = now;
+      Nav.len = Nav.route ? Nav.route.len : legMeters(P, tg);
+    }
+    return Nav.route;
+  }
+  // how far to the target, in words
   function destWords() {
     const tg = target();
-    const dAve = tg.ai - nearestAve(P.x), dSt = tg.st - nearestSt(P.z);
-    const parts = [];
-    if (dSt) parts.push(`${Math.abs(dSt)} ${Math.abs(dSt) === 1 ? 'block' : 'blocks'} ${dSt > 0 ? 'north' : 'south'}`);
-    if (dAve) parts.push(`${Math.abs(dAve)} ${Math.abs(dAve) === 1 ? 'avenue' : 'avenues'} ${dAve > 0 ? 'east' : 'west'}`);
-    return parts.length ? parts.join(' and ') : 'right here';
+    if (!tg) return '';
+    const m = Nav.tg === tg && Nav.route ? Nav.len : legMeters(P, tg);
+    if (m < 120) return 'right around here';
+    return `${(m / 1609.34).toFixed(1)} mi · about ${Math.max(1, Math.round(m / 80))} blocks`;
   }
-  // compass heading 0 north, 1 east, 2 south, 3 west
-  const headingOf = (yaw) => ((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4;
-  // the intersection ahead in the direction you face
-  function crossingAhead() {
-    const h = headingOf(P.yaw);
-    if (h === 0 || h === 2) {
-      const ai = nearestAve(P.x), k = P.z / ST_GAP;
-      const n = (h === 0 ? Math.floor(k + 0.02) + 1 : Math.ceil(k - 0.02) - 1) + FIRST_ST;
-      if (n < FIRST_ST || n > LAST_ST) return null;
-      return { ai, st: n, h, dist: Math.abs(stZ(n) - P.z), name: streetName(n, ai) };
+  // the edge's direction arriving at its far node (ee as in a route: e * 2 + from-end)
+  const arriving = (ee) => { const d = MW.leaving((ee >> 1) * 2 + (1 - (ee & 1))); return { x: -d.x, z: -d.z }; };
+  // The next turn on route r: {turn, side, onto, street, node, dist} (turn false while it runs
+  // straight to the target), or {wrong} when you face away from it.
+  function nextTurn(r) {
+    const here = MW.nearestEdge(P.x, P.z, 30, MW.walkEdge);
+    // already on the first edge, between its nodes: the first node is behind you
+    const i0 = here && r.edges.length && r.edges[0] >> 1 === here.e ? 1 : 0;
+    const f = { x: Math.sin(P.yaw), z: Math.cos(P.yaw) };
+    // the way the route goes from here
+    let go;
+    if (i0 === 1) go = MW.leaving(r.edges[0]);
+    else { const nx = MW.NODEX[r.nodes[0]] - P.x, nz = MW.NODEZ[r.nodes[0]] - P.z, l = Math.hypot(nx, nz); go = l > 20 ? { x: nx / l, z: nz / l } : r.edges.length ? MW.leaving(r.edges[0]) : f; }
+    if (go.x * f.x + go.z * f.z < -0.5) return { wrong: true, node: r.nodes[i0] };
+    const turnFrom = (a, b) => Math.atan2(a.x * b.z - a.z * b.x, a.x * b.x + a.z * b.z);
+    // the first turn is from the way you face: onto the street you are at (here), or at the
+    // route's first corner ahead of you
+    if (r.edges.length) {
+      const b = i0 === 1 ? go : MW.leaving(r.edges[0]), n = r.nodes[0];
+      const ang = turnFrom(f, b);
+      if (Math.abs(ang) >= 0.6) return { turn: true, side: ang < 0 ? 'right' : 'left', onto: MW.edgeName(r.edges[0] >> 1), street: here ? MW.edgeName(here.e) : '', node: n, dist: i0 === 1 ? 0 : Math.hypot(MW.NODEX[n] - P.x, MW.NODEZ[n] - P.z) };
     }
-    const st = nearestSt(P.z);
-    let n = -1;
-    if (h === 1) { for (let i = 0; i < NA; i++) if (aveX(i) > P.x + 2) { n = i; break; } }
-    else { for (let i = NA - 1; i >= 0; i--) if (aveX(i) < P.x - 2) { n = i; break; } }
-    if (n < 0) return null;
-    return { ai: n, st, h, dist: Math.abs(aveX(n) - P.x), name: AVES[n][0] };
+    for (let i = 0; i < r.edges.length - 1; i++) {
+      const a = arriving(r.edges[i]), b = MW.leaving(r.edges[i + 1]);
+      const ang = turnFrom(a, b);
+      if (Math.abs(ang) < 0.6) continue; // within 35 degrees: straight on
+      const n = r.nodes[i + 1];
+      return { turn: true, side: ang < 0 ? 'right' : 'left', onto: MW.edgeName(r.edges[i + 1] >> 1), street: MW.edgeName(r.edges[i] >> 1), node: n, dist: Math.hypot(MW.NODEX[n] - P.x, MW.NODEZ[n] - P.z) };
+    }
+    return { turn: false, street: r.edges.length ? MW.edgeName(r.edges[Math.min(i0, r.edges.length - 1)] >> 1) : '' };
   }
-  // what to do at crossing c to reach the stop: go straight while there is still ground to cover
-  // this way, then turn toward it; the wrong way is a turn around
-  function adviceAt(c) {
+  function navTick(now) {
     const tg = target();
-    const dA = tg.ai - c.ai, dS = tg.st - c.st;
-    if (!dA && !dS) return { turn: 0, arrive: true };
-    const along = [dS, dA, -dS, -dA][c.h];
-    if (along > 0) return { turn: 0 };
-    let t;
-    if (c.h % 2 === 0) t = dA > 0 ? 1 : dA < 0 ? 3 : (c.h + 2) % 4;
-    else t = dS > 0 ? 0 : dS < 0 ? 2 : (c.h + 2) % 4;
-    return { turn: (t - c.h + 4) % 4 };
-  }
-  function navTick() {
-    if (!G.dest) return;
-    // at a corner right now (within 25 m of its center) and the turn is here: say so, rather than
-    // sending you on to the next corner and back
-    const ai0 = nearestAve(P.x), st0 = nearestSt(P.z), h0 = headingOf(P.yaw);
-    if (Math.hypot(P.x - aveX(ai0), P.z - stZ(st0)) < 25) {
-      const a0 = adviceAt({ ai: ai0, st: st0, h: h0 });
-      if (a0.turn === 1 || a0.turn === 3) {
-        const side = a0.turn === 1 ? 'right' : 'left', onto = h0 % 2 === 0 ? streetName(st0, ai0) : AVES[ai0][0];
-        G.nav = `Turn ${side} here onto ${onto}`;
-        const key = `${ai0},${st0},${h0}`;
-        if (key !== G.cueKey) { G.cueKey = key; say(`Turn ${side} here, onto ${onto}.`, 'prompt'); }
-        return;
-      }
+    if (!tg || !World.ready) return;
+    const r = routeNow(now);
+    if (!r || Math.hypot(tg.x - P.x, tg.z - P.z) < 70) { G.nav = `${tg.name} just ahead`; return; }
+    const t = nextTurn(r);
+    if (t.wrong) {
+      G.nav = 'Wrong way: turn around';
+      if (G.cueKey !== 'wrong' + t.node) { G.cueKey = 'wrong' + t.node; say('Wrong way. Turn around.', 'prompt'); }
+      return;
     }
-    const c = crossingAhead();
-    if (!c) { G.nav = 'Turn around'; return; }
-    const a = adviceAt(c);
-    const side = a.turn === 1 ? 'right' : 'left';
-    G.nav = a.arrive ? `${target().name} at ${c.name}` : a.turn === 0 ? `Straight through ${c.name}` : a.turn === 2 ? 'Wrong way: turn around' : `Turn ${side} at ${c.name}`;
-    const key = `${c.ai},${c.st},${c.h}`;
-    if (c.dist > SESSION.cueAhead || c.dist < 5 || key === G.cueKey) return;
-    G.cueKey = key;
-    if (a.turn === 1 || a.turn === 3) say(`At ${c.name}, turn ${side}.`, 'prompt');
-    else if (a.turn === 2) say('Wrong way. Turn around.', 'prompt');
+    if (!t.turn) { G.nav = t.street ? `Straight on ${MW.short(t.street)}` : 'Straight on'; return; }
+    const onto = MW.short(t.onto || 'the next street');
+    G.nav = t.dist < 20 ? `Turn ${t.side} here onto ${onto}` : `Turn ${t.side} onto ${onto} in ${Math.round(t.dist)} m`;
+    if (t.dist <= SESSION.cueAhead && G.cueKey !== 'turn' + t.node) {
+      G.cueKey = 'turn' + t.node;
+      say(`Turn ${t.side}${t.dist < 20 ? ' here' : ''}, onto ${t.onto || 'the next street'}.`, 'prompt');
+    }
   }
   function sayRoute(first) {
     const lead = first ? `First stop, ${G.dest.name}` : `Next stop, ${G.dest.name}`;
@@ -447,8 +451,20 @@
   // point: a quick 90 degree turn onto the cross street (steering does the rest)
   engine.on('point', (e) => {
     if (G.state !== 'walk' || Phone.open) return;
-    const facing = (P.yaw * 180) / Math.PI;
-    engine.set_facing(Math.round(facing / 90) * 90 + (e.side === 'right' ? 90 : -90));
+    // turn onto the cross street: the street leaving the corner ahead closest to a right angle
+    const want = P.yaw + (e.side === 'right' ? 1 : -1) * Math.PI / 2;
+    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    let best = want, bd = 1.0;
+    const n = MW.nearestNode(P.x + Math.sin(P.yaw) * 15, P.z + Math.cos(P.yaw) * 15);
+    if (n >= 0 && Math.hypot(MW.NODEX[n] - P.x, MW.NODEZ[n] - P.z) < 70) {
+      for (let q = MW.NODE_OFF[n]; q < MW.NODE_OFF[n + 1]; q++) {
+        const ee = MW.NODE_EDGES[q];
+        if (!MW.walkEdge(ee >> 1)) continue;
+        const a = angleOf(MW.leaving(ee)), d = Math.abs(wrap(a - want));
+        if (d < bd) { bd = d; best = a; }
+      }
+    }
+    engine.set_facing((best * 180) / Math.PI);
   });
   // turn around: the engine's free movement model adds 180 itself
 
@@ -480,17 +496,19 @@
       say(`Still on it: ${c.what.toLowerCase()} at ${c.name}. ${Math.ceil((c.until - now) / 1000)} seconds.`, 'prompt');
       return;
     }
-    // a corner minM to maxM away (walking distance on the grid), inside the map
+    // a real corner (two named streets meeting) minM to maxM away on foot
     const options = [];
-    for (let ai = 0; ai < NA; ai++) for (let st = FIRST_ST; st <= LAST_ST; st++) {
-      const d = Math.abs(aveX(ai) - P.x) + Math.abs(stZ(st) - P.z);
-      if (d >= CALL.minM && d <= CALL.maxM) options.push({ ai, st, d });
+    for (let n = 0; n < MW.NN; n++) {
+      const d = legMeters(P, { x: MW.NODEX[n], z: MW.NODEZ[n] });
+      if (d < CALL.minM || d > CALL.maxM) continue;
+      const names = MW.nodeNames(n);
+      if (names.length >= 2) options.push({ n, d, names });
     }
     if (!options.length) { say('Radio is quiet.', 'prompt'); return; }
     const o = options[Math.floor(Math.random() * options.length)];
     const kind = pick(CALL_TYPES);
     const secs = Math.round((o.d / CALL.walkMps) * CALL.slack + CALL.extraS);
-    Calls.active = { ai: o.ai, st: o.st, what: kind.what, name: `${AVES[o.ai][0]} and ${streetName(o.st, o.ai)}`, until: now + secs * 1000, secs };
+    Calls.active = { x: MW.NODEX[o.n], z: MW.NODEZ[o.n], what: kind.what, name: `${MW.short(o.names[0])} and ${MW.short(o.names[1])}`, until: now + secs * 1000, secs };
     G.cueKey = '';
     G.interval = null; // the run to the call is the interval
     say(`Dispatch: ${kind.line} ${Calls.active.name}. You have ${secs} seconds. High knees.`, 'instruction');
@@ -504,7 +522,7 @@
       say('Dispatch: that call is cleared. Another unit got there first.', 'prompt');
       return;
     }
-    if (Math.hypot(P.x - aveX(c.ai), P.z - stZ(c.st)) < CALL.arriveM) {
+    if (Math.hypot(P.x - c.x, P.z - c.z) < CALL.arriveM) {
       // on scene: the fight is right there
       Calls.active = null; G.cueKey = '';
       Fight.foes = []; Fight.people = [];
@@ -534,21 +552,27 @@
     'I saw you on six phones today. Ugly in all of them. Kidding! Mostly.',
   ];
   const Peds = { list: [], waves: 0 };
-  // a sidewalk point d meters ahead of you, along your street or avenue, on either side
-  function sidewalkAhead(d) {
-    const h = headingOf(P.yaw), side = Math.random() < 0.5 ? -1 : 1;
-    if (h === 0 || h === 2) {
-      const ai = nearestAve(P.x);
-      return { x: aveX(ai) + side * (AVE_HALF + WALK_OFF + rand(-0.8, 0.8)), z: P.z + (h === 0 ? d : -d), dx: 0, dz: Math.random() < 0.5 ? 1 : -1 };
+  // a sidewalk spot between near and far meters away, on a real street, walking along it
+  function sidewalkSpot(near, far) {
+    const list = [];
+    MW.edgesNear(P.x, P.z, far, (e) => { if (MW.walkEdge(e)) list.push(e); });
+    for (let tries = 0; tries < 6 && list.length; tries++) {
+      const e = list[Math.floor(Math.random() * list.length)];
+      const k = MW.EP0[e] + Math.floor(Math.random() * Math.max(1, MW.EP0[e + 1] - 1 - MW.EP0[e]));
+      const t = Math.random(), d = MW.edgeDir(e, k), side = Math.random() < 0.5 ? -1 : 1, off = MW.roadW(e) / 2 + 1.5 + Math.random() * 2.5;
+      const x = MW.PX[k] + (MW.PX[k + 1] - MW.PX[k]) * t + d.z * off * side, z = MW.PZ[k] + (MW.PZ[k + 1] - MW.PZ[k]) * t - d.x * off * side;
+      const dd = Math.hypot(x - P.x, z - P.z);
+      if (dd < near || dd > far || blocked(x, z)) continue;
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      return { x, z, dx: d.x * dir, dz: d.z * dir };
     }
-    const st = nearestSt(P.z);
-    return { x: P.x + (h === 1 ? d : -d), z: stZ(st) + side * (ST_HALF + WALK_OFF + rand(-0.8, 0.8)), dx: Math.random() < 0.5 ? 1 : -1, dz: 0 };
+    return null;
   }
   function pedTick(dt, now) {
     Peds.list = Peds.list.filter((p) => Math.hypot(p.x - P.x, p.z - P.z) < PED.drop);
     if (Peds.list.length < PED.max && Math.random() < dt * 1.5) {
-      const sp = sidewalkAhead(rand(PED.near, PED.far));
-      if (!blocked(sp.x, sp.z)) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.6), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, look: null });
+      const sp = sidewalkSpot(PED.near, PED.far);
+      if (sp) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.6), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, look: null });
     }
     for (const p of Peds.list) {
       if (now < (p.stopUntil || 0)) { p.walking = false; p.look = P; continue; }
@@ -580,37 +604,24 @@
   // and the phone offers the subway: pick a station, wait on the platform (march in place to stay
   // warm), then ride; the ride counts as rest. Train times are rough for now; real MTA schedules
   // come with the real map.
-  const STATIONS = [
-    { name: '34 St-Herald Sq', ai: 6, st: 34, lines: 'B D F M N Q R W' },
-    { name: '34 St-Penn Station', ai: 5, st: 34, lines: '1 2 3' },
-    { name: '34 St-Penn Station', ai: 4, st: 34, lines: 'A C E', key: 'penn8' },
-    { name: 'Times Sq-42 St', ai: 5, st: 42, lines: '1 2 3 7 N Q R W S' },
-    { name: '42 St-Port Authority', ai: 4, st: 42, lines: 'A C E' },
-    { name: '42 St-Bryant Park', ai: 6, st: 42, lines: 'B D F M 7' },
-    { name: 'Grand Central-42 St', ai: 9, st: 42, lines: '4 5 6 7 S' },
-    { name: '47-50 Sts-Rockefeller Ctr', ai: 6, st: 48, lines: 'B D F M' },
-    { name: '59 St-Columbus Circle', ai: 4, st: 59, lines: 'A B C D 1' },
-    { name: 'Lexington Av-59 St', ai: 10, st: 59, lines: 'N R W 4 5 6' },
-    { name: '23 St', ai: 6, st: 23, lines: 'F M' },
-    { name: '14 St-Union Sq', ai: 9, st: 14, lines: 'L N Q R W 4 5 6' },
-    { name: '8 Av-14 St', ai: 4, st: 14, lines: 'A C E L' },
-  ];
+  // all of Manhattan's stations, with their lines and colors (data/subway.json, from the MTA)
+  const lineCol = (id) => { const l = MW.lines.find((q) => q.id === id); return l ? l.col : '#888'; };
   const SUB = { nearM: 40, waitS: [8, 20], rideS: [15, 45] };
   const Subway = { ride: null, rides: 0, restMs: 0 };
   function stationNear() {
     let best = null, bd = SUB.nearM;
-    for (const st of STATIONS) { const d = Math.hypot(P.x - aveX(st.ai), P.z - stZ(st.st)); if (d < bd) { best = st; bd = d; } }
+    for (const st of MW.stations) { const d = Math.hypot(P.x - st.x, P.z - st.z); if (d < bd) { best = st; bd = d; } }
     return best;
   }
   // every other station, the ones nearest your stop first
   function stationItems(from) {
     const tg = target();
-    const dist = (st) => Math.abs(st.ai - tg.ai) * 3.5 + Math.abs(st.st - tg.st);
-    const list = STATIONS.filter((st) => st !== from && !(st.name === from.name)).sort((a, b) => dist(a) - dist(b));
-    return [{ id: 'back', label: 'Back' }, ...list.map((st, i) => ({ id: 'ride', from, to: st, label: `${st.name}${i === 0 ? ` (near ${tg.name})` : ''} \u00b7 ${st.lines}` }))];
+    const dist = (st) => Math.hypot(st.x - tg.x, st.z - tg.z);
+    const list = MW.stations.filter((st) => st !== from && st.name !== from.name).sort((a, b) => dist(a) - dist(b)).slice(0, 12);
+    return [{ id: 'back', label: 'Back' }, ...list.map((st, i) => ({ id: 'ride', from, to: st, label: `${st.name}${i === 0 ? ` (near ${tg.name})` : ''} \u00b7 ${st.lines.join(' ')}` }))];
   }
   function startRide(from, to, now) {
-    const blocks = Math.abs(from.ai - to.ai) * 3.5 + Math.abs(from.st - to.st);
+    const blocks = Math.hypot(from.x - to.x, from.z - to.z) / 80;
     const waitS = Math.round(rand(SUB.waitS[0], SUB.waitS[1]));
     const rideS = Math.round(Math.max(SUB.rideS[0], Math.min(SUB.rideS[1], 8 + blocks * 1.2)));
     Subway.ride = { from, to, phase: 'wait', until: now + waitS * 1000, waitS, rideS };
@@ -622,7 +633,7 @@
     const r = Subway.ride;
     const left = Math.max(0, (r.until - now) / 1000);
     if (r.phase === 'wait') {
-      $('subTitle').textContent = `${r.from.name} \u00b7 ${r.from.lines}`;
+      $('subTitle').textContent = `${r.from.name} \u00b7 ${r.from.lines.join(' ')}`;
       $('subInfo').textContent = `Next train in ${Math.ceil(left)} s. March in place while you wait.`;
       $('subFill').style.transform = `scaleX(${1 - left / r.waitS})`;
       if (P.cadence > 0) G.activeMs += dt * 1000;
@@ -641,12 +652,14 @@
     const st = r.to;
     Subway.ride = null; Subway.rides++;
     $('subway').hidden = true;
-    let x = aveX(st.ai) + AVE_HALF + WALK_OFF, z = stZ(st.st) - ST_HALF - WALK_OFF;
-    if (blocked(x, z)) { x = aveX(st.ai) - AVE_HALF - WALK_OFF; }
+    const out = sidewalkNear(st.x, st.z);
     const tg = target();
-    const dA = (tg.ai - st.ai) * 3.5, dS = tg.st - st.st;
-    const yaw = Math.abs(dS) >= Math.abs(dA) ? (dS >= 0 ? 0 : Math.PI) : (dA >= 0 ? Math.PI / 2 : -Math.PI / 2);
-    Object.assign(P, { x, z, yaw, view: yaw, speed: 0, cell: null });
+    // face the way the route to your target leaves
+    const way = MW.route(out.x, out.z, tg.x, tg.z);
+    const via = way && way.nodes.length > 1 ? way.nodes[1] : way ? way.nodes[0] : -1;
+    const yaw = via >= 0 ? Math.atan2(MW.NODEX[via] - out.x, MW.NODEZ[via] - out.z) : Math.atan2(tg.x - out.x, tg.z - out.z);
+    Object.assign(P, { x: out.x, z: out.z, yaw, view: yaw, speed: 0, cell: null });
+    Nav.tg = null;
     engine.set_facing((yaw * 180) / Math.PI);
     Fight.foes = []; Fight.people = []; Peds.list = []; G.cueKey = '';
     Fight.waitS = Math.max(Fight.waitS, 30);
@@ -770,9 +783,13 @@
 
     // self-centering, like a steering wheel letting go: not steering and walking within a few
     // degrees of a street's direction, you settle onto it and go straight down the block
+    // (the street's own direction, either way along it: the grid runs 29 degrees off north)
     let facing = m.facing;
-    if (Math.abs(s.turn || 0) < 0.05 && P.speed > 0.5) {
-      const diff = Math.round(facing / 90) * 90 - facing;
+    const here = Math.abs(s.turn || 0) < 0.05 && P.speed > 0.5 ? streetHere(P.x, P.z, 25) : null;
+    if (here) {
+      const a = (angleOf(here.dir) * 180) / Math.PI;
+      let diff = Infinity;
+      for (const c of [a, a + 180]) { let d = ((c - facing) % 360 + 540) % 360 - 180; if (Math.abs(d) < Math.abs(diff)) diff = d; }
       if (Math.abs(diff) > 0.05 && Math.abs(diff) < T.centerWithin) {
         facing += diff * Math.min(1, dt * T.centerRate);
         engine.set_facing(facing);
@@ -780,17 +797,38 @@
     }
     P.yaw = (facing * Math.PI) / 180;
 
-    // walk where you face, sliding along building fronts
+    // walk where you face; blocked by a building or the river, slide along the street instead
     const step = P.speed * dt, ox = P.x, oz = P.z;
     const nx = P.x + Math.sin(P.yaw) * step, nz = P.z + Math.cos(P.yaw) * step;
-    if (!blocked(nx, P.z)) P.x = nx;
-    if (!blocked(P.x, nz)) P.z = nz;
-    G.meters += Math.hypot(P.x - ox, P.z - oz);
-    const cell = cellOf(P.x, P.z);
-    if (P.cell !== null && cell !== P.cell) G.blocks++;
-    P.cell = cell;
-    if (G.dest && Math.hypot(P.x - aveX(G.dest.ai), P.z - stZ(G.dest.st)) < T.arriveRadius) arrive(now);
-    navTick();
+    const tryMove = (x, z) => { if (blocked(x, z)) return false; P.x = x; P.z = z; return true; };
+    if (step > 0 && !tryMove(nx, nz)) {
+      const st = streetHere(P.x, P.z, 30);
+      const k = st ? (nx - P.x) * st.dir.x + (nz - P.z) * st.dir.z : 0;
+      if (!(st && tryMove(P.x + st.dir.x * k, P.z + st.dir.z * k)) && !tryMove(nx, P.z)) tryMove(P.x, nz);
+    }
+    const moved = Math.hypot(P.x - ox, P.z - oz);
+    // marching into a wall: after a moment, swing onto the street direction nearest your facing
+    // that is open (a real player would turn; this keeps a missed turn from feeling stuck)
+    if (step > 0.02 && moved < step * 0.2) {
+      P.stuckT = (P.stuckT || 0) + dt;
+      if (P.stuckT > 0.6) {
+        P.stuckT = 0;
+        const st = streetHere(P.x, P.z, 30);
+        if (st) {
+          const a = angleOf(st.dir), wrap = (q) => Math.atan2(Math.sin(q), Math.cos(q));
+          const opts = [a, a + Math.PI, a + Math.PI / 2, a - Math.PI / 2].filter((q) => !blocked(P.x + Math.sin(q) * 3, P.z + Math.cos(q) * 3));
+          opts.sort((p1, p2) => Math.abs(wrap(p1 - P.yaw)) - Math.abs(wrap(p2 - P.yaw)));
+          if (opts.length) engine.set_facing((opts[0] * 180) / Math.PI);
+          // still stuck after a couple of tries: step half a meter toward the street
+          P.stuckN = (P.stuckN || 0) + 1;
+          if (P.stuckN >= 2) { const l = Math.hypot(st.x - P.x, st.z - P.z) || 1; tryMove(P.x + ((st.x - P.x) / l) * 0.5, P.z + ((st.z - P.z) / l) * 0.5); }
+        }
+      }
+    } else { P.stuckT = 0; P.stuckN = 0; }
+    G.meters += moved;
+    G.blocks = Math.floor(G.meters / 80); // a short Manhattan block
+    if (G.dest && Math.hypot(P.x - G.dest.x, P.z - G.dest.z) < T.arriveRadius) arrive(now);
+    navTick(now);
     callTick(now);
     updateEncounters(dt, now);
     easeView(dt);
@@ -1794,6 +1832,7 @@
 
   // ---------- rendering ----------
   const NEAR = 0.3;
+  const Perf = { faces: 0 };
   const SKY = [150, 182, 214];
   let W = 0, H = 0, F = 0, cam = null;
 
@@ -1828,32 +1867,160 @@
     ctx.fill();
   }
 
-  // axis-aligned building box: visible faces only
-  function buildingFaces(out, b, depth) {
-    const x0 = b.x - b.hx, x1 = b.x + b.hx, z0 = b.z - b.hz, z1 = b.z + b.hz, h = b.h;
-    const add = (pts, k, cx, cz) => {
-      const cp = pts.map((p) => toCam(p[0], p[1], p[2]));
-      if (cp.every((p) => p.z < NEAR)) return;
-      out.push({ cp, color: shade(b.col, k, depth), depth, sub: Math.hypot(cx - cam.x, cz - cam.z), win: k < 1.05 && depth < 220 ? { pts, h } : null });
-    };
-    if (cam.z < z0) add([[x0, 0, z0], [x1, 0, z0], [x1, h, z0], [x0, h, z0]], 0.94, b.x, z0);
-    if (cam.z > z1) add([[x0, 0, z1], [x1, 0, z1], [x1, h, z1], [x0, h, z1]], 0.88, b.x, z1);
-    if (cam.x < x0) add([[x0, 0, z0], [x0, 0, z1], [x0, h, z1], [x0, h, z0]], 0.8, x0, b.z);
-    if (cam.x > x1) add([[x1, 0, z0], [x1, 0, z1], [x1, h, z1], [x1, h, z0]], 0.84, x1, b.z);
-    if (cam.y > h) add([[x0, h, z0], [x1, h, z0], [x1, h, z1], [x0, h, z1]], 1.1, b.x, b.z);
-  }
+  // ---------- the city: ground, streets, buildings, storefront signs ----------
+  // Real footprints and heights (src/world.js chunks), drawn as walls facing you, far to near,
+  // with window bands up close; streets as asphalt ribbons over the land, parks and water.
+  const FACADES = {
+    tower: [[127, 147, 166], [154, 169, 182], [108, 127, 143], [185, 192, 196], [138, 154, 160], [201, 195, 181], [167, 180, 189], [95, 111, 124], [214, 207, 191]],
+    mid: [[138, 75, 58], [155, 90, 68], [122, 69, 54], [179, 139, 109], [200, 184, 154], [160, 112, 90], [210, 198, 174], [110, 63, 51], [181, 164, 138], [156, 143, 128]],
+    house: [[107, 74, 58], [122, 86, 68], [138, 100, 80], [160, 128, 104], [94, 67, 52], [148, 82, 63]],
+  };
+  const facadeOf = (b) => { const set = b.h > 40 ? FACADES.tower : b.h > 12 ? FACADES.mid : FACADES.house; return set[Math.floor(b.seed * set.length) % set.length]; };
+  const SUN = { x: 0.6, z: -0.8 };
+  const GROUND_ORDER = [8, 0, 6, 4, 2, 1, 3, 5, 7];
+  const ASPHALT = [66, 69, 74], WALK = [176, 172, 164], LINE_Y = [214, 178, 52];
+  const rgbOf = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
 
-  // window bands on near facades, so speed reads at street level
+  // land, parks and water within D: tile polygons projected onto the ground
+  function drawGround(D) {
+    const [ti0, tj0] = MW.tileOf(cam.x - D, cam.z + D), [ti1, tj1] = MW.tileOf(cam.x + D, cam.z - D);
+    const tiles = [];
+    for (let tj = tj0; tj <= tj1; tj++) for (let ti = ti0; ti <= ti1; ti++) { const t = MW.tile(ti, tj); if (t) tiles.push(t); }
+    for (const cls of GROUND_ORDER) {
+      const col = cls === 5 ? MW.WATER_COL : MW.GROUND_COL[cls];
+      if (!col) continue;
+      ctx.fillStyle = rgbOf(col);
+      for (const t of tiles) for (const p of t.polys) {
+        if (p.cls !== cls || p.x1 < cam.x - D || p.x0 > cam.x + D || p.z1 < cam.z - D || p.z0 > cam.z + D) continue;
+        ctx.beginPath();
+        let any = false;
+        for (const ring of p.rings) {
+          const pts = [];
+          for (let k = 0; k < ring.length; k += 2) pts.push(toCam(ring[k], 0, ring[k + 1]));
+          const pr = project(pts);
+          if (!pr) continue;
+          any = true;
+          ctx.moveTo(pr[0].x, pr[0].y);
+          for (let k = 1; k < pr.length; k++) ctx.lineTo(pr[k].x, pr[k].y);
+          ctx.closePath();
+        }
+        if (any) ctx.fill('evenodd');
+      }
+    }
+  }
+  // streets within D: sidewalk, asphalt, and a yellow center line on two-way avenues
+  function drawStreets(D) {
+    const edges = [];
+    MW.edgesNear(cam.x, cam.z, D, (e) => { if (MW.ECLS[e] <= 7) edges.push(e); });
+    const quad = (ax, az, bx, bz, nx, nz, w0, w1, y) => project([toCam(ax + nx * w0, y, az + nz * w0), toCam(bx + nx * w0, y, bz + nz * w0), toCam(bx + nx * w1, y, bz + nz * w1), toCam(ax + nx * w1, y, az + nz * w1)]);
+    for (const pass of [0, 1, 2]) {
+      for (const e of edges) {
+        const w = MW.roadW(e) / 2, walk = MW.walkEdge(e);
+        if (pass === 0 && !walk) continue;
+        if (pass === 2 && (MW.oneway(e) || MW.ECLS[e] > 4)) continue;
+        for (let k = MW.EP0[e]; k < MW.EP0[e + 1] - 1; k++) {
+          const ax = MW.PX[k], az = MW.PZ[k], bx = MW.PX[k + 1], bz = MW.PZ[k + 1];
+          const mx = (ax + bx) / 2, mz = (az + bz) / 2, depth = Math.hypot(mx - cam.x, mz - cam.z);
+          const L = Math.hypot(bx - ax, bz - az) || 1;
+          if (depth - L / 2 > D) continue;
+          const nx = (bz - az) / L, nz = -(bx - ax) / L;
+          const pr = pass === 0 ? quad(ax, az, bx, bz, nx, nz, -w - MW.SIDEWALK, w + MW.SIDEWALK, 0.01) : pass === 1 ? quad(ax, az, bx, bz, nx, nz, -w, w, 0.02) : quad(ax, az, bx, bz, nx, nz, -0.18, 0.18, 0.03);
+          if (pr) fillPoly(pr, shade(pass === 0 ? WALK : pass === 1 ? ASPHALT : LINE_Y, 1, depth));
+        }
+      }
+    }
+  }
+  // building walls facing the camera within D (out: faces to sort and draw)
+  function buildingFaces(out, D) {
+    const [c0x, c0z] = MW.chunkOf(cam.x - D, cam.z + D), [c1x, c1z] = MW.chunkOf(cam.x + D, cam.z - D);
+    const tanH = (W / 2) / F + 0.15;
+    for (let cz = c0z; cz <= c1z; cz++) for (let cx = c0x; cx <= c1x; cx++) {
+      const ch = MW.chunk(cx, cz);
+      if (!ch) continue;
+      for (const b of ch.blds) {
+        const dx = b.x - cam.x, dz = b.z - cam.z, dist = Math.hypot(dx, dz);
+        if (dist - b.r > D) continue;
+        // in front of you and inside the view, give or take its size
+        const fwd = dx * cam.sy + dz * cam.cy, side = dx * cam.cy - dz * cam.sy;
+        if (fwd < -b.r || Math.abs(side) - b.r > Math.max(0, fwd) * tanH + 4) continue;
+        // far and small: skip the low ones
+        if (dist > 260 && b.h < 10) continue;
+        const col = facadeOf(b), pts = b.pts, n = b.n, h = b.h;
+        for (let k = 0; k < n; k++) {
+          const k2 = (k + 1) % n, ax = pts[k * 2], az = pts[k * 2 + 1], bx = pts[k2 * 2], bz = pts[k2 * 2 + 1];
+          const ex = bx - ax, ez = bz - az, L = Math.hypot(ex, ez);
+          if (L < 0.5) continue;
+          const nx = ez / L, nz = -ex / L; // outward for counterclockwise footprints
+          if ((cam.x - ax) * nx + (cam.z - az) * nz <= 0) continue;
+          const mx = (ax + bx) / 2, mz = (az + bz) / 2, depth = Math.hypot(mx - cam.x, mz - cam.z);
+          const lit = 0.74 + 0.26 * Math.max(0, nx * SUN.x + nz * SUN.z);
+          out.push({ cp: [toCam(ax, b.base, az), toCam(bx, b.base, bz), toCam(bx, h, bz), toCam(ax, h, az)], color: shade(col, lit, depth), depth, win: depth < 110 && h > 6 ? { ax, az, bx, bz, h } : null });
+        }
+        if (cam.y > h) {
+          const cp = [];
+          for (let k = 0; k < n; k++) cp.push(toCam(pts[k * 2], h, pts[k * 2 + 1]));
+          out.push({ cp, color: shade(col, 1.08, dist), depth: dist + 0.1, win: null });
+        }
+      }
+    }
+  }
+  // floor lines on near facades, so speed reads at street level
   function windows(face) {
-    const [a, b] = face.win.pts;
-    const step = 4;
-    ctx.strokeStyle = 'rgba(30, 40, 56, .18)';
+    const w = face.win;
+    ctx.strokeStyle = 'rgba(30, 40, 56, .2)';
     ctx.lineWidth = 1;
-    for (let y = 4; y < Math.min(face.win.h - 1, 90); y += step) {
-      const p = project([toCam(a[0], y, a[2]), toCam(b[0], y, b[2]), toCam(b[0], y + 0.01, b[2])]);
+    for (let y = 4; y < Math.min(w.h - 1, 72); y += 3.6) {
+      const p = project([toCam(w.ax, y, w.az), toCam(w.bx, y, w.bz), toCam(w.bx, y + 0.01, w.bz)]);
       if (!p) continue;
       ctx.beginPath(); ctx.moveTo(p[0].x, p[0].y); ctx.lineTo(p[1].x, p[1].y); ctx.stroke();
     }
+  }
+  // storefront names: real businesses within 60 m that you can see from here
+  const BIZ_COL = { food: '#2a2c30', pizza: '#9e2a22', deli: '#b3121f', cafe: '#4b3223', bar: '#2a1f3d', sweet: '#a3405f', market: '#2f6b4a', shop: '#27456e', pharmacy: '#2f7d5f', clinic: '#2f6f8f', bank: '#1f3a5f', post: '#27456e', theater: '#6b1f2c', museum: '#4f4a43', library: '#5a4636', hotel: '#0b5e3e' };
+  function drawSigns() {
+    const list = [];
+    MW.bizNear(cam.x, cam.z, 60, (i, p) => {
+      const c = toCam(p[1], 3.4, p[2]);
+      if (c.z < 3) return;
+      // a building in the way (the storefront's own building holds the point, so stop short)
+      for (const f of [0.3, 0.55, 0.8]) if (MW.buildingAt(cam.x + (p[1] - cam.x) * f, cam.z + (p[2] - cam.z) * f)) return;
+      list.push({ i, c });
+    });
+    list.sort((a, b) => b.c.z - a.c.z);
+    for (const { i, c } of list.slice(-14)) {
+      const x = W / 2 + (F * c.x) / c.z, y = H / 2 - (F * c.y) / c.z;
+      const size = Math.max(8, Math.min(20, (F * 0.55) / c.z));
+      const name = bizName(i);
+      ctx.font = `800 ${size}px system-ui, sans-serif`;
+      const tw = ctx.measureText(name).width;
+      ctx.fillStyle = BIZ_COL[MW.bizCat(i)] || '#2a2c30';
+      ctx.fillRect(x - tw / 2 - size * 0.4, y - size * 0.75, tw + size * 0.8, size * 1.5);
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(name, x, y);
+    }
+  }
+  // Real business names, or made-up ones (Mark: real names come out of a commercial release)
+  const NAME_A = ['Hudson', 'Bowery', 'Lenox', 'Canal', 'Delancey', 'Empire', 'Liberty', 'Mott', 'Mulberry', 'Amsterdam', 'Lexington', 'Orchard', 'Houston', 'Knickerbocker', 'Battery', 'Spring', 'Bleecker', 'Varick', 'Riverside', 'Gramercy', 'Union', 'Madison', 'Harbor', 'Midnight', 'Corner'];
+  const NAME_B = { food: ['Diner', 'Kitchen', 'Grill', 'Noodle House', 'Dumpling House', 'Luncheonette', 'Halal Cart', 'Taqueria'], pizza: ['Pizza', 'Slice', 'Famous Pizza'], deli: ['Deli & Grocery', 'Bodega', 'Mini Market'],
+    cafe: ['Coffee', 'Bagels', 'Espresso Bar'], bar: ['Tavern', 'Pub', 'Lounge', 'Ale House'], sweet: ['Bakery', 'Donuts', 'Ice Cream'], market: ['Market', 'Grocery'], shop: ['Hardware', 'Discount', 'Books', 'Electronics'],
+    pharmacy: ['Pharmacy', 'Drugs'], clinic: ['Urgent Care', 'Dental'], bank: ['Savings Bank', 'Credit Union'], post: ['Post Office'], theater: ['Theatre', 'Cinema'], museum: ['Gallery'], library: ['Library'], hotel: ['Hotel', 'Inn'] };
+  const REAL_KEY = 'manhattan-miles-real-names';
+  let realNames = true;
+  try { realNames = localStorage.getItem(REAL_KEY) !== '0'; } catch (_) {}
+  const fakeNames = new Map();
+  function bizName(i) {
+    if (realNames && MW.biz.n[i]) return MW.biz.n[i];
+    let n = fakeNames.get(i);
+    if (!n) { const r = rng(i * 2654435761 + 97), set = NAME_B[MW.bizCat(i)] || ['Co.']; n = `${NAME_A[Math.floor(r() * NAME_A.length)]} ${set[Math.floor(r() * set.length)]}`; fakeNames.set(i, n); }
+    return n;
+  }
+  function rng(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let r = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
   }
 
   function render(now) {
@@ -1891,33 +2058,23 @@
     const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
     sky.addColorStop(0, '#6f9cc9'); sky.addColorStop(1, `rgb(${SKY.join(',')})`);
     ctx.fillStyle = sky; ctx.fillRect(-W, -H, W * 3, Math.max(0, horizon) + H);
-    ctx.fillStyle = 'rgb(84, 88, 96)'; ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
-
-    // sidewalk slabs (block footprints) near the player
-    for (const bl of blocks) {
-      const cx = (bl.x0 + bl.x1) / 2, cz = (bl.z0 + bl.z1) / 2;
-      const depth = Math.hypot(cx - cam.x, cz - cam.z);
-      if (depth > T.drawDistance) continue;
-      const pts = project([[bl.x0, bl.z0], [bl.x1, bl.z0], [bl.x1, bl.z1], [bl.x0, bl.z1]].map(([x, z]) => toCam(x, 0.15, z)));
-      if (pts) fillPoly(pts, shade([158, 156, 150], 1, depth));
-    }
-
-    const faces = [];
-    for (const b of buildings) {
-      const dx = b.x - cam.x, dz = b.z - cam.z;
-      if (Math.abs(dx) > T.drawDistance + 60 || Math.abs(dz) > T.drawDistance + 60) continue;
-      const depth = Math.hypot(dx, dz);
-      if (depth > T.drawDistance + 40) continue;
-      const c = toCam(b.x, 0, b.z);
-      if (c.z < -Math.max(b.hx, b.hz) - 2) continue; // fully behind
-      buildingFaces(faces, b, depth);
-    }
-    faces.sort((a, b) => b.depth - a.depth || b.sub - a.sub);
-    for (const f of faces) {
-      const pts = project(f.cp);
-      if (!pts) continue;
-      fillPoly(pts, f.color);
-      if (f.win) windows(f);
+    // below the horizon: the rivers, then land, parks and streets over them
+    ctx.fillStyle = rgbOf(MW.WATER_COL); ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
+    if (World.ready) {
+      const D = T.drawDistance;
+      drawGround(D);
+      drawStreets(Math.min(D, 380));
+      const faces = [];
+      buildingFaces(faces, D);
+      faces.sort((a, b) => b.depth - a.depth);
+      for (const f of faces) {
+        const pts = project(f.cp);
+        if (!pts) continue;
+        fillPoly(pts, f.color);
+        if (f.win) windows(f);
+      }
+      if (G.state === 'walk' && !Fight.active) drawSigns();
+      Perf.faces = faces.length;
     }
 
     if (G.state === 'walk') {
@@ -1950,7 +2107,7 @@
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
 
     if (w.next) line(`${w.next} in ${Math.round(w.dist)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
-    else line('Edge of the grid: turn around', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
+    else if (w.on === 'Off the street') line('Back to a street to keep going', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
 
     // the stop, how far, and what to do at the next corner
     if (Calls.active) {
@@ -2003,8 +2160,8 @@
 
   // north-up minimap of nearby blocks
   function minimap() {
-    const size = 104, m = 10, x0 = W - size - m, y0 = m;
-    const span = 700; // meters shown
+    const size = 112, m = 10, x0 = W - size - m, y0 = m;
+    const span = 600; // meters shown
     const k = size / span;
     const pos = playerPos();
     ctx.save();
@@ -2013,18 +2170,38 @@
     ctx.beginPath(); ctx.rect(x0, y0, size, size); ctx.clip();
     const sx = (x) => x0 + size / 2 + (x - pos.x) * k;
     const sy = (z) => y0 + size / 2 - (z - pos.z) * k;
-    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
-    for (let i = 0; i < NA; i++) { const x = sx(aveX(i)); ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + size); ctx.stroke(); }
-    for (let s = FIRST_ST; s <= LAST_ST; s++) { const y = sy(stZ(s)); ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + size, y); ctx.stroke(); }
+    // the real streets around you, avenues and big streets heavier
+    MW.edgesNear(pos.x, pos.z, span * 0.72, (e) => {
+      const c = MW.ECLS[e];
+      if (c > 7) return;
+      ctx.strokeStyle = c <= 3 ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.3)';
+      ctx.lineWidth = c <= 3 ? 1.6 : 1;
+      ctx.beginPath();
+      for (let q = MW.EP0[e]; q < MW.EP0[e + 1]; q++) { const X = sx(MW.PX[q]), Y = sy(MW.PZ[q]); if (q === MW.EP0[e]) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+      ctx.stroke();
+    });
+    // the route to your target
+    if (Nav.route && Nav.route.nodes.length > 1) {
+      ctx.strokeStyle = 'rgba(255, 207, 63, .9)'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      Nav.route.nodes.forEach((n, i) => { const X = sx(MW.NODEX[n]), Y = sy(MW.NODEZ[n]); if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+      ctx.stroke();
+    }
+    // subway stations
+    for (const st of MW.stations) {
+      if (Math.abs(st.x - pos.x) > span / 2 || Math.abs(st.z - pos.z) > span / 2) continue;
+      ctx.fillStyle = lineCol(st.lines[0]);
+      ctx.beginPath(); ctx.arc(sx(st.x), sy(st.z), 3, 0, Math.PI * 2); ctx.fill();
+    }
     if (G.dest) {
-      const dx = sx(aveX(G.dest.ai)), dy = sy(stZ(G.dest.st));
+      const dx = sx(G.dest.x), dy = sy(G.dest.z);
       ctx.fillStyle = '#ffcf3f';
       ctx.beginPath(); ctx.arc(Math.max(x0 + 4, Math.min(x0 + size - 4, dx)), Math.max(y0 + 4, Math.min(y0 + size - 4, dy)), 4, 0, Math.PI * 2); ctx.fill();
     }
     if (Calls.active) {
       const k = 3.5 + 1.5 * Math.sin(performance.now() / 150);
       ctx.strokeStyle = '#ff5a4f'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(Math.max(x0 + 6, Math.min(x0 + size - 6, sx(aveX(Calls.active.ai)))), Math.max(y0 + 6, Math.min(y0 + size - 6, sy(stZ(Calls.active.st)))), k + 2, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(Math.max(x0 + 6, Math.min(x0 + size - 6, sx(Calls.active.x))), Math.max(y0 + 6, Math.min(y0 + size - 6, sy(Calls.active.z))), k + 2, 0, Math.PI * 2); ctx.stroke();
     }
     for (const f of Fight.foes) {
       ctx.fillStyle = '#ff5a4f';
@@ -2041,8 +2218,18 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 \u00b7 levels and XP, subway, works for more body types';
+  const BUILD = '2026-10-15 \u00b7 all of Manhattan, street by street';
   $('buildStamp').textContent = `Build ${BUILD}`;
+  // the map loads in the background (about a second); the walk buttons wait for it
+  for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
+  const playLabel = $('playDemo').textContent;
+  $('playDemo').textContent = 'Loading Manhattan';
+  loadWorld().then(() => {
+    for (const id of ['playDemo', 'playCamera']) $(id).disabled = false;
+    $('playDemo').textContent = playLabel;
+  }).catch((err) => { World.error = err; $('playDemo').textContent = 'Could not load the map: ' + err.message; });
+  $('realNames').checked = realNames;
+  $('realNames').addEventListener('change', () => { realNames = $('realNames').checked; try { localStorage.setItem(REAL_KEY, realNames ? '1' : '0'); } catch (_) {} });
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
@@ -2546,7 +2733,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, STATIONS, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, crossingAhead, adviceAt, endWalk };
+  window.__game = { G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

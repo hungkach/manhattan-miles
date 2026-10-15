@@ -1,5 +1,5 @@
-// Build step: inline this repo's locked copy of rep-engine (engine/) into
-// src/index.html and write the playable page to index.html at the repo root,
+// Build step: inline this repo's locked copy of rep-engine (engine/) and the
+// Manhattan map (src/world.js, data/) into src/index.html and write the playable page to index.html at the repo root,
 // which GitHub Pages serves.
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -8,6 +8,18 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLACEHOLDER = '<!-- rep-engine:inline -->';
+const WORLD = '<!-- world:inline -->';
+
+// The map: src/world.js and the data it decodes (Mark's Vigil map: OpenStreetMap, MTA),
+// inlined as script tags the game reads at startup.
+export function worldScripts() {
+  const read = (f) => readFileSync(join(ROOT, f), 'utf8').trim();
+  const code = read('src/world.js'), world = read('data/world.b64'), biz = read('data/biz.json'), subway = read('data/subway.json');
+  for (const [name, text] of [['src/world.js', code], ['data/biz.json', biz], ['data/subway.json', subway]]) {
+    if (/<\/script|<!--|<script/i.test(text)) throw new Error(`${name} contains markup that would break inlining`);
+  }
+  return `<script>\n${code}\n</script>\n<script id="worldData" type="text/plain">${world}</script>\n<script id="bizData" type="application/json">${biz}</script>\n<script id="subwayData" type="application/json">${subway}</script>`;
+}
 
 export function engineSource() {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'engine', 'manifest.json'), 'utf8'));
@@ -25,7 +37,8 @@ export function build({ quiet = false } = {}) {
   if (engine.includes('</script')) throw new Error('engine source contains "</script", which would break inlining');
   const html = readFileSync(join(ROOT, 'src', 'index.html'), 'utf8');
   if (!html.includes(PLACEHOLDER)) throw new Error(`src/index.html is missing the ${PLACEHOLDER} placeholder`);
-  const out = html.replace(PLACEHOLDER, () => `<script>\n${engine}</script>`);
+  if (!html.includes(WORLD)) throw new Error(`src/index.html is missing the ${WORLD} placeholder`);
+  const out = html.replace(PLACEHOLDER, () => `<script>\n${engine}</script>`).replace(WORLD, () => worldScripts());
   const outPath = join(ROOT, 'index.html');
   writeFileSync(outPath, out);
   if (!quiet) console.log(`built index.html (${(out.length / 1024).toFixed(1)} KB)`);
