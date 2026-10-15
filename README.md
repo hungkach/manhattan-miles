@@ -5,7 +5,7 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 ## Now playable (touch controls)
 
 - Grid: 12th Ave to 1st Ave, 14th St to 59th St, at Manhattan's real block proportions (about 80 m uptown blocks, 180 to 280 m crosstown blocks). Buildings are generated, taller in Midtown.
-- March to walk, high knees (or cadence over 150) to run, turn your shoulders to drift across the sidewalk (touch: drag the right zone).
+- March to walk, high knees (or cadence over 150) to run, turn your shoulders to look left or right; walking while turned veers you across the sidewalk (touch: drag the right zone). The pace readout under the timer shows walking or running and your steps per minute: marching faster walks faster (0.6 to 1.25 times walking pace), and high knees or 150+ steps per minute runs at 2.5 times walking pace.
 - Point left or right any time on a block; the turn happens at the next corner. At the grid's edge you stop until you point.
 - Both hands overhead turns you around.
 - Walk to destinations at real intersections (Herald Square, Times Square, Grand Central, Columbus Circle and more). HUD shows the street sign, next cross street, distance to the corner, direction to the destination and a minimap.
@@ -14,13 +14,15 @@ First-person walking game on Midtown's grid. Play: https://hungkach.github.io/ma
 
 ## Camera mode
 
+Pick a camera setup on the title screen: phone or tablet, upright or sideways (auto-picked, remembered). Standing the device the other way switches to the matching setup. Each setup has its own placement line and distance. A TV setup (back wide camera, screen mirrored to the TV) is listed but waits on an engine preset that opens the back camera.
+
 Every camera session starts with a one minute setup, like Homecoming Hero's:
 
 1. Framing check and a 3 second stand-still baseline, on the full camera view with the engine's stick figure on top.
 2. Warm-up, two rounds: march (8 s, then 6 s), turn your shoulders left, turn right. Each move shows big words, one line on how to do it, a timer bar, a looping figure (mirrored, so "left" moves to your left) and live feedback (steps seen, turn percent). Anything still missed gets a short third round, then the walk starts by itself.
 3. If round 1 sees no marching, knee lift switches from 3D world landmarks to the 2D image for the rest of the warm-up, and the choice that worked is remembered. The 2D image only works with the phone low (about knee height).
 
-Everything is spoken, since the screen is hard to read from 4 ft: each move, a count of detected steps (one, two, three, got it), a nudge when nothing registers (knees higher, turn further), "step back" whenever the camera loses your knees (also during the walk), and a full result at the end.
+Spoken instructions wait their turn and leave 2 s between lines, so you have time to move the phone or step back; a move's timer starts once its instruction has been said. Everything is spoken, since the screen is hard to read from 4 ft: each move, a count of detected steps (one, two, three, got it), a nudge when nothing registers (knees higher, turn further), "step back" whenever the camera loses your knees (also during the walk), and a full result at the end.
 
 The warm-up records up to 28 s of camera landmarks. After the walk, "Save warm-up clip" downloads it so the engine can be tuned on real data. During the walk, a three-finger tap shows the stick figure again.
 

@@ -12,16 +12,19 @@
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
-  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 172px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
+  #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 190px); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
-  .screen { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(6, 9, 15, .74); }
+  .screen { position: fixed; inset: 0; z-index: 5; display: flex; align-items: safe center; justify-content: center; overflow-y: auto; padding: 20px; background: rgba(6, 9, 15, .74); }
   .screen[hidden] { display: none; }
   .card { width: min(440px, 100%); background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 22px 20px; text-align: center; }
   .card h1 { margin: 0 0 4px; font-size: 32px; color: var(--accent); }
   .card h2 { margin: 0 0 8px; font-size: 24px; }
   .card p { margin: 6px 0; color: var(--muted); }
   .card ul { text-align: left; margin: 10px 0 14px; padding-left: 20px; color: var(--muted); }
-  .btns { display: grid; gap: 10px; margin-top: 14px; }
+  .pick { display: grid; gap: 6px; text-align: left; font: 700 13px system-ui, sans-serif; color: var(--muted); margin-top: 6px; }
+  .pick select { width: 100%; min-width: 0; font: 600 17px system-ui, sans-serif; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.2); background: #1a2232; color: var(--ink); }
+  .card p.hint { margin: 0; font-size: 14px; text-align: left; }
+  .btns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 14px; }
   button.main { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; color: #231a00; background: var(--accent); }
   button.secondary { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; background: #2a3344; color: var(--ink); }
   table.stats { width: 100%; border-collapse: collapse; margin: 10px 0; font-variant-numeric: tabular-nums; }
@@ -46,6 +49,13 @@
   .wlive { font: 800 clamp(18px, 3vh, 28px) system-ui, sans-serif; min-height: 1.2em; font-variant-numeric: tabular-nums; }
   .wbar { height: 8px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; margin-top: 6px; }
   .wbar i { display: block; height: 100%; background: var(--accent); transform-origin: left center; }
+  @media (orientation: landscape) {
+    :root { --warmW: min(44vw, 440px); }
+    body.setup #pip, #skel { bottom: 0; right: var(--warmW); width: calc(100% - var(--warmW)); height: 100%; }
+    #warm { left: auto; top: calc(env(safe-area-inset-top) + 56px); bottom: 8px; right: 8px; width: calc(var(--warmW) - 16px); height: auto; grid-template-columns: 1fr; grid-template-rows: auto 1fr; justify-items: center; align-items: start; }
+    #fig { height: 34vh; }
+    #warm .wtext { width: 100%; }
+  }
   #setupCancel { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 10px); z-index: 5; font: 700 14px system-ui, sans-serif; padding: 8px 12px; min-height: 40px; border-radius: 10px; border: 0; background: rgba(0,0,0,.6); color: #fff; }
   #setupCancel[hidden] { display: none; }
   #note { position: fixed; left: 50%; bottom: calc(52% + 10px); transform: translateX(-50%); z-index: 4; background: rgba(0,0,0,.62); padding: 6px 12px; border-radius: 10px; font-size: 13px; color: var(--muted); max-width: 92vw; text-align: center; pointer-events: none; }
@@ -77,14 +87,24 @@
     <h1>Manhattan Miles</h1>
     <p>Midtown, 14th to 59th Street, avenue by avenue. Walk it for real.</p>
     <ul>
-      <li>March in place to walk, high knees to run</li>
+      <li>March in place to walk; march faster to walk faster, high knees to run</li>
       <li>Point left or right before a corner to turn there</li>
-      <li>Turn your shoulders to drift across the sidewalk</li>
+      <li>Turn your shoulders to look and veer across the sidewalk</li>
       <li>Both hands overhead to turn around</li>
     </ul>
     <p>Walk to each destination. Aim for 10 to 20 minutes; marching is easy on tired days, high knees between corners makes it a real session.</p>
     <div class="btns">
       <button id="playDemo" class="main">Walk with touch controls</button>
+      <label class="pick">Camera setup
+        <select id="mode">
+          <option value="phone_upright">Phone upright</option>
+          <option value="phone_sideways">Phone sideways</option>
+          <option value="tablet_upright">Tablet upright</option>
+          <option value="tablet_sideways">Tablet sideways</option>
+          <option value="tv" disabled>TV, back camera (next engine update)</option>
+        </select>
+      </label>
+      <p id="modeHint" class="hint"></p>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
   </div>
@@ -113,7 +133,9 @@
     runMps: 3.5,           // high knees pace
     speedScale: 3,         // game moves 3x real pace so blocks pass at a fun clip
     runCadence: 150,
-    sidewalkSlide: 1.6,    // meters of turn slide either side of the sidewalk center (keeps you between curb and facade)
+    sidewalkSlide: 1.6,    // meters either side of the sidewalk center you can veer (keeps you between curb and facade)
+    lookMax: 0.6,          // radians the view turns at full torso turn (about 35 degrees)
+    veer: 0.35,            // share of walking speed that carries you sideways while you face off the path
     eyeHeight: 1.7,
     drawDistance: 520,
     arriveRadius: 30,
@@ -191,7 +213,7 @@
   // ---------- player on sidewalk rails ----------
   // dir: 0 north (+z), 1 east (+x), 2 south (-z), 3 west (-x)
   const DIRS = [{ x: 0, z: 1 }, { x: 1, z: 0 }, { x: 0, z: -1 }, { x: -1, z: 0 }];
-  const P = { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, speed: 0, yaw: Math.PI / 2, running: false };
+  const P = { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, look: 0, speed: 0, yaw: Math.PI / 2, running: false, cadence: 0 };
   let queued = null; // { side: 'left' | 'right', at: ms }
 
   const nextNode = (ai, st, dir) => {
@@ -241,7 +263,8 @@
   }
 
   // ---------- engine ----------
-  const engine = RE.create({ video: $('pip'), preset: 'living_room' });
+  // headless: the engine stays quiet and the game voices setup prompts itself, with 2 s gaps (see say)
+  const engine = RE.create({ video: $('pip'), preset: 'living_room', headless: true });
   engine.on('step', () => { if (G.state === 'walk') G.steps++; });
   engine.on('run_start', () => { P.running = true; });
   engine.on('run_end', () => { P.running = false; });
@@ -303,7 +326,8 @@
     P.speed = m.speed * T.speedScale;
     if (P.running && P.speed > 1) G.runMs += dt * 1000;
     G.peakCadence = Math.max(G.peakCadence, engine.signals().cadence_spm || 0);
-    P.lateral += (m.lateral * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
+    P.cadence = engine.signals().cadence_spm || 0;
+    steer(m.lateral, dt); // on rails the engine's lateral is the torso turn, -1..1
 
     const want = (L.baseDir + Math.round((m.facing - L.baseFacing) / 90) + 400) % 4;
     const d = (want - P.dir + 4) % 4;
@@ -337,12 +361,19 @@
     P.speed += (target - P.speed) * Math.min(1, dt * 3);
     if (running && P.speed > 1) G.runMs += dt * 1000;
 
-    // torso turn slides you across the sidewalk; the engine deadzones it and scales it to -1..1
-    const turn = s.turn || 0;
-    P.lateral += (turn * T.sidewalkSlide - P.lateral) * Math.min(1, dt * 4);
+    P.cadence = cadence;
+    steer(s.turn || 0, dt);
 
     advance(P.speed * dt, now);
     easeYaw(dt);
+  }
+
+  // Torso turn (deadzoned by the engine, -1..1) turns your view, and walking while you face off the
+  // path veers you across the sidewalk the way a diagonal step would. Rails still own the street.
+  function steer(turn, dt) {
+    P.look += (turn * T.lookMax - P.look) * Math.min(1, dt * 5);
+    const drift = P.speed * Math.sin(P.look) * T.veer * dt;
+    P.lateral = Math.max(-T.sidewalkSlide, Math.min(T.sidewalkSlide, P.lateral + drift));
   }
 
   // walk the rails: along the edge, through corners, taking a queued turn there
@@ -466,7 +497,7 @@
     const pos = playerPos();
     const bob = G.state === 'walk' ? Math.sin(G.meters * 1.6) * 0.04 * Math.min(1, P.speed / 4) : 0;
     const pitch = -0.12; // look slightly up at the skyline
-    cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.yaw), sy: Math.sin(P.yaw), cp: Math.cos(pitch), sp: Math.sin(pitch) };
+    cam = { x: pos.x, y: T.eyeHeight + bob, z: pos.z, cy: Math.cos(P.yaw + P.look), sy: Math.sin(P.yaw + P.look), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
     const horizon = H / 2 - F * (cam.sp / cam.cp);
     const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
@@ -542,6 +573,9 @@
     const miles = G.meters / 1609.34;
     line(`${Math.floor(mins)}:${String(Math.floor((mins % 1) * 60)).padStart(2, '0')}`, W - 14, top + 120, 'right', '800 18px system-ui, sans-serif');
     line(`${miles.toFixed(2)} mi · ${G.steps} steps`, W - 14, top + 142, 'right', '600 13px system-ui, sans-serif');
+    // pace: marching faster walks faster, high knees run
+    const pace = P.speed < 0.3 ? 'Stopped' : P.running || P.cadence >= T.runCadence ? 'Running' : 'Walking';
+    line(P.cadence > 0 ? `${pace} · ${Math.round(P.cadence)} spm` : pace, W - 14, top + 160, 'right', '700 13px system-ui, sans-serif', pace === 'Running' ? '#ffcf3f' : '#fff');
 
     if (now < G.bannerUntil) {
       ctx.font = '800 22px system-ui, sans-serif';
@@ -576,7 +610,7 @@
     // player arrow
     const px = sx(pos.x), py = sy(pos.z);
     ctx.translate(px, py);
-    ctx.rotate(P.yaw);
+    ctx.rotate(P.yaw + P.look);
     ctx.fillStyle = '#5be37c';
     ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(5, 5); ctx.lineTo(-5, 5); ctx.closePath(); ctx.fill();
     ctx.restore();
@@ -588,7 +622,7 @@
   }
 
   function startWalk() {
-    Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, speed: 0, yaw: Math.PI / 2, running: false });
+    Object.assign(P, { ai: 4, st: 34, dir: 1, t: 0, lateral: 0, look: 0, speed: 0, yaw: Math.PI / 2, running: false, cadence: 0 });
     queued = null;
     if (ENGINE_LOCO) { L.facing = L.baseFacing = engine.locomotion().facing; L.baseDir = P.dir; }
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0 });
@@ -630,7 +664,7 @@
   $('playDemo').addEventListener('click', () => {
     enableTouch();
     startWalk();
-    note('Tap the left zone to walk, double-tap and hold to run. Drag the right zone to drift. Point before a corner to turn there.', 7000);
+    note('Tap the left zone to walk, double-tap and hold to run. Drag the right zone to look and veer. Point before a corner to turn there.', 7000);
   });
   // ---------- camera setup and warm-up ----------
   // Every camera session: the engine's framing check and stand-still baseline (no move test, so a
@@ -651,7 +685,7 @@
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
     move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
   ];
-  const Warm = { plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null, overlay: null };
+  const Warm = { setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null, overlay: null };
 
   try { const v = localStorage.getItem(LIFT_KEY); if (v === 'image' || v === 'auto') engine.cfg.march.liftSource = v; } catch (_) {}
 
@@ -661,18 +695,65 @@
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
     try { speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (_) {}
   }
-  // interrupt: false skips the line while something else is being said
-  function say(text, interrupt = true) {
-    const synth = window.speechSynthesis;
-    if (!synth || typeof SpeechSynthesisUtterance !== 'function') return;
+  // One queue, never talking over itself. Kinds:
+  //   instruction  waits its turn, then starts 2 s after the last line ended (time to move the phone)
+  //   prompt       an instruction from the framing check: a newer one replaces one still waiting,
+  //                and the same prompt is not repeated within 6 s
+  //   confirm      waits its turn, no gap ("got it")
+  //   feedback     now if nothing is said or waiting, otherwise dropped (step counts, nudges)
+  const Voice = { q: [], endAt: -Infinity, estEnd: 0, lastText: '', lastAt: -Infinity };
+  const VOICE_GAP = 2000;
+  const hasVoice = () => !!window.speechSynthesis && typeof SpeechSynthesisUtterance === 'function';
+  function speaking(now) {
+    let b = now < Voice.estEnd;
+    try { b = b || speechSynthesis.speaking || speechSynthesis.pending; } catch (_) {}
+    return b;
+  }
+  function say(text, kind = 'instruction') {
+    if (!hasVoice()) return;
+    const now = performance.now();
+    if (kind === 'feedback') { if (!speaking(now) && !Voice.q.length) speakNow(text, now); return; }
+    if (kind === 'prompt') {
+      if (text === Voice.lastText && now - Voice.lastAt < 6000) return;
+      Voice.q = Voice.q.filter((l) => l.kind !== 'prompt');
+    }
+    Voice.q.push({ text, kind });
+    voiceTick(now);
+  }
+  function voiceTick(now) {
+    if (!hasVoice()) { Voice.q.length = 0; return; }
+    if (speaking(now)) { Voice.endAt = now; return; }
+    if (!Voice.q.length) return;
+    const next = Voice.q[0];
+    if (next.kind !== 'confirm' && now - Voice.endAt < VOICE_GAP) return;
+    Voice.q.shift();
+    speakNow(next.text, now);
+  }
+  function speakNow(text, now) {
     try {
-      if (!interrupt && (synth.speaking || synth.pending)) return;
-      synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.05;
-      synth.speak(u);
+      speechSynthesis.speak(u);
+      // fallback for browsers that report speaking late: about 65 ms a character
+      Voice.estEnd = now + 300 + 65 * text.length;
+      Voice.endAt = Voice.estEnd;
+      Voice.lastText = text;
+      Voice.lastAt = now;
     } catch (_) {}
   }
+  const voiceBusy = () => Voice.q.length > 0 || speaking(performance.now());
+
+  // the framing check and baseline, spoken (the engine is headless, so it stays quiet)
+  let calPrompt = '';
+  engine.on('calibration', (st) => {
+    if (G.state !== 'setup' || Warm.i >= 0 || !st.prompt || st.prompt === calPrompt) return;
+    calPrompt = st.prompt;
+    const dist = Warm.setup ? Warm.setup.dist : 'about 4 feet';
+    let line = st.state === 'baseline' ? 'Good. Hold still.' : st.state === 'done' ? '' : st.prompt;
+    if (st.problem === 'step_back') line = `Step back. About ${dist.replace(/^about /, '')} from the camera, knees in view.`;
+    $('wLive').textContent = st.state === 'done' ? '' : st.prompt;
+    if (line) say(line, 'prompt');
+  });
 
   // count steps aloud up to "got it", so you hear right away whether marching registers
   const COUNT = ['', 'One', 'Two', 'Three'];
@@ -681,8 +762,8 @@
       const c = Warm.plan[Warm.i];
       if (G.state !== 'setup' || !c || c.event !== ev) return;
       Warm.hits++;
-      if (Warm.hits === c.need) say('Got it');
-      else if (Warm.hits < c.need) say(COUNT[Warm.hits] || String(Warm.hits));
+      if (Warm.hits === c.need) say('Got it', 'confirm');
+      else if (Warm.hits < c.need) say(COUNT[Warm.hits] || String(Warm.hits), 'feedback');
     });
   }
   // knees or shoulders out of view pause the detectors: say so, in the warm-up and on the walk
@@ -694,11 +775,52 @@
     lowSaidAt = t;
     Warm.lowCount++;
     const knees = (e.missing || []).some((n) => n.includes('knee'));
-    say(knees ? 'Step back. I can\'t see your knees.' : 'Face the camera. I lost you.');
+    say(knees ? 'Step back. I can\'t see your knees.' : 'Face the camera. I lost you.', 'prompt');
     if (G.state === 'walk') banner(knees ? 'Step back: knees out of view' : 'Face the camera', 2500);
   });
 
+  // ---------- setup modes ----------
+  // Front camera, knees-up framing. Turning the device the other way switches to the matching mode,
+  // so setup never blocks on orientation. The TV mode (back wide camera, screen mirrored to the TV)
+  // waits on an engine preset that opens the back camera.
+  const SETUPS = {
+    phone_upright: { label: 'Phone upright', device: 'phone', orient: 'portrait', dist: 'about 4 feet', place: 'Stand the phone upright at about waist height, screen facing you.' },
+    phone_sideways: { label: 'Phone sideways', device: 'phone', orient: 'landscape', dist: '4 to 5 feet', place: 'Stand the phone sideways at about waist height, screen facing you.' },
+    tablet_upright: { label: 'Tablet upright', device: 'tablet', orient: 'portrait', dist: 'about 4 feet', place: 'Stand the tablet upright at about waist height, screen facing you.' },
+    tablet_sideways: { label: 'Tablet sideways', device: 'tablet', orient: 'landscape', dist: '3 to 4 feet', place: 'Stand the tablet sideways at about waist height, screen facing you.' },
+  };
+  const MODE_KEY = 'manhattan-miles:setup';
+  function detectDevice() {
+    const ua = navigator.userAgent || '', touch = navigator.maxTouchPoints || 0;
+    if (/iPad/.test(ua) || (/Macintosh/.test(ua) && touch > 1) || (/Android/.test(ua) && !/Mobile/.test(ua))) return 'tablet';
+    return 'phone';
+  }
+  const screenOrient = () => (innerWidth > innerHeight ? 'landscape' : 'portrait');
+  function pickSetup() {
+    let saved = null;
+    try { saved = localStorage.getItem(MODE_KEY); } catch (_) {}
+    if (SETUPS[saved]) return saved;
+    return `${detectDevice()}_${screenOrient() === 'landscape' ? 'sideways' : 'upright'}`;
+  }
+  // the chosen mode, turned to match how the device is standing right now
+  function activeSetup() {
+    const m = SETUPS[$('mode').value] || SETUPS.phone_upright;
+    const key = `${m.device}_${screenOrient() === 'landscape' ? 'sideways' : 'upright'}`;
+    return Object.assign({ key }, SETUPS[key]);
+  }
+  function showModeHint() {
+    const m = SETUPS[$('mode').value];
+    $('modeHint').textContent = m ? `${m.place} Stand ${m.dist} away, knees in view.` : '';
+  }
+  $('mode').value = pickSetup();
+  showModeHint();
+  $('mode').addEventListener('change', () => {
+    showModeHint();
+    try { localStorage.setItem(MODE_KEY, $('mode').value); } catch (_) {}
+  });
+
   function enterSetup() {
+    calPrompt = '';
     G.state = 'setup';
     document.body.classList.add('setup');
     $('pip').style.display = 'block';
@@ -728,11 +850,21 @@
       startWalk();
       return;
     }
+    // framing card: where to put the device, and what the framing check wants right now
+    const m = Warm.setup = activeSetup();
+    $('warm').hidden = false;
+    $('wStep').textContent = m.label;
+    $('wBig').textContent = 'Get in frame';
+    fitText($('wBig'));
+    $('wSmall').textContent = `${m.place} Stand ${m.dist} away.`;
+    $('wLive').textContent = '';
+    $('wFill').style.transform = 'scaleX(0)';
+    drawFig($('fig'), '', 0);
+    say(`${m.label}. ${m.place} Then stand ${m.dist} away, so your knees are in view.`);
     try { await engine.calibrate('living_room', { moveTest: false }); } catch (_) { return; } // cancelled
     if (G.state !== 'setup') return;
     Object.assign(Warm, { plan: warmPlan(), seen: {}, extra: false, done: false, switched: false, lowCount: 0, clip: null });
-    engine.start_recording({ game: 'manhattan-miles', warmup: true, liftSource: engine.cfg.march.liftSource });
-    $('warm').hidden = false;
+    engine.start_recording({ game: 'manhattan-miles', warmup: true, setup: m.key, liftSource: engine.cfg.march.liftSource });
     setStep(0);
   }
 
@@ -759,7 +891,8 @@
   function updateWarm(dt, now) {
     if (G.state !== 'setup' || Warm.i < 0) return; // Warm.i < 0 while the engine checks framing
     const c = Warm.plan[Warm.i];
-    Warm.left -= dt;
+    // a move's clock starts once its instruction has been said, so a waiting line never eats into it
+    if (!Voice.q.length) Warm.left -= dt;
     // stop the clip before the recorder's own 30 s cutoff: its recording_done event carries the whole
     // clip, and the debug overlay stalls trying to print it in the event log
     if (engine.is_recording() && engine.recording_ms() > 28000) Warm.clip = engine.stop_recording();
@@ -769,11 +902,11 @@
     // nothing registered halfway through a move: one spoken nudge
     if (c.event && !Warm.coached && Warm.hits === 0 && Warm.left < Warm.len * 0.5) {
       Warm.coached = true;
-      say(c.id === 'march' ? 'Knees higher.' : 'Turn further.', false);
+      say(c.id === 'march' ? 'Knees higher.' : 'Turn further.', 'feedback');
     }
     if (Warm.left > 0) return;
     // let the closing line finish before the walk starts
-    if (c.id === 'done' && window.speechSynthesis && speechSynthesis.speaking && Warm.left > -8) return;
+    if (c.id === 'done' && voiceBusy() && Warm.left > -12) return;
 
     if (c.event) {
       const ok = Warm.hits >= c.need;
@@ -836,7 +969,7 @@
     else yaw = 0.9 * hold;
     x.save();
     x.scale(Wd / 240, Ht / 320);
-    const cx = 120, ground = 296, hip = { x: cx, y: 176 - lift }, neck = { x: cx + side * 6 * yaw, y: hip.y - 70 };
+    const cx = 120, ground = 296, hip = { x: cx, y: 176 - lift }, neck = { x: cx, y: hip.y - 70 }; // turns pivot in place, never slide
     const half = 24 * Math.cos(yaw);
     // the shoulder on the turning side goes back (dimmer), the other comes forward
     const sh = (k) => ({ x: neck.x + k * half, y: neck.y });
@@ -890,6 +1023,7 @@
     last = now;
     update(dt, now);
     updateWarm(dt, now);
+    voiceTick(now);
     render(now);
     requestAnimationFrame(frame);
   }
