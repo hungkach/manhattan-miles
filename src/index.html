@@ -25,6 +25,7 @@
   .pick { display: grid; gap: 6px; text-align: left; font: 700 13px system-ui, sans-serif; color: var(--muted); margin-top: 6px; }
   .pick select { width: 100%; min-width: 0; font: 600 17px system-ui, sans-serif; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.2); background: #1a2232; color: var(--ink); }
   .card p.hint { margin: 0; font-size: 14px; text-align: left; }
+  .card p.stamp { margin: 12px 0 0; font-size: 12px; opacity: .6; }
   .btns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 14px; }
   button.main { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; color: #231a00; background: var(--accent); }
   button.secondary { font: 700 17px system-ui, sans-serif; border: 0; border-radius: 12px; padding: 14px 16px; min-height: 50px; cursor: pointer; background: #2a3344; color: var(--ink); }
@@ -109,6 +110,7 @@
       <p id="modeHint" class="hint"></p>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
+    <p class="stamp" id="buildStamp"></p>
   </div>
 </div>
 
@@ -344,14 +346,15 @@
   // drive up for the double leg and strike down from the top. Knock them out, or escape with 3 s
   // of high knees. Fights run 20 to 40 s; the walking between is the active recovery.
   const FT = {
-    firstAfterS: 45, everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
+    firstAhead: 32, // m: the first opponent waits about 10 marching steps ahead of the start (they walk to meet you)
+    everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
     rangeIn: 1.9, rangeOut: 3.4, pressSteps: 3,
     hp: [12, 16], playerHp: 10,
     windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, outMs: 4500,
     damage: { jab: 0.8, cross: 1.1, hook: 1.2, uppercut: 1.2, down: 1.0, down_strike: 1.0 },
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
   };
-  const Fight = { foes: [], active: null, waitS: FT.firstAfterS, stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
+  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false };
   const freshStats = () => ({ won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, takedowns: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -845,9 +848,9 @@
       ctx.font = '800 22px system-ui, sans-serif';
       const tw = ctx.measureText(G.banner).width;
       ctx.fillStyle = 'rgba(16, 107, 60, .92)';
-      ctx.fillRect(W / 2 - tw / 2 - 16, H * 0.3, tw + 32, 44);
+      ctx.fillRect(W / 2 - tw / 2 - 16, H * 0.22, tw + 32, 44);
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-      ctx.fillText(G.banner, W / 2, H * 0.3 + 10);
+      ctx.fillText(G.banner, W / 2, H * 0.22 + 10);
     }
   }
 
@@ -885,6 +888,9 @@
   }
 
   // ---------- flow ----------
+  // shown on the title screen, so a cached old page is easy to spot; update with each push
+  const BUILD = '2026-10-15 \u00b7 first opponent 10 steps ahead';
+  $('buildStamp').textContent = `Build ${BUILD}`;
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around'],
     fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up'],
@@ -906,7 +912,8 @@
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0 });
-    Object.assign(Fight, { foes: [], active: null, waitS: FT.firstAfterS, stats: freshStats(), hp: FT.playerHp });
+    Object.assign(Fight, { foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp });
+    spawnFoes(FT.firstAhead);
     if (engine.mode() === 'combat') engine.exit_combat();
     pickDestination();
     show(null);
