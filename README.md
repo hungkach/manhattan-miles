@@ -15,6 +15,9 @@ First-person walking and fighting fitness game on all of Manhattan, street by st
 - Subway: at any of Manhattan's 125 stations the phone offers the subway, with the real lines. Pick a station (the one nearest your stop is first), march in place on the platform while you wait, then ride: the ride is logged rest. Train times are rough for now; real schedules come with the real map.
 - Levels: XP for active minutes, stops, intervals, fights, takedowns, guard breaks, police calls and saying hi. Each level brings a title (Tourist, Commuter, Bodega Regular ... King of New York) and tougher opponents (more health, quicker punches, pairs sooner). Progress and lifetime totals are saved on the device.
 - The city is busy: crowds on the sidewalks (some texting), chatter you overhear, street vendors on corners, cars and yellow cabs that stop and honk if you stand in the road.
+- The route to your next stop is a blue ribbon down the street.
+- Two opponents tag team, one at a time. A beaten opponent may run: chase them down with high knees.
+- The phone has a combat tutorial (it also runs once after your first camera warm-up).
 - For testing, the phone has Teleport (any landmark) and Spawn opponent.
 - Pedestrians walk the sidewalks. Wave your right hand at someone a few meters ahead (touch: the Wave button) and they stop, wave back and say something.
 - Movement runs at 3x real walking pace so blocks pass at a game pace; distance in the summary is city distance.

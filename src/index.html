@@ -143,7 +143,7 @@
     <h2>Walk complete</h2>
     <table class="stats" id="sumStats"></table>
     <div class="payoff" id="payoff"></div>
-    <div class="btns"><button id="again" class="main">Walk again</button><button id="saveClip" class="secondary" hidden>Save warm-up clip</button><button id="saveFight" class="secondary" hidden>Save fight clip</button></div>
+    <div class="btns"><button id="again" class="main">Walk again</button><button id="saveClip" class="secondary" hidden>Save warm-up clip</button><button id="saveFight" class="secondary" hidden>Save fight clip</button><button id="saveTutor" class="secondary" hidden>Save tutorial clip</button></div>
   </div>
 </div>
 
@@ -443,7 +443,9 @@
 
   // ---------- engine ----------
   // speech: false keeps the engine quiet; the game voices setup prompts itself, with 2 s gaps (see say)
-  const engine = RE.create({ video: $('pip'), preset: 'living_room', speech: false });
+  // requireJump (engine 0.7.0, Mark 10/16): the squat is the level change, a jump off it is the
+  // takedown. The recorder runs up to 2 minutes so the combat tutorial can be saved whole.
+  const engine = RE.create({ video: $('pip'), preset: 'living_room', speech: false, config: { combat: { fight: { requireJump: true } }, recorder: { maxMs: 125000 } } });
   engine.on('step', () => { if (G.state === 'walk') G.steps++; });
   engine.on('run_start', () => { P.running = true; });
   engine.on('run_end', () => { P.running = false; });
@@ -824,7 +826,7 @@
   // An RPG layer: XP for active minutes, stops, intervals, fights, takedowns, guard breaks, police
   // calls and saying hi. Levels raise the opponents (more health, quicker punches, pairs sooner)
   // and give a title. Saved in localStorage with lifetime totals.
-  const XP = { minute: 10, stop: 50, interval: 30, win: 60, takedown: 15, guardBreak: 10, call: 80, wave: 2 };
+  const XP = { minute: 10, stop: 50, interval: 30, win: 60, takedown: 15, guardBreak: 10, call: 80, wave: 2, caught: 40 };
   const TITLES = ['Tourist', 'Commuter', 'Bodega Regular', 'Block Captain', 'Neighborhood Watch', 'Express Train', 'Borough Hero', 'Midtown Myth', 'The Mayor (unofficially)', 'King of New York'];
   const levelFor = (xp) => Math.floor(Math.sqrt(xp / 250)) + 1; // 250, 1000, 2250, 4000 ...
   const xpFor = (lvl) => 250 * (lvl - 1) * (lvl - 1);
@@ -858,6 +860,7 @@
       { id: 'radio', label: 'Police radio' },
       { id: 'repeat', label: 'Repeat directions' },
       { id: 'skip', label: 'Skip this stop' },
+      { id: 'tutor', label: 'Combat tutorial' },
       { id: 'teleport', label: 'Teleport (test)' },
       { id: 'spawn', label: 'Spawn opponent (test)' },
       { id: 'end', label: 'End session' },
@@ -869,7 +872,7 @@
     const yaw = sp.dir ? angleOf(sp.dir) : P.yaw;
     Object.assign(P, { x: sp.x, z: sp.z, yaw, view: yaw, speed: 0, cell: null });
     engine.set_facing((yaw * 180) / Math.PI);
-    Fight.foes = []; Fight.people = []; Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
+    Fight.foes = []; Fight.people = []; Fight.chase = null; Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
     Peds.list = []; Traffic.cars = []; Vendors.list = [];
     Nav.at = -Infinity; G.cueKey = '';
     say(`Teleported to ${pl.name}.`, 'confirm');
@@ -913,6 +916,7 @@
     else if (it.id === 'end') endWalk();
     else if (it.id === 'tp') teleport(it.place, performance.now());
     else if (it.id === 'spawn') spawnFoes(14);
+    else if (it.id === 'tutor') startTutor(performance.now());
   }
   function phoneTick(now) {
     engine.set_facing(Phone.facing); // the turn picks; it does not steer
@@ -1048,25 +1052,37 @@
     // in front of your shoulders, that ends over their head or body on screen lands. One hit per
     // punch: the hand re-arms once it comes back `rearm` from its furthest point. An engine strike
     // from the same hand within pairMs is the same punch.
-    hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3, gnpSpeed: 2.0, gnpRearm: 1.0, gnpExtend: 1.2 },
+    hit: { speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3, gnpSpeed: 2.0, gnpRearm: 1.0, gnpExtend: 1.2, upperFrom: 0.45, straightAngle: 150 },
     // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
     // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
     // timed into their wind-up, a hurt or a broken guard earns a longer ground and pound.
-    td: { braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 1.3, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
+    td: { braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 1.5, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
     // guard breaks: blocked punches wear the guard down (guardHp, raw damage); at 0 the hands drop
     // for brokenMs and take openBonus damage. It refills by regen a second when they are not covering.
     guard: { hp: 4, regen: 0.4, brokenMs: 1600 },
+    // your guard (10/16): each block costs it (a hook more); at 0 it breaks and blocks nothing for
+    // brokenMs. It comes back by regen a second while your hands are not taking punches.
+    // two opponents tag team (Mark 10/16, the old kung fu movie rule: one at a time): the other
+    // circles at sideM and subs in when the one in front gets their guard broken (once it runs
+    // out), gets up from a takedown, or every everyS. Taking one down with the other there is
+    // risky: the ground and pound is cut to gnpCut and the other hits you every backHitMs.
+    tag: { sideM: 3.4, everyS: [14, 22], gnpCut: 0.5, backHitMs: 1500 },
+    // a beaten opponent who runs can be chased down (high knees): they run at speed (m/s), slowing
+    // by tire a second; catch them within catchM before they get loseM away or ms runs out
+    chase: { speed: 7.5, tire: 0.12, minSpeed: 4.5, catchM: 2.6, loseM: 80, ms: 25000 },
+    myGuard: { hp: 5, straight: 1, hook: 1.5, regen: 0.6, brokenMs: 1400 },
+    oneHand: false,
     // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
     fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
     // feedback: punches within comboMs of each other count as a combo; a hit of bigDmg or more
     // flashes the screen and gets an "ooh" from the crowd; a block flashes your shield blockMs
     fx: { comboMs: 1400, bigDmg: 1.4, shakeMs: 220, shakePx: 9, blockMs: 520 },
   };
-  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
+  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, guardHp: 5, guardBrokenUntil: -Infinity, guardK: 0, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
     armTilt: 0, impacts: [], sparks: [], pops: [], combo: { n: 0, last: -Infinity }, shake: null, flashAt: -Infinity, block: null, clip: null, recording: false, people: [] };
-  const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0 });
+  const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0, caught: 0, got_away: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
@@ -1085,7 +1101,9 @@
       Fight.impacts.push({ x: at.x, y: at.y, t: now, power: Math.max(power, dmg / 1.2) });
       const n = big ? 18 : 10;
       for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = rand(120, big ? 520 : 340); Fight.sparks.push({ x: at.x, y: at.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, t: now, life: rand(220, 420), hot: Math.random() < 0.5 }); }
-      Fight.pops.push({ x: at.x, y: at.y, t: now, text: `${KIND_NAME[kind] || 'Hit'} ${Math.max(1, Math.round(dmg * 10))}`, big });
+      const pop = { x: at.x, y: at.y, t: now, text: `${KIND_NAME[kind] || 'Hit'} ${Math.max(1, Math.round(dmg * 10))}`, big };
+      Fight.pops.push(pop);
+      if (h) h.pop = pop;
     }
     Fight.shake = { t: now, k: Math.min(1.8, 0.5 + dmg * 0.6) };
     if (big) Fight.flashAt = now;
@@ -1198,6 +1216,135 @@
   const bearingTo = (f) => ((Math.atan2(f.x - P.x, f.z - P.z) * 180) / Math.PI + 360) % 360;
   const current = () => Fight.foes.find((f) => f.state !== 'ko');
 
+  // ---------- combat tutorial ----------
+  // 10/16 (Mark): fighting stance first (orthodox or southpaw; lead and rear follow it), then each
+  // strike twice, the cover-up, the level change and the level change into a jump. A pads partner
+  // stands in front and never hits back. Every punch says what it read as, and with the camera the
+  // whole run is recorded: a clip of known moves to send to Claude to tune the classifiers.
+  // It runs once after the first camera warm-up, and any time from the phone.
+  const TUTOR_KEY = 'manhattan-miles-tutor-done';
+  const TUTOR = { reps: 2, stepMs: 25000, holdMs: 1500, stanceWaitMs: 5000 };
+  const tutorSteps = () => [
+    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, hands up by your face.', say: 'Fighting stance. One foot forward, hands up by your face. Hold it.' },
+    { id: 'jab', big: 'Jab', small: 'Lead hand, straight out and back.', say: 'Jab. Lead hand, straight out and back.', kind: 'straight', hand: 'lead' },
+    { id: 'cross', big: 'Cross', small: 'Rear hand, straight out, turn the hip.', say: 'Cross. Rear hand, straight out.', kind: 'straight', hand: 'rear' },
+    { id: 'leadHook', big: 'Lead hook', small: 'Lead elbow up, swing across.', say: 'Lead hook. Elbow up, swing it across.', kind: 'hook', hand: 'lead' },
+    { id: 'rearHook', big: 'Rear hook', small: 'Rear elbow up, swing across.', say: 'Rear hook.', kind: 'hook', hand: 'rear' },
+    { id: 'leadUpper', big: 'Lead uppercut', small: 'Dip the lead hand to your chest, drive it up.', say: 'Lead uppercut. Dip the hand, then drive it up.', kind: 'uppercut', hand: 'lead' },
+    { id: 'rearUpper', big: 'Rear uppercut', small: 'Dip the rear hand to your chest, drive it up.', say: 'Rear uppercut.', kind: 'uppercut', hand: 'rear' },
+    { id: 'cover', big: 'Cover up', small: 'Both gloves on your forehead, elbows in. Hold it.', say: 'Cover up. Both gloves high on your forehead, elbows in. Hold it.' },
+    { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
+    { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
+  ];
+  const Tutor = { steps: [], i: 0, n: 0, since: 0, holdSince: null, lead: 'left', stance: 'orthodox', log: [], results: [], clip: null, recording: false, lastRead: '', saved: null };
+  const tutorDoneBefore = () => { try { return localStorage.getItem(TUTOR_KEY) === '1'; } catch (_) { return false; } };
+  const rearOf = (h) => (h === 'left' ? 'right' : 'left');
+  const tutorName = (kind, hand) => `${hand === Tutor.lead ? 'Lead' : 'Rear'} ${kind === 'jab' || kind === 'cross' ? 'straight' : kind}`;
+  function startTutor(now) {
+    if (G.state !== 'walk' || Fight.active || Fight.chase || Phone.open || Subway.ride) return;
+    Tutor.saved = { foes: Fight.foes, people: Fight.people };
+    const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
+    const foe = { x: P.x + hx * FT.rangeClose, z: P.z + hz * FT.rangeClose, hp: 1, maxHp: 1, state: 'pads', until: Infinity, kind: '', hurtUntil: 0, col: [70, 74, 86], turtle: 0, guardHp: FT.guard.hp };
+    Fight.foes = [foe]; Fight.people = [];
+    Fight.active = { start: now, foe, range: 'close', tutor: true };
+    Object.assign(Tutor, { steps: tutorSteps(), i: -1, log: [], results: [], lastRead: '', clip: null, lead: 'left', stance: 'orthodox' });
+    engine.enter_combat({
+      bearing: () => bearingTo(foe),
+      open: () => !!Fight.active && Fight.active.foe.state === 'pads',
+      shooting: () => false,
+      shot: resolveShot,
+    });
+    for (const h of Object.values(Fight.hand)) { h.hist = []; h.armed = true; h.peak = 0; h.last = -Infinity; h.scr = null; }
+    if (isDemo()) setTouchButtons('fight');
+    else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', tutorial: true, camera: engine.camera() }); Tutor.recording = true; }
+    document.body.classList.add('fighting');
+    say('Combat tutorial. Your partner holds pads. Every move twice.', 'instruction');
+    tutorNext(now);
+  }
+  function tutorNext(now) {
+    const cur = Tutor.steps[Tutor.i];
+    if (cur) Tutor.results.push({ id: cur.id, big: cur.big, ok: Tutor.n >= (cur.kind || cur.event ? TUTOR.reps : 1), got: Tutor.n, read: Tutor.log.filter((l) => l.step === cur.id && !l.ok).map((l) => l.read) });
+    Tutor.i++; Tutor.n = 0; Tutor.since = now; Tutor.holdSince = null; Tutor.lastRead = '';
+    const st = Tutor.steps[Tutor.i];
+    if (!st) { endTutor(now); return; }
+    say(st.say, 'instruction');
+  }
+  function tutorCount(now) {
+    Tutor.n++;
+    const done = Tutor.n >= TUTOR.reps;
+    say(done ? 'Got it.' : 'One.', 'confirm');
+    if (done) { setTimeout(() => { if (Fight.active && Fight.active.tutor) tutorNext(performance.now()); }, 700); Tutor.since = Infinity; }
+  }
+  function tutorHit(kind, hand, now) {
+    const st = Tutor.steps[Tutor.i];
+    if (!st || !st.kind || Tutor.n >= TUTOR.reps) return;
+    const want = st.hand === 'lead' ? Tutor.lead : rearOf(Tutor.lead);
+    const k = kind === 'jab' || kind === 'cross' ? 'straight' : kind;
+    const ok = k === st.kind && (hand === want || isDemo()); // touch buttons cannot pick the hand
+    Tutor.lastRead = tutorName(kind, hand);
+    Tutor.log.push({ step: st.id, ok, read: Tutor.lastRead, t: now, hand });
+    if (ok) tutorCount(now);
+    else fightMsg(`Read as ${Tutor.lastRead.toLowerCase()}`, 1000);
+  }
+  // the engine relabeled a glove hit: if that turns a miss into the move asked for, count it
+  function tutorFix(type, hand) {
+    const now = performance.now(), last = [...Tutor.log].reverse().find((l) => l.hand === hand);
+    if (!last || last.ok || now - last.t > FT.hit.pairMs) return;
+    Tutor.log.pop();
+    tutorHit(type, hand, now);
+  }
+  function tutorTick(now) {
+    const st = Tutor.steps[Tutor.i];
+    if (!st) return;
+    const s = engine.signals();
+    if (st.id === 'stance' || st.id === 'cover') {
+      // hold the guard; for the stance, long enough to read which foot leads
+      if (s.guard_up) { if (Tutor.holdSince === null) Tutor.holdSince = now; } else Tutor.holdSince = null;
+      const held = Tutor.holdSince !== null && now - Tutor.holdSince >= TUTOR.holdMs;
+      if (st.id === 'stance' && held && (s.stance !== 'square' || now - Tutor.since > TUTOR.stanceWaitMs)) {
+        Tutor.stance = s.stance === 'southpaw' ? 'southpaw' : 'orthodox';
+        Tutor.lead = Tutor.stance === 'southpaw' ? 'right' : 'left';
+        Tutor.n = 1;
+        say(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}. ${Tutor.stance === 'southpaw' ? 'Right' : 'Left'} hand leads.`, 'confirm');
+        tutorNext(now);
+        return;
+      }
+      if (st.id === 'cover' && held) { Tutor.n = 1; say('Got it.', 'confirm'); tutorNext(now); return; }
+    }
+    if (now - Tutor.since > TUTOR.stepMs) { say('Moving on.', 'confirm'); tutorNext(now); }
+  }
+  engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  engine.on('shot', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'shot' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  function endTutor(now) {
+    if (Tutor.recording) { Tutor.recording = false; if (engine.is_recording()) Tutor.clip = engine.stop_recording(); }
+    if (engine.mode() === 'combat') engine.exit_combat();
+    Fight.active = null;
+    Fight.foes = Tutor.saved ? Tutor.saved.foes : []; Fight.people = Tutor.saved ? Tutor.saved.people : [];
+    engine.set_facing((P.yaw * 180) / Math.PI);
+    if (isDemo()) setTouchButtons('walk');
+    document.body.classList.remove('fighting');
+    try { localStorage.setItem(TUTOR_KEY, '1'); } catch (_) {}
+    const ok = Tutor.results.filter((r) => r.ok).length, all = Tutor.results.length;
+    const missed = Tutor.results.filter((r) => !r.ok).map((r) => r.big);
+    Tutor.report = Tutor.results.map((r) => `${r.big} ${r.ok ? '✓' : '✗'}${r.read.length ? ` (read as ${[...new Set(r.read)].join(', ').toLowerCase()})` : ''}`).join(' · ');
+    say(missed.length ? `Tutorial done. ${ok} of ${all}. Missed: ${missed.join(', ')}. Save the tutorial clip at the end and send it to Claude.` : 'Tutorial done. Everything registered. March on.', 'instruction');
+    note(Tutor.report, 9000);
+  }
+  function tutorHud(now) {
+    const st = Tutor.steps[Tutor.i];
+    if (!st) return;
+    const line = (txt, y, font, color) => { ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = color; ctx.strokeText(txt, W / 2, y); ctx.fillText(txt, W / 2, y); };
+    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.kind || st.event ? ` · ${Tutor.n} of ${TUTOR.reps}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
+    line(st.big, 30, '900 32px system-ui, sans-serif', '#ffcf3f');
+    line(st.small, 70, '700 14px system-ui, sans-serif', '#fff');
+    if (Tutor.i > 0) line(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}: ${Tutor.lead} hand leads`, 92, '600 12px system-ui, sans-serif', '#c9d1dd');
+    if ((st.id === 'stance' || st.id === 'cover') && Tutor.holdSince !== null) {
+      const k = Math.min(1, (now - Tutor.holdSince) / TUTOR.holdMs), bw = 160;
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(W / 2 - bw / 2, 112, bw, 10);
+      ctx.fillStyle = '#3fc8ff'; ctx.fillRect(W / 2 - bw / 2 + 2, 114, (bw - 4) * k, 6);
+    }
+  }
+
   function startFight(now) {
     const foe = current();
     if (!foe) return;
@@ -1206,12 +1353,13 @@
     G.interval = null; G.intervalIn = SESSION.intervalEveryS;
     gatherCrowd(now);
     Fight.hp = FT.playerHp;
+    Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
     foe.guardHp = FT.guard.hp;
     Fight.lowSince = null;
     engine.enter_combat({
       bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
-      open: () => !!Fight.active && Fight.active.range !== 'out' && ['guard', 'windup', 'hurt', 'stuffed', 'cover', 'brace', 'broken'].includes(Fight.active.foe.state),
+      open: () => !!Fight.active && Fight.active.range !== 'out' && ['pads', 'guard', 'windup', 'hurt', 'stuffed', 'cover', 'brace', 'broken'].includes(Fight.active.foe.state),
       shooting: () => !!Fight.active && Fight.active.foe.state === 'shoot',
       shot: resolveShot,
     });
@@ -1339,6 +1487,15 @@
     const a = Fight.active;
     if (!a) return;
     const foe = a.foe;
+    if (a.tutor) {
+      // the pads: every punch shows what it read as, nothing takes damage
+      if (kind === 'down_strike') return;
+      impact(foe, hand, where || 'head', power, now, kind, (FT.damage[kind] || 1) * power);
+      const h = Fight.hand[hand];
+      if (h && h.pop) h.pop.text = tutorName(kind, hand);
+      tutorHit(kind, hand, now);
+      return;
+    }
     Fight.stats.thrown++;
     if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Out of range'); return; }
     // reach: hooks and uppercuts only land close; straights reach mid range
@@ -1379,7 +1536,7 @@
     } else if (!foe.fleeChecked && foe.hp < foe.maxHp * FT.fleeBelow && Fight.foes.filter((f) => f.state !== 'ko').length === 1) {
       // a beaten opponent may cut and run
       foe.fleeChecked = true;
-      if (Math.random() < FT.fleeChance) { foe.state = 'flee'; foe.until = now + FT.fleeMs; fightMsg('They ran off!', 1400); }
+      if (Math.random() < FT.fleeChance) { startChase(foe, now); return; }
     }
   }
   // the engine's own punch classifier and the glove hitbox (gloveHits) both land punches; the
@@ -1395,40 +1552,49 @@
     const now = performance.now();
     Fight.fistFlash[e.hand] = now + 180;
     if (engine.combat().phase === 'top') return; // it comes back as a down_strike
-    if (claim(e.hand, now)) landed(e.type, e.power, now, e.hand, null);
+    if (claim(e.hand, now)) { landed(e.type, e.power, now, e.hand, null); return; }
+    // the glove hitbox got this punch first: the engine's classifier is stricter, so its kind wins
+    const h = Fight.hand[e.hand], pop = h && h.pop;
+    if (pop && now - pop.t < FT.hit.pairMs && h.lastKind !== e.type) { pop.text = pop.text.replace(/^\S+( strike)?/, KIND_NAME[e.type] || e.type); h.lastKind = e.type; if (Fight.active && Fight.active.tutor) tutorFix(e.type, e.hand); }
   });
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
   engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
   // a drive up the fight machine did not take as a shot: say why
-  engine.on('drive_up', () => {
-    if (!Fight.active) return;
-    setTimeout(() => {
-      const a = Fight.active;
-      if (!a || engine.combat().phase !== 'standing') return;
-      if (a.range === 'out' || a.foe.state === 'out') fightMsg('Too far to shoot');
-    }, 0);
+  // a level change with no jump out of it (requireJump): not a shot; say how, the first time
+  engine.on('level_change', () => {
+    const a = Fight.active;
+    if (!a || a.tutor) return;
+    if (a.range === 'out' || a.foe.state === 'out') { fightMsg('Too far to shoot'); return; }
+    fightMsg('Level change', 600);
+    if (!Fight.jumpTold) { Fight.jumpTold = true; say('Jump out of the level change to take them down.', 'feedback'); }
   });
   // the engine asks the game how a shot goes (engine target.shot): a braced opponent stuffs a weak
   // one; a shot timed into their wind-up, a hurt or a broken guard is a longer ground and pound
   function resolveShot({ power }) {
     const a = Fight.active;
     if (!a) return { takedown: false };
+    if (a.tutor) return { takedown: true, topMs: 1500 };
     const foe = a.foe;
     if (foe.state === 'brace' && power < FT.td.beatBrace) return { takedown: false, braced: true };
     const timed = ['windup', 'hurt', 'broken', 'stuffed'].includes(foe.state);
     const q = Math.max(0, Math.min(1, (power + (timed ? FT.td.timedBonus : 0) - 0.5) / 1.0));
-    return { takedown: true, topMs: Math.round(FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q), timed };
+    // on the ground with their friend standing over you: a short burst
+    const cut = others(a).length ? FT.tag.gnpCut : 1;
+    return { takedown: true, topMs: Math.round((FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q) * cut), timed };
   }
   engine.on('takedown', (e) => {
     const a = Fight.active;
     if (!a) return;
     const now = performance.now();
+    if (a.tutor) { a.foe.state = 'down'; a.foe.until = Infinity; Fight.gnpStart = now; Fight.gnpMs = e.topMs; return; }
     a.foe.state = 'down'; a.foe.until = Infinity;
     Fight.gnpStart = now; Fight.gnpMs = e.topMs || FT.td.gnpMs[0];
     Fight.stats.takedowns++;
     award(XP.takedown, 'takedown');
     const big = e.jumped || Fight.gnpMs >= 4000;
-    say(big ? 'Big takedown! Ground and pound.' : 'Takedown! Ground and pound.', 'feedback');
+    Fight.backHitAt = now + FT.tag.backHitMs;
+    if (others(a).length) say('Takedown! Quick, his friend is coming.', 'feedback');
+    else say(big ? 'Big takedown! Ground and pound.' : 'Takedown! Ground and pound.', 'feedback');
     fightMsg(big ? 'Big takedown!' : 'Takedown', 1200);
   });
   engine.on('stuffed', () => {
@@ -1443,8 +1609,9 @@
   engine.on('scramble', () => {
     const a = Fight.active;
     if (!a || a.foe.state !== 'down') return;
+    if (a.tutor) { a.foe.state = 'pads'; return; }
     a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
-    fightMsg('Back up');
+    if (!switchFoe(performance.now(), 'down')) fightMsg('Back up');
   });
   engine.on('sprawl', () => {
     const a = Fight.active;
@@ -1462,11 +1629,7 @@
     const foe = a.foe;
     const s = engine.signals();
     if (foe.state === 'ko') {
-      if (now >= foe.until) {
-        const next = Fight.foes.find((f) => f.state !== 'ko');
-        if (next) { a.foe = next; next.state = 'guard'; next.until = now + 1500; next.guardHp = FT.guard.hp; a.range = 'close'; say('Next one!', 'feedback'); }
-        else endFight('won', now);
-      }
+      if (now >= foe.until && !switchFoe(now, 'ko')) endFight('won', now);
       return;
     }
     if (foe.state === 'flee') { if (now >= foe.until) endFight('won', now); return; }
@@ -1486,11 +1649,21 @@
       // a straight needs the full guard; a hook only the hand on its side, up by your ear (their
       // left hook comes at your right side)
       const yours = foe.hookSide === 'R' ? 'left' : 'right';
-      const guarded = s.guard_up || now - Fight.lastGuardAt < FT.graceMs ||
-        (foe.kind === 'hook' && (s['guard_' + yours] || now - Fight.lastGuardSide[yours] < FT.graceMs));
+      // 10/16 (Mark: smoothness first) only the full two-hand guard blocks; FT.oneHand brings back
+      // the hand-by-the-ear block for hooks. A broken guard blocks nothing for a moment.
+      const guarded = now >= Fight.guardBrokenUntil && (s.guard_up || now - Fight.lastGuardAt < FT.graceMs ||
+        (FT.oneHand && foe.kind === 'hook' && (s['guard_' + yours] || now - Fight.lastGuardSide[yours] < FT.graceMs)));
       const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
       if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
-      else if (guarded) { Fight.stats.blocked++; fightMsg('Blocked'); Fight.block = { t: now, side: s.guard_up || foe.kind === 'straight' ? 'both' : yours }; clack(); Fight.shake = { t: now, k: 0.5 }; }
+      else if (guarded) {
+        // every block wears your guard down; they can break it with volume, like you can theirs
+        Fight.guardHp -= foe.kind === 'hook' ? FT.myGuard.hook : FT.myGuard.straight;
+        if (Fight.guardHp <= 0) {
+          Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = now + FT.myGuard.brokenMs;
+          hurtPlayer(now, 1); fightMsg('Your guard broke!', 1200); say('Guard broken. Move!', 'feedback');
+          Fight.shake = { t: now, k: 1.6 }; tone(90, 0.3, 0.4, 'sine', 0, 40);
+        } else { Fight.stats.blocked++; fightMsg('Blocked'); Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 }; }
+      }
       else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(`Hook to your ${yours}: hand up by that ear`, 1300); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
@@ -1504,6 +1677,10 @@
       return;
     }
     if (foe.state === 'out') { a.range = 'mid'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
+    // a broken guard has run out: they step back and the other one comes in; or a switch is due
+    if (foe.state === 'broken' && switchFoe(now, 'broken')) return;
+    if (a.tagAt && now >= a.tagAt && foe.state === 'guard' && switchFoe(now, 'tag')) return;
+    if (!a.tagAt) a.tagAt = now + rand(FT.tag.everyS[0], FT.tag.everyS[1]) * 1000;
     // choose the next move from guard (or after hurt, stuffed, cover)
     const elapsed = now - a.start;
     // some opponents just cover up: beat the guard with body shots, hooks and uppercuts, or wear it down
@@ -1520,6 +1697,22 @@
     else { foe.state = 'guard'; foe.until = now + rand(600, 1200); }
   }
   // their wind-up shortens as you level (quicker punches), never under 450 ms
+  // the other opponents still in it, waiting their turn
+  const others = (a) => Fight.foes.filter((f) => f !== a.foe && f.state !== 'ko' && f.state !== 'flee');
+  function switchFoe(now, why) {
+    const a = Fight.active;
+    const next = a && others(a)[0];
+    if (!next) return false;
+    const out = a.foe;
+    if (out.state !== 'ko') { out.state = 'sub'; out.until = 0; out.guardHp = FT.guard.hp; }
+    a.foe = next;
+    next.state = 'guard'; next.until = now + 900; next.guardHp = next.guardHp ?? FT.guard.hp;
+    a.range = 'close'; a.tagAt = now + rand(FT.tag.everyS[0], FT.tag.everyS[1]) * 1000;
+    Fight.combo.n = 0;
+    const line = why === 'down' ? 'His friend jumps in!' : why === 'broken' ? 'Tag! The other one steps in.' : why === 'ko' ? 'Next one!' : 'They switch!';
+    fightMsg(why === 'ko' ? 'Next one!' : 'Switch!', 1100); say(line, 'feedback');
+    return true;
+  }
   function windupMs() { return Math.max(450, FT.windupMs - 20 * (level() - 1)); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
@@ -1533,11 +1726,13 @@
     const m = engine.locomotion();
     const s = engine.signals();
     if (s.guard_up) Fight.lastGuardAt = now;
+    Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + FT.myGuard.regen * dt);
     for (const side of ['left', 'right']) if (s['guard_' + side]) Fight.lastGuardSide[side] = now;
     if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
     P.speed = 0;
     P.yaw = (m.facing * Math.PI) / 180;
     if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
+    if (a.tutor) { P.speed = 0; tutorTick(now); return; }
     // the opponent keeps the range: close in, or a step back
     const foe = a.foe;
     if (foe.state === 'flee') {
@@ -1547,6 +1742,19 @@
       foeThink(a, now);
       return;
     }
+    // the one waiting their turn circles at the edge, off to one side
+    others(a).forEach((f, i) => {
+      if (f.state !== 'sub') { f.state = 'sub'; f.until = 0; }
+      const bx = foe.x - P.x, bz = foe.z - P.z, bl = Math.hypot(bx, bz) || 1, ang = (i % 2 ? -1 : 1) * (0.5 + 0.12 * Math.sin(now / 1700 + i));
+      const ux = (bx / bl) * Math.cos(ang) - (bz / bl) * Math.sin(ang), uz = (bx / bl) * Math.sin(ang) + (bz / bl) * Math.cos(ang);
+      const tx = P.x + ux * FT.tag.sideM, tz = P.z + uz * FT.tag.sideM;
+      if (!blocked(tx, tz)) { const k = Math.min(1, dt * 2); f.x += (tx - f.x) * k; f.z += (tz - f.z) * k; }
+    });
+    // on top with their friend still standing: they lay into you
+    if (engine.combat().phase === 'top' && others(a).length && now >= (Fight.backHitAt || 0)) {
+      Fight.backHitAt = now + FT.tag.backHitMs;
+      hurtPlayer(now, 1); fightMsg('Watch your back!', 900); Fight.shake = { t: now, k: 1.2 };
+    }
     const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : a.range === 'mid' ? FT.rangeMid : FT.rangeClose;
     const d = foeDist(foe) || 1;
     const k = Math.min(1, dt * 4) * (d - want) / d;
@@ -1555,9 +1763,71 @@
     foeThink(a, now);
   }
 
+  // A beaten opponent runs (10/16, Mark: a fitness opportunity): the fight ends and the chase is
+  // on. They run down the street away from you, tiring; high knees to catch them.
+  function startChase(foe, now) {
+    const a = Fight.active;
+    stopFightClip();
+    Fight.stats.ms += now - a.start;
+    G.fightsDone++;
+    Fight.active = null;
+    if (engine.mode() === 'combat') engine.exit_combat();
+    engine.set_facing((P.yaw * 180) / Math.PI);
+    if (isDemo()) setTouchButtons('walk');
+    document.body.classList.remove('fighting');
+    Fight.foes = [foe];
+    foe.state = 'flee'; foe.walk = 0;
+    Fight.chase = { foe, start: now, v: FT.chase.speed, dir: null };
+    say('He is running! High knees, catch him!', 'confirm');
+    banner('Chase him down!', 2000, now);
+  }
+  function chaseTick(dt, now) {
+    const c = Fight.chase, f = c.foe;
+    const d = foeDist(f);
+    if (d > 6) c.away = true; // they get a few steps clear before you can catch them
+    if (c.away && d <= FT.chase.catchM) {
+      Fight.chase = null; Fight.stats.caught++; Fight.stats.won++;
+      award(XP.win + XP.caught, 'caught him');
+      f.state = 'ko'; Fight.foes = [];
+      bell(2); say('Caught him! Nowhere to run in this city.', 'feedback'); banner('Caught him', 2500, now);
+      aftermath('won', now, f);
+      Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
+      return;
+    }
+    if (d > FT.chase.loseM || now - c.start > FT.chase.ms) {
+      Fight.chase = null; Fight.stats.got_away++; Fight.stats.fled++; Fight.foes = [];
+      award(Math.round(XP.win / 2), 'they ran');
+      say('He got away. Next time, high knees.', 'feedback'); banner('Got away', 2000, now);
+      aftermath('fled', now, f);
+      Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
+      return;
+    }
+    // run along the street, away from you; at a wall take the open way that leads away
+    c.v = Math.max(FT.chase.minSpeed, c.v - FT.chase.tire * dt);
+    const ax = f.x - P.x, az = f.z - P.z, al = Math.hypot(ax, az) || 1;
+    if (!c.dir) { const st = streetHere(f.x, f.z, 30); c.dir = st ? st.dir : { x: ax / al, z: az / al }; }
+    if (c.dir.x * ax + c.dir.z * az < 0) c.dir = { x: -c.dir.x, z: -c.dir.z };
+    const step = c.v * dt;
+    let nx = f.x + c.dir.x * step, nz = f.z + c.dir.z * step;
+    if (blocked(nx, nz)) {
+      let best = null;
+      for (let k = 0; k < 16; k++) {
+        const t = (k / 16) * Math.PI * 2, ux = Math.sin(t), uz = Math.cos(t);
+        if (blocked(f.x + ux * 4, f.z + uz * 4)) continue;
+        const score = ux * ax / al + uz * az / al;
+        if (!best || score > best.score) best = { score, ux, uz };
+      }
+      if (best) { c.dir = { x: best.ux, z: best.uz }; nx = f.x + best.ux * step; nz = f.z + best.uz * step; }
+      else { nx = f.x; nz = f.z; }
+    }
+    f.x = nx; f.z = nz;
+    f.walk = (f.walk || 0) + dt * 14;
+  }
+
   // walking: count down to the next encounter, and start the fight when you reach them
   function updateEncounters(dt, now) {
     if (Fight.active) return;
+    if (Fight.chase) { chaseTick(dt, now); return; }
     // the crowd and the person you helped stay behind as you walk on
     if (Fight.people.length && !Fight.foes.length && Fight.people.every((p) => Math.hypot(p.x - P.x, p.z - P.z) > 60)) Fight.people = [];
     if (!Fight.foes.length) {
@@ -2023,21 +2293,17 @@
       ball(list, wr, 0.08, flash ? [255, 226, 122] : side === 'left' ? [200, 50, 43] : [176, 42, 36], fv);
       if (wr.z > NEAR3) { const p = projC(wr, fv); Fight.hand[side].scr = { x: p.x, y: p.y, r: 0.08 * p.s }; }
     }
-    drawPrims(list);
-    // a hand up at the guard glows, so you can see you are covered
-    const sg = engine.signals();
-    for (const side of ['left', 'right']) {
-      const h = Fight.hand[side].scr;
-      if (!h || !(sg.guard_up || sg['guard_' + side])) continue;
-      const blk = Fight.block && now - Fight.block.t < FT.fx.blockMs && (Fight.block.side === 'both' || Fight.block.side === side);
-      ctx.save(); ctx.shadowColor = '#3fc8ff'; ctx.shadowBlur = 18 * Ui.u;
-      ctx.lineWidth = (blk ? 7 : 4) * Ui.u; ctx.strokeStyle = blk ? '#ffffff' : 'rgba(110, 215, 255, .9)';
-      ctx.beginPath(); ctx.arc(h.x, h.y, h.r * (blk ? 1.7 : 1.35), 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-    }
+    // while you cover up, the big gloves in front of your face stand in for your arms
+    if (Fight.guardK < 0.6) drawPrims(list);
     gloveHits(arms, now);
   }
 
+  // the elbow's angle in degrees (180 is a straight arm)
+  const angleAt = (a, b, c) => {
+    const ux = a.x - b.x, uy = a.y - b.y, uz = a.z - b.z, wx = c.x - b.x, wy = c.y - b.y, wz = c.z - b.z;
+    const d = Math.hypot(ux, uy, uz) * Math.hypot(wx, wy, wz) || 1;
+    return (Math.acos(Math.max(-1, Math.min(1, (ux * wx + uy * wy + uz * wz) / d))) * 180) / Math.PI;
+  };
   const segDist = (p, a, b) => {
     const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1e-9;
     const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2));
@@ -2058,6 +2324,9 @@
       const sh = arms[side].shoulder;
       h.hist.push({ t: now, x: q.x, y: q.y, z: q.z, r: Math.hypot(q.x - sh.x, q.y - sh.y, q.z - sh.z) });
       while (h.hist.length > 2 && now - h.hist[0].t > 120) h.hist.shift();
+      // where the fist has been over the last 400 ms, against its shoulder (an uppercut starts low)
+      h.low = (h.low || []).filter((p) => now - p.t < 400);
+      h.low.push({ t: now, dy: q.y - sh.y });
       // re-arm once the fist comes back from its furthest point
       if (h.armed) h.peak = q.z;
       else { h.peak = Math.max(h.peak, q.z); if (h.peak - q.z >= c.rearm && now - h.last >= 200) { h.armed = true; h.peak = q.z; } }
@@ -2089,11 +2358,18 @@
       Fight.stats.glove++;
       Fight.fistFlash[side] = now + 180;
       const power = Math.max(0.5, Math.min(1.5, speed / 6));
+      // the punch's kind from how it moved. 10/16: jabs and crosses read as uppercuts (a straight
+      // thrown from the face rises a little, and its depth is squashed), so an uppercut now has to
+      // come up from below the shoulder with a bent elbow; anything else that is not a sideways
+      // swing is a straight
+      const el = arms[side].elbow, ang = el ? angleAt(sh, el, q) : 180;
+      const fromLow = Math.min(...h.low.map((p) => p.dy)) <= -c.upperFrom;
       let kind;
       if (top) kind = 'down_strike';
-      else if (Math.abs(vx) > Math.max(vz, Math.abs(vy)) * 0.9) kind = 'hook';
-      else if (vy > vz) kind = 'uppercut';
+      else if (Math.abs(vx) > Math.max(vz, Math.abs(vy)) * 0.9 && ang < c.straightAngle) kind = 'hook';
+      else if (vy > Math.max(vz, 0) * 1.2 && fromLow && ang < c.straightAngle) kind = 'uppercut';
       else kind = side === (engine.signals().stance === 'southpaw' ? 'right' : 'left') ? 'jab' : 'cross';
+      h.lastKind = kind;
       landed(kind, power, now, side, onHead ? 'head' : 'body');
     }
   }
@@ -2125,8 +2401,11 @@
       ctx.fillText(label, x + 8, y + h / 2);
     };
     const w = Math.min(W - 28, 360);
-    bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', 'Opponent');
-    bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
+    if (a.tutor) tutorHud(now);
+    else {
+      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', 'Opponent');
+      bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
+    }
     const s = engine.signals();
     const phase = engine.combat().phase;
     const close = foeDist(a.foe) <= FT.reach.hook;
@@ -2134,47 +2413,36 @@
     // their guard, while it is worn down
     const gh = a.foe.guardHp ?? FT.guard.hp;
     if (gh < FT.guard.hp - 0.05) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / FT.guard.hp), '#9fb4c8', 'Guard');
+    // the ones waiting their turn: their health, smaller
+    const wait = others(a);
+    wait.forEach((f, i) => bar(W / 2 - w / 2 + i * (w * 0.5 + 4), 94, w * 0.5 - 4, 14, Math.max(0, f.hp / f.maxHp), '#a8443e', 'Next'));
     // the ground and pound burst counting down
     if (phase === 'top' && Fight.gnpMs) {
       const left = Math.max(0, 1 - (now - Fight.gnpStart) / Fight.gnpMs);
-      bar(W / 2 - w / 2, 92, w, 16, left, '#ffcf3f', `${((left * Fight.gnpMs) / 1000).toFixed(1)} s`);
+      bar(W / 2 - w / 2, wait.length ? 112 : 94, w, 16, left, '#ffcf3f', `${((left * Fight.gnpMs) / 1000).toFixed(1)} s`);
     }
     ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
-    ctx.strokeText(tag, W / 2, 68); ctx.fillText(tag, W / 2, 68);
+    if (!a.tutor) { ctx.strokeText(tag, W / 2, 74); ctx.fillText(tag, W / 2, 74); }
     if (now < Fight.msgUntil) {
       ctx.font = '900 34px system-ui, sans-serif'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = '#ffcf3f';
-      ctx.strokeText(Fight.msg, W / 2, H * 0.3); ctx.fillText(Fight.msg, W / 2, H * 0.3);
+      ctx.strokeText(Fight.msg, W / 2, H * 0.37); ctx.fillText(Fight.msg, W / 2, H * 0.37);
     }
-    // your guard: a shield for each hand, lit while that hand is up by your face; the one an
-    // incoming punch needs pulses, and a block flashes it
+    // your guard, while it is worn down, under your health; and a prompt when a punch is coming
+    // and your hands are down
     {
-      const foe = a.foe, yours = foe.hookSide === 'R' ? 'left' : 'right';
-      const need = foe.state === 'windup' ? (foe.kind === 'straight' ? 'both' : yours) : null;
-      const blk = Fight.block && now - Fight.block.t < FT.fx.blockMs ? Fight.block : null;
-      const gy = 118, r = 22;
-      ctx.font = '800 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      for (const side of ['left', 'right']) {
-        const on = s.guard_up || s['guard_' + side];
-        const cx = side === 'left' ? 34 : W - 34;
-        const pulse = need && !on && (need === 'both' || need === side);
-        const word = pulse ? 'Up!' : side === 'left' ? 'Left' : 'Right';
-        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = pulse ? '#ffcf3f' : on ? '#9fe6ff' : '#c9d1dd';
-        ctx.strokeText(word, cx, gy + r * 1.2 + 4); ctx.fillText(word, cx, gy + r * 1.2 + 4);
-        shieldPath(cx, gy, r);
-        ctx.fillStyle = blk && (blk.side === 'both' || blk.side === side) ? '#ffffff' : on ? '#3fc8ff' : 'rgba(0,0,0,.5)';
-        ctx.fill();
-        ctx.lineWidth = pulse ? 3.5 : 2; ctx.strokeStyle = pulse ? `rgba(255, 207, 63, ${0.55 + 0.45 * Math.sin(now / 70)})` : on ? '#e9fbff' : 'rgba(255,255,255,.35)';
-        ctx.stroke();
+      const foe = a.foe, gw = w * 0.6;
+      if (Fight.guardHp < FT.myGuard.hp - 0.05 || now < Fight.guardBrokenUntil) {
+        const broken = now < Fight.guardBrokenUntil;
+        ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(W / 2 - w / 2, 62, gw, 7);
+        ctx.fillStyle = broken ? '#ff5a4f' : '#3fc8ff'; ctx.fillRect(W / 2 - w / 2 + 1, 63, (gw - 2) * (broken ? 1 : Math.max(0, Fight.guardHp / FT.myGuard.hp)), 5);
       }
-      // a block: a big shield flashes on the side it covered, the screen edge goes blue
-      if (blk) {
-        const u = (now - blk.t) / FT.fx.blockMs, R = 46 + 40 * u;
-        const bx = blk.side === 'both' ? W / 2 : blk.side === 'left' ? W * 0.3 : W * 0.7;
-        ctx.globalAlpha = 1 - u;
-        shieldPath(bx, H * 0.5, R); ctx.fillStyle = 'rgba(63, 200, 255, .35)'; ctx.fill(); ctx.lineWidth = 6; ctx.strokeStyle = '#e9fbff'; ctx.stroke();
-        ctx.lineWidth = 18; ctx.strokeStyle = 'rgba(63, 200, 255, .5)'; ctx.strokeRect(0, 0, W, H);
+      if (foe.state === 'windup' && !s.guard_up && phase === 'standing') {
+        ctx.font = '900 26px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.globalAlpha = 0.6 + 0.4 * Math.sin(now / 70);
+        ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = '#ffcf3f';
+        ctx.strokeText('Hands up!', W / 2, H * 0.62); ctx.fillText('Hands up!', W / 2, H * 0.62);
         ctx.globalAlpha = 1;
       }
     }
@@ -2199,11 +2467,41 @@
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText('Level', lx - 2, ly - 3); ctx.fillText('Level', lx - 2, ly - 3);
     if (now < Fight.hurtUntil) { ctx.fillStyle = 'rgba(220, 40, 30, .28)'; ctx.fillRect(0, 0, W, H); }
   }
-  function shieldPath(cx, cy, r) {
-    ctx.beginPath();
-    ctx.moveTo(cx - r, cy - r * 0.85); ctx.quadraticCurveTo(cx, cy - r * 1.15, cx + r, cy - r * 0.85);
-    ctx.lineTo(cx + r * 0.9, cy + r * 0.15); ctx.quadraticCurveTo(cx + r * 0.6, cy + r * 0.8, cx, cy + r * 1.15);
-    ctx.quadraticCurveTo(cx - r * 0.6, cy + r * 0.8, cx - r * 0.9, cy + r * 0.15); ctx.closePath();
+  // Your guard, felt rather than read (Mark 10/16: hands covering the face): with both hands up
+  // two big gloves rise into the bottom of the view and the edges darken, peek-a-boo; a block
+  // jolts them and flashes; a broken guard knocks them apart.
+  function drawGuardView(now) {
+    const s = engine.signals();
+    const broken = now < Fight.guardBrokenUntil;
+    const want = s.guard_up && !broken && engine.combat().phase !== 'top' ? 1 : 0;
+    Fight.guardK += (want - Fight.guardK) * 0.3;
+    const k = Fight.guardK;
+    if (k < 0.02 && !broken) return;
+    const m = Math.min(W, H), R = m * 0.17;
+    const blk = Fight.block && now - Fight.block.t < FT.fx.blockMs ? (now - Fight.block.t) / FT.fx.blockMs : null;
+    const jolt = blk !== null ? Math.sin(blk * Math.PI) * R * 0.25 : 0;
+    // edges darken: you are tucked behind your gloves
+    const vg = ctx.createRadialGradient(W / 2, H * 0.42, m * 0.25, W / 2, H * 0.42, Math.max(W, H) * 0.75);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(0,0,0,${0.45 * k})`);
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    for (const side of [-1, 1]) {
+      const spread = broken ? 1 : 0;
+      const cx = W / 2 + side * (R * 0.95 + spread * R * 1.2), cy = H + R * 1.1 - k * R * 2.25 + jolt + spread * R * 0.6;
+      // forearm down out of the view
+      ctx.fillStyle = 'rgb(196, 150, 116)';
+      ctx.beginPath(); ctx.moveTo(cx - R * 0.55, cy + R * 0.4); ctx.lineTo(cx + R * 0.55 - side * R * 0.2, cy + R * 0.4); ctx.lineTo(cx + side * R * 0.9 + R * 0.4, H + R); ctx.lineTo(cx + side * R * 0.9 - R * 0.6, H + R); ctx.closePath(); ctx.fill();
+      // the cuff, then the glove
+      ctx.fillStyle = '#f3f3f3'; ctx.fillRect(cx - R * 0.62, cy + R * 0.35, R * 1.24, R * 0.32);
+      const g = ctx.createRadialGradient(cx - side * R * 0.25, cy - R * 0.35, R * 0.1, cx, cy, R);
+      const flash = blk !== null && blk < 0.4;
+      g.addColorStop(0, flash ? '#ffffff' : '#e8493f'); g.addColorStop(1, flash ? '#b9e9ff' : '#7c1612');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.ellipse(cx, cy, R * 0.82, R, side * 0.12, 0, Math.PI * 2); ctx.fill();
+      // the thumb, toward the middle
+      ctx.beginPath(); ctx.ellipse(cx - side * R * 0.62, cy + R * 0.05, R * 0.26, R * 0.42, -side * 0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = R * 0.04;
+      ctx.beginPath(); ctx.arc(cx, cy - R * 0.1, R * 0.55, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    }
   }
   // landed punches, in screen pixels where the glove met them: a burst, sparks, and the punch's
   // name and damage floating up
@@ -2355,6 +2653,57 @@
       }
     }
   }
+  // The route on the ground (10/16, Mark: a pathway to follow, not just the minimap): a blue
+  // ribbon down the middle of the street from where you are to the next stop, with chevrons
+  // pointing the way, out to ROUTE_M ahead.
+  const ROUTE_M = 320;
+  function routePoints() {
+    const r = Nav.route;
+    if (!r) return null;
+    if (Nav.poly && Nav.poly.r === r) return Nav.poly.pts;
+    const pts = [];
+    for (const ee of r.edges) {
+      const e = ee >> 1, seg = [];
+      for (let k = MW.EP0[e]; k < MW.EP0[e + 1]; k++) seg.push({ x: MW.PX[k], z: MW.PZ[k] });
+      if (ee & 1) seg.reverse();
+      for (const q of seg) { const l = pts[pts.length - 1]; if (!l || Math.hypot(l.x - q.x, l.z - q.z) > 0.5) pts.push(q); }
+    }
+    const tg = target();
+    if (tg) pts.push({ x: tg.x, z: tg.z });
+    Nav.poly = { r, pts };
+    return pts;
+  }
+  function drawRoute() {
+    const pts = routePoints();
+    if (!pts || pts.length < 2) return;
+    // start from the nearest point on the path
+    let bi = 0, bd = Infinity, bp = pts[0];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1e-9;
+      const t = Math.max(0, Math.min(1, ((P.x - a.x) * dx + (P.z - a.z) * dz) / L2));
+      const q = { x: a.x + dx * t, z: a.z + dz * t }, d = Math.hypot(q.x - P.x, q.z - P.z);
+      if (d < bd) { bd = d; bi = i; bp = q; }
+    }
+    const path = [bp, ...pts.slice(bi + 1)];
+    const hw = 1.3, y = 0.05;
+    let run = 0, nextChev = 6;
+    for (let i = 0; i < path.length - 1 && run < ROUTE_M; i++) {
+      const a = path[i], b = path[i + 1], L = Math.hypot(b.x - a.x, b.z - a.z);
+      if (L < 0.01) continue;
+      const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L, nx = uz, nz = -ux;
+      const fade = Math.max(0.15, 1 - run / ROUTE_M);
+      const pr = project([toCam(a.x + nx * hw, y, a.z + nz * hw), toCam(b.x + nx * hw, y, b.z + nz * hw), toCam(b.x - nx * hw, y, b.z - nz * hw), toCam(a.x - nx * hw, y, a.z - nz * hw)]);
+      if (pr) fillPoly(pr, `rgba(47, 155, 255, ${0.6 * fade})`);
+      // chevrons every 9 m
+      while (nextChev < run + L) {
+        const t = nextChev - run, cx = a.x + ux * t, cz = a.z + uz * t;
+        const tri = project([toCam(cx + ux * 1.0, y + 0.01, cz + uz * 1.0), toCam(cx - nx * 0.9 - ux * 0.3, y + 0.01, cz - nz * 0.9 - uz * 0.3), toCam(cx + nx * 0.9 - ux * 0.3, y + 0.01, cz + nz * 0.9 - uz * 0.3)]);
+        if (tri) fillPoly(tri, `rgba(255, 255, 255, ${0.85 * fade})`);
+        nextChev += 9;
+      }
+      run += L;
+    }
+  }
   // building walls facing the camera within D (out: faces to sort and draw)
   function buildingFaces(out, D) {
     const [c0x, c0z] = MW.chunkOf(cam.x - D, cam.z + D), [c1x, c1z] = MW.chunkOf(cam.x + D, cam.z - D);
@@ -2493,6 +2842,7 @@
       const D = T.drawDistance;
       drawGround(D);
       drawStreets(Math.min(D, 380));
+      if (G.state === 'walk' && !Fight.active && !Fight.chase) drawRoute();
       const faces = [];
       buildingFaces(faces, D);
       faces.sort((a, b) => b.depth - a.depth);
@@ -2514,7 +2864,7 @@
     }
     ctx.restore();
     if (G.state === 'walk') {
-      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawArms(now); drawHits(now); ctx.restore(); }
+      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
       // the HUD in logical pixels times the UI scale
       const RW = W, RH = H, U = Ui.u;
       ctx.setTransform(dpr * U, 0, 0, dpr * U, 0, 0);
@@ -2577,6 +2927,16 @@
     const stride = engine.signals().stride || 1;
     if (P.cadence > 0) line(`Stride ${Math.round(stride * 100)}%${stride < 0.85 ? ' \u00b7 knees up' : ''}`, W - 14, top + 178, 'right', '600 12px system-ui, sans-serif', stride < 0.85 ? '#ffcf3f' : '#c9d1dd');
 
+    // a chase: how far ahead they are and the time left
+    if (Fight.chase) {
+      const c = Fight.chase, d = foeDist(c.foe), left = Math.max(0, Math.ceil((FT.chase.ms - (now - c.start)) / 1000));
+      ctx.font = '900 30px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = '#ff7a3d';
+      const t1 = `Chase! ${Math.round(d)} m`, t2 = P.running ? `${left} s` : `${left} s · high knees!`;
+      ctx.strokeText(t1, W / 2, H * 0.33); ctx.fillText(t1, W / 2, H * 0.33);
+      ctx.font = '800 18px system-ui, sans-serif'; ctx.fillStyle = '#fff';
+      ctx.strokeText(t2, W / 2, H * 0.33 + 28); ctx.fillText(t2, W / 2, H * 0.33 + 28);
+    }
     // a high knees interval: a bar counting down
     if (G.interval) {
       const bw = Math.min(W - 160, 240), bx = W / 2 - bw / 2, by = H * 0.3;
@@ -2654,7 +3014,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-15 PM \u00b7 block cue, big iPad text, busy streets, hit feedback';
+  const BUILD = '2026-10-17 \u00b7 combat tutorial, tag teams, chases, route ribbon, jump takedowns';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
@@ -2692,15 +3052,18 @@
     Phone.open = false; $('phone').hidden = true;
     Object.assign(Calls, { active: null, answered: 0, missed: 0 });
     Object.assign(Peds, { list: [], waves: 0, chatAt: 0, voiceAt: -Infinity });
+    Object.assign(Tutor, { report: '', clip: null });
     Traffic.cars = []; Vendors.list = [];
     Object.assign(Subway, { ride: null, rides: 0, restMs: 0 }); $('subway').hidden = true;
     Prog.walkXp = 0;
-    Object.assign(Fight, { people: [], foes: [], active: null, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
+    Object.assign(Fight, { people: [], foes: [], active: null, chase: null, tutorDone: false, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
     if (engine.mode() === 'combat') engine.exit_combat();
     planRoute();
     sayRoute(true);
     spawnFoes(FT.firstAhead);
     hum(true);
+    // the first camera walk runs the combat tutorial right after the warm-up
+    if (!isDemo() && !tutorDoneBefore()) setTimeout(() => startTutor(performance.now()), 2500);
     show(null);
     $('endBtn').hidden = false;
     $('phoneBtn').hidden = false;
@@ -2710,6 +3073,8 @@
     const now = performance.now();
     stopFightClip();
     hum(false);
+    if (Fight.active && Fight.active.tutor) endTutor(now);
+    Fight.chase = null;
     if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     Subway.ride = null; $('subway').hidden = true;
@@ -2727,7 +3092,8 @@
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
       ['Blocks', G.blocks], ['Active time', fmt(G.activeMs)], ['Stops reached', G.arrived], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Subway rides (rest)', `${Subway.rides}${Subway.restMs ? ` (${fmt(Subway.restMs)})` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
-      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
+      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []), ['Fight time', fmt(Fight.stats.ms)]] : []),
+      ...(Tutor.report ? [['Combat tutorial', Tutor.report]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
     if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${G.intervals ? `${G.intervals} high knees intervals, ` : ''}${fmt(G.runMs)} of running in all, works hip flexor endurance and pushes your heart rate up, with walking as the recovery.</p>`);
@@ -2735,6 +3101,7 @@
     $('payoff').innerHTML = lines.join('');
     $('saveClip').hidden = !Warm.clip;
     $('saveFight').hidden = !Fight.clip;
+    $('saveTutor').hidden = !Tutor.clip;
     show('summary');
   }
 
@@ -2761,18 +3128,24 @@
   // missed move never stalls setup), then a timed warm-up of the moves this game uses. Each move
   // gets big words, one line on how to do it, a timer bar, a looping figure and live feedback; the
   // engine's stick figure sits on the camera view. Anything missed after two rounds gets a third.
+  // 10/16 (Mark, after Homecoming Hero): low knees, high knees, wave left, wave right, turn left,
+  // turn right, two rounds
   const MOVES = {
-    march: { big: 'March', small: 'In place, knees up toward hip height.', say: 'March in place.', event: 'step', need: 4 },
+    march: { big: 'Low knees', small: 'March in place, easy knees.', say: 'Low knees. March in place.', event: 'step', need: 4, secs: 8 },
+    high: { big: 'High knees', small: 'Fast, knees up to hip height.', say: 'High knees! Fast.', event: 'run_start', need: 1, secs: 7 },
+    waveL: { big: 'Wave left', small: 'Left hand up above your head, wave.', say: 'Wave your left hand.', event: 'wave', hand: 'left', need: 1, secs: 3.5 },
+    waveR: { big: 'Wave right', small: 'Right hand up above your head, wave.', say: 'Wave your right hand.', event: 'wave', hand: 'right', need: 1, secs: 3.5 },
     turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1 },
     turnR: { big: 'Turn right', small: 'Feet still. Turn your shoulders right, then back.', say: 'Turn your shoulders right.', event: 'turn_right', need: 1, side: 1 },
   };
-  const MOVE_NAMES = { march: 'marching', turnL: 'left turn', turnR: 'right turn' };
-  const move = (id, secs, round) => Object.assign({ id, secs, round }, MOVES[id]);
+  const MOVE_NAMES = { march: 'low knees', high: 'high knees', waveL: 'left wave', waveR: 'right wave', turnL: 'left turn', turnR: 'right turn' };
+  const WARM_IDS = ['march', 'high', 'waveL', 'waveR', 'turnL', 'turnR'];
+  const move = (id, secs, round) => Object.assign({}, MOVES[id], { id, secs, round });
   const warmPlan = () => [
-    { id: 'intro', big: 'Warm-up', small: 'Marching and shoulder turns, two rounds.', say: 'Warm-up. Marching and shoulder turns.', secs: 2.5 },
-    move('march', 8, 1), move('turnL', 3, 1), move('turnR', 3, 1),
+    { id: 'intro', big: 'Warm-up', small: 'Low knees, high knees, waves and turns. Two rounds.', say: 'Warm-up. Low knees, high knees, waves and turns.', secs: 2.5 },
+    ...WARM_IDS.map((id) => move(id, MOVES[id].secs, 1)),
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
-    move('march', 6, 2), move('turnL', 2.5, 2), move('turnR', 2.5, 2),
+    ...WARM_IDS.map((id) => move(id, MOVES[id].secs * 0.8, 2)),
   ];
   // a returning player (a warm-up on this setup saw their marching before; tuned step cues are kept
   // in the engine profile) gets a quick check: one march round. A miss adds the full rounds.
@@ -2854,10 +3227,11 @@
 
   // count steps aloud up to "got it", so you hear right away whether marching registers
   const COUNT = ['', 'One', 'Two', 'Three'];
-  for (const ev of ['step', 'turn_left', 'turn_right']) {
-    engine.on(ev, () => {
+  for (const ev of ['step', 'turn_left', 'turn_right', 'run_start', 'wave']) {
+    engine.on(ev, (e) => {
       const c = Warm.plan[Warm.i];
       if (G.state !== 'setup' || !c || c.event !== ev) return;
+      if (c.hand && (!e || e.hand !== c.hand)) return;
       Warm.hits++;
       if (Warm.hits === c.need) say('Got it', 'confirm');
       else if (Warm.hits < c.need) say(COUNT[Warm.hits] || String(Warm.hits), 'feedback');
@@ -3033,7 +3407,7 @@
     // nothing registered halfway through a move: one spoken nudge
     if (c.event && !Warm.coached && Warm.hits === 0 && Warm.left < Warm.len * 0.5) {
       Warm.coached = true;
-      say(c.id === 'march' ? 'Knees higher.' : 'Turn further.', 'feedback');
+      say({ march: 'Knees higher.', high: 'Faster! Knees up.', waveL: 'Hand higher, above your head.', waveR: 'Hand higher, above your head.' }[c.id] || 'Turn further.', 'feedback');
     }
     if (Warm.left > 0) return;
     // let the closing line finish before the walk starts
@@ -3056,12 +3430,12 @@
       const again = planMoves().filter((id) => !Warm.seen[id]);
       if (again.length && Warm.quick) {
         // the quick check missed: the full warm-up, so the step thresholds can retune
-        Warm.plan.push({ id: 'round', big: 'Full warm-up', small: 'Marching and shoulder turns, two rounds.', say: 'Let us do the full warm-up.', secs: 2 },
+        Warm.plan.push({ id: 'round', big: 'Full warm-up', small: 'Low knees, high knees, waves and turns.', say: 'Let us do the full warm-up.', secs: 2 },
           ...warmPlan().slice(1));
         Warm.quick = false; Warm.extra = false;
       } else if (again.length) {
         Warm.plan.push({ id: 'round', big: 'One more round', small: `Just the ${again.map((id) => MOVE_NAMES[id]).join(' and ')}.`, say: 'One more round.', secs: 2 },
-          ...again.map((id) => move(id, id === 'march' ? 8 : 3, 3)));
+          ...again.map((id) => move(id, MOVES[id].secs, 3)));
       }
     }
     if (Warm.i + 1 >= Warm.plan.length && !Warm.done) {
@@ -3071,6 +3445,8 @@
       try { if (marched) localStorage.setItem(WARMED_KEY(Warm.setup.key), '1'); else localStorage.removeItem(WARMED_KEY(Warm.setup.key)); } catch (_) {}
       const lines = [marched ? (Warm.quick ? 'You are in. Marching works.' : 'Warm-up done. Marching works.') : 'Warm-up done. The camera did not pick up your marching.'];
       if (planMoves().includes('turnL')) lines.push(turned ? 'Turns work.' : Warm.seen.turnL || Warm.seen.turnR ? 'One of your turns was missed.' : 'Turns were missed.');
+      if (planMoves().includes('high')) lines.push(Warm.seen.high ? 'High knees work.' : 'High knees were missed: faster, and higher.');
+      if (planMoves().includes('waveL')) lines.push(Warm.seen.waveL && Warm.seen.waveR ? 'Waves work.' : 'A wave was missed: hand above your head.');
       if (Warm.lowCount) lines.push('The camera lost your knees at times. Stand a little farther back.');
       lines.push(marched ? 'Start marching to walk.' : 'Walk anyway, and when you finish, tap save warm-up clip and send it to Claude.');
       Warm.plan.push({
@@ -3086,11 +3462,13 @@
   }
 
   // the moves this warm-up's plan checks
-  function planMoves() { return ['march', 'turnL', 'turnR'].filter((id) => Warm.plan.some((c) => c.id === id)); }
+  function planMoves() { return WARM_IDS.filter((id) => Warm.plan.some((c) => c.id === id)); }
 
   function liveText(c) {
     if (Warm.hits >= c.need) return 'Got it';
     if (c.id === 'march') return `Steps seen: ${Warm.hits}`;
+    if (c.id === 'high') return `Pace: ${Math.round(engine.signals().cadence_spm || 0)} steps a minute`;
+    if (c.hand) return 'Hand above your head, side to side';
     const turn = engine.signals().turn || 0;
     return `Turn: ${Math.round(Math.max(0, c.side * turn) * 100)}%`;
   }
@@ -3101,11 +3479,14 @@
     x.clearRect(0, 0, Wd, Ht);
     if (!MOVES[id]) return;
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-    const period = id === 'march' ? 1.1 : 2;
+    const period = id === 'march' ? 1.1 : id === 'high' ? 0.6 : id.startsWith('wave') ? 0.7 : 2;
     const u = (t % period) / period, wave = Math.sin(u * Math.PI * 2), hold = Math.sin(Math.PI * clamp(u * 1.25, 0, 1));
     let kneeL = 0, kneeR = 0, armL = 0.15, armR = 0.15, lift = 0, yaw = 0;
     const side = MOVES[id].side || 0;
-    if (id === 'march') { kneeL = 0.75 * Math.max(0, wave); kneeR = 0.75 * Math.max(0, -wave); armL = 0.15 + 0.35 * Math.max(0, -wave); armR = 0.15 + 0.35 * Math.max(0, wave); lift = 3 * Math.abs(wave); }
+    if (id === 'march') { kneeL = 0.5 * Math.max(0, wave); kneeR = 0.5 * Math.max(0, -wave); armL = 0.15 + 0.3 * Math.max(0, -wave); armR = 0.15 + 0.3 * Math.max(0, wave); lift = 2 * Math.abs(wave); }
+    else if (id === 'high') { kneeL = 1 * Math.max(0, wave); kneeR = 1 * Math.max(0, -wave); armL = 0.2 + 0.6 * Math.max(0, -wave); armR = 0.2 + 0.6 * Math.max(0, wave); lift = 6 * Math.abs(wave); }
+    else if (id === 'waveL') armL = Math.PI - 0.5 + 0.35 * wave;
+    else if (id === 'waveR') armR = Math.PI - 0.5 + 0.35 * wave;
     else yaw = 0.9 * hold;
     x.save();
     x.scale(Wd / 240, Ht / 320);
@@ -3156,6 +3537,7 @@
   $('endBtn').addEventListener('click', endWalk);
   $('again').addEventListener('click', () => { G.state = 'title'; show('title'); });
   $('saveClip').addEventListener('click', () => { if (Warm.clip) RE.downloadClip(Warm.clip, `manhattan-miles-warmup-${Date.now()}.json`); });
+  $('saveTutor').addEventListener('click', () => { if (Tutor.clip) RE.downloadClip(Tutor.clip, `manhattan-miles-tutorial-${Date.now()}.json`); });
   $('saveFight').addEventListener('click', () => { if (Fight.clip) RE.downloadClip(Fight.clip, `manhattan-miles-fight-${Date.now()}.json`); });
 
   let last = performance.now();
@@ -3172,7 +3554,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

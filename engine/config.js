@@ -185,6 +185,11 @@
         },
         fight: {
           jumpWaitMs: 300,   // after a drive up, how long a jump can still add to the shot
+          // 0.7.0 (Mark: the squat is the level change, the jump is the takedown): with
+          // requireJump only a jump off the drive up shoots; a drive up with no jump inside
+          // requireJumpWaitMs is just a 'level_change'
+          requireJump: false,
+          requireJumpWaitMs: 500,
           refRise: 2.0,      // T/s of drive up speed that is shot power 1 (a 0.4 s rise out of a 0.6 T squat is about 1.8)
           jumpBonus: 0.5,    // shot power a jump off the drive adds
           gnpMs: [2000, 5000], // the ground and pound burst, weakest to strongest takedown

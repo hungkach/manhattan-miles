@@ -2,6 +2,26 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-16 PM test (20:02, 180 kcal, "actually pretty fun")
+
+- Warm-up like Homecoming Hero: low knees, high knees, wave left, wave right, turn left, turn right, two rounds. Done.
+- Jabs and crosses read as uppercuts. Fixed in the glove hitbox (it called anything rising faster than it extended an uppercut): an uppercut now has to start below the shoulder with a bent elbow; the engine's stricter classifier relabels a glove hit for the same hand. The combat tutorial records labeled moves to tune it further.
+- Route on screen: done, a blue ribbon with chevrons down the street to the next stop.
+- Faking the takedown into an uppercut did not work: fine, takedowns first.
+- Opponents break your guard: done (`FT.myGuard`: blocks wear it, at 0 it breaks for 1.4 s).
+- Guard cue should be immersive: done, both gloves rise into view in front of your face and the edges darken (peek-a-boo); a block jolts and flashes them; a broken guard knocks them apart. The HUD shields are gone.
+- Strike words: kept (they show what each punch read as).
+- Multiple opponents: tag team, one at a time like a kung fu movie (`FT.tag`): the other circles at the edge and subs in when the guard of the one in front breaks, after a takedown, or every 14 to 22 s; each keeps their own health. A takedown with the friend standing is risky: half the ground and pound, and they hit you.
+- Runners can be chased (`FT.chase`): the fight ends, they run down the street tiring, high knees to catch them within 25 s.
+- Takedowns need a jump (engine 0.7.0 `requireJump`): the squat is the level change; a jump out of it is the shot.
+- Two-hand high guard only (`FT.oneHand` false): the one-hand ear block is off for smoothness.
+- Combat tutorial: done. Stance (orthodox or southpaw, lead and rear follow), jab, cross, lead and rear hooks, lead and rear uppercuts, cover-up (held), level change, level change into a jump. Pads partner, two reps each, what each punch read as, 25 s per move then it moves on; runs once after the first camera warm-up and from the phone; the camera run is saved as "Save tutorial clip".
+- Not yet:
+  - Major graphics pass (Mark: Vice City level): next session. Plan: textured facades with lit windows, sidewalks with curbs, street furniture (lamps, hydrants, trees, subway entrances), sky and sun with time of day, fog, better people (proportions, clothes, hair), cars with wheels and lights, a quality setting.
+  - Enter buildings, including the subway (long term).
+  - Studio voices (distant future).
+  - The bound out and back from Homecoming Hero to start a "shift" (Dillashaw or Cruz angle change, a 1 to 4 s burst window): Mark's note was cut off; needs a bound detector in the engine.
+
 ## 2026-10-15 PM iPad test (8:47, 83 kcal, very light)
 
 - Blocking felt clunky with no cue. Done: a shield per hand on the HUD, glowing gloves at the guard, the needed hand pulses during their wind-up, and a block flashes a big shield with a clack.

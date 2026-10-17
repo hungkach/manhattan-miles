@@ -399,6 +399,9 @@
   //             {takedown: false} is 'stuffed'; {takedown: true, topMs} (or no
   //             shot callback) is 'takedown' and top for topMs, by default
   //             fight.gnpMs scaled by power
+  //             With fight.requireJump (0.7.0) the drive is silent: only a jump
+  //             inside requireJumpWaitMs is the 'shot' (resolved at once); no
+  //             jump is a 'level_change' and back to standing
   //   top       a timed ground and pound burst: strikes become 'down_strike';
   //             when the time is up, 'scramble' and back to standing
   // Anywhere: running (high knees) for escapeMs: 'escape' (the engine then
@@ -434,10 +437,11 @@
         if (!(tg.shooting && tg.shooting()) && (!tg.open || tg.open())) {
           this.phase = 'drive';
           this.drive = { t, speed: payload.speed || 0, jumped: false };
-          out.push(['shot', { speed: payload.speed || 0 }]);
+          if (!this.c.requireJump) out.push(['shot', { speed: payload.speed || 0 }]);
         }
       } else if (name === 'jump' && this.phase === 'drive') {
         this.drive.jumped = true;
+        if (this.c.requireJump) out.push(['shot', { speed: this.drive.speed }]);
         out.push(...this.resolve(t));
       } else if (name === 'strike' && this.phase === 'top') {
         out.push(['down_strike', { hand: payload.hand, power: payload.power }]);
@@ -456,7 +460,11 @@
       const shooting = !!(tg.shooting && tg.shooting());
       if (!shooting) this.sprawled = false;
       else if (this.phase === 'standing' && sig.level_low && !this.sprawled) { this.sprawled = true; out.push(['sprawl', { held: true }]); }
-      if (this.phase === 'drive' && t - this.drive.t >= this.c.jumpWaitMs) out.push(...this.resolve(t));
+      if (this.phase === 'drive' && this.c.requireJump && t - this.drive.t >= this.c.requireJumpWaitMs) {
+        // a level change and back up, no jump: not a shot
+        out.push(['level_change', { speed: this.drive.speed }]);
+        this.drive = null; this.phase = 'standing';
+      } else if (this.phase === 'drive' && !this.c.requireJump && t - this.drive.t >= this.c.jumpWaitMs) out.push(...this.resolve(t));
       if (this.phase === 'top' && t >= this.topUntil) { this.phase = 'standing'; out.push(['scramble', {}]); }
       if (this.runSince !== null && t - this.runSince >= this.c.escapeMs) { this.runSince = null; out.push(['escape', {}]); }
       return out;
