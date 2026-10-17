@@ -80,7 +80,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.8.0 from hungkach/body-arcade@9cd5eb8, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.8.1 from hungkach/body-arcade@256e6fe, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -89,7 +89,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.8.0';
+  RE.version = '0.8.1';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -2539,8 +2539,13 @@
         // enough to sprawl on a shot or to drive out of
         case 'squat': this.squatUntil = now + this.cfg.squatHoldMs; this.emit('squat', { depth: 1, speed: 1 }); break;
         case 'drive_up': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 1.5 }); break;
-        // a jump: an explosive drive up that leaves the floor (the strongest shot)
-        case 'jump': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 2 }); this.emit('jump', { height: 0.2 }); break;
+        // a jump: out of a held squat it is an explosive drive up that leaves the
+        // floor (the strongest shot); from standing it is only a jump (0.8.1)
+        case 'jump':
+          if (now < this.squatUntil) this.emit('drive_up', { depth: 1, speed: 2 });
+          this.squatUntil = 0;
+          this.emit('jump', { height: 0.2 });
+          break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
         default: break;
       }
@@ -4241,7 +4246,7 @@
   // your right hand at someone within a few meters ahead and they wave back with a line.
   // a busy city: up to max people on the sidewalks (texting of them on their phones), and you
   // overhear one when you pass within chatM (a bubble; spoken now and then, never over directions)
-  const PED = { max: 28, near: 22, far: 140, drop: 170, greetM: 9, texting: 0.3, chatM: 4.5, chatGapS: 6, voiceGapS: 22 };
+  const PED = { max: 34, near: 22, far: 140, drop: 170, greetM: 9, texting: 0.3, chatM: 4.5, chatGapS: 6, voiceGapS: 22 };
   const CHATTER = [
     'And I said, that is not a bagel, that is a donut with an attitude.',
     'The rent went up again. For a closet. With a view of another closet.',
@@ -4258,6 +4263,17 @@
     'Nobody makes eye contact. It is a whole system.',
     'I would move to Jersey but then I would live in Jersey.',
     'That rat was carrying a whole bagel. Respect.',
+  ];
+  // loiterers: groups of two or three hanging on the corners, with opinions about you
+  const LOITER = { groups: 3, near: 30, far: 150 };
+  const LOITER_LINES = [
+    'Nice outfit. Did you lose a bet?',
+    'Keep marching, Rambo.',
+    'You a cop? You walk like a cop. A tired cop.',
+    'Yo, this block is closed for exercise.',
+    'Bro thinks he is in a movie.',
+    'Wave again and see what happens.',
+    'He is not from around here. Look at his knees.',
   ];
   const BUMP_LINES = ['Watch it! I am walking here!', 'Eyes up, marathon man.', 'Excuse you.'];
   // street vendors on the corners: wave right to chat
@@ -4313,12 +4329,30 @@
       const sp = sidewalkSpot(PED.near, PED.far);
       if (sp) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.7), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, texting: Math.random() < PED.texting, look: null });
     }
+    // a group hanging out on a corner, now and then
+    const groups = new Set(Peds.list.filter((p) => p.group).map((p) => p.group));
+    if (groups.size < LOITER.groups && Math.random() < dt * 0.4) {
+      const sp = sidewalkSpot(LOITER.near, LOITER.far);
+      if (sp) {
+        const g = { x: sp.x, z: sp.z }, n = 2 + (Math.random() < 0.5 ? 1 : 0);
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + Math.random(), x = sp.x + Math.cos(a) * 0.8, z = sp.z + Math.sin(a) * 0.8;
+          if (!blocked(x, z)) Peds.list.push({ kind: 'ped', x, z, dx: 0, dz: 0, v: 0, col: pick(CROWD_COLS), seed: Math.random(), walking: false, stand: true, group: g, look: g, lines: LOITER_LINES });
+        }
+      }
+    }
     let near = null, nearD = PED.chatM;
     for (const p of Peds.list) {
       const d = Math.hypot(p.x - P.x, p.z - P.z);
-      if (d < nearD && now > (p.sayUntil || 0) && !p.chatted) { near = p; nearD = d; }
+      if (d < nearD && now > (p.sayUntil || 0) && !p.chatted && !p.stand) { near = p; nearD = d; }
       if (p.texting && d < 1.3 && !p.bumped) { p.bumped = true; p.say = pick(BUMP_LINES); p.sayUntil = now + 2200; }
       if (now < (p.stopUntil || 0)) { p.walking = false; p.look = P; continue; }
+      if (p.stand) {
+        // loiterers stay put, and turn to heckle you as you pass
+        p.look = d < 8 ? P : p.group;
+        if (d < 6 && !p.heckled && now > Peds.chatAt) { p.heckled = true; p.say = pick(p.lines); p.sayUntil = now + 3000; Peds.chatAt = now + PED.chatGapS * 1000; if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; say(p.say, 'feedback'); } }
+        continue;
+      }
       const nx = p.x + p.dx * p.v * dt, nz = p.z + p.dz * p.v * dt;
       if (blocked(nx, nz)) { p.dx = -p.dx; p.dz = -p.dz; } else { p.x = nx; p.z = nz; }
       p.walking = true;
@@ -4349,7 +4383,7 @@
   // Cars drive the drivable streets (one-way the right way), pick a way at each corner (mostly
   // straight on), keep to their lane, stop for you and for the car ahead, and honk if you stand
   // in the road in front of them.
-  const CAR = { max: 16, near: 45, far: 230, drop: 280, v: [7, 12], stopM: 10, laneHalf: 2.2, honkM: 8, honkGapMs: 3500, cab: 0.4 };
+  const CAR = { cop: 0.1, max: 18, near: 45, far: 230, drop: 280, v: [7, 12], stopM: 10, laneHalf: 2.2, honkM: 8, honkGapMs: 3500, cab: 0.4 };
   const CAR_COLS = [[34, 36, 42], [205, 205, 210], [130, 24, 28], [40, 62, 112], [96, 98, 104], [236, 236, 238]];
   const CAB_COL = [242, 190, 32];
   const Traffic = { cars: [], honkAt: -Infinity, ambAt: 0 };
@@ -4408,14 +4442,16 @@
     if (Traffic.cars.length < CAR.max && Math.random() < dt * (Traffic.cars.length < CAR.max / 2 ? 8 : 1.5)) {
       const c = carSpot();
       if (c) {
-        const cab = Math.random() < CAR.cab;
-        Object.assign(c, { cab, col: cab ? CAB_COL : pick(CAR_COLS), cruise: rand(CAR.v[0], CAR.v[1]) * (MW.ECLS[c.e] <= 1 ? 1.6 : 1), lane: Math.random() * 2 - 1, stopT: 0 });
+        const cop = Math.random() < CAR.cop, cab = !cop && Math.random() < CAR.cab;
+        Object.assign(c, { cab, cop, siren: cop && Math.random() < 0.6, col: cop ? [236, 238, 242] : cab ? CAB_COL : pick(CAR_COLS), cruise: rand(CAR.v[0], CAR.v[1]) * (MW.ECLS[c.e] <= 1 ? 1.6 : 1), lane: Math.random() * 2 - 1, stopT: 0 });
         c.v = c.cruise;
         Object.assign(c, carPos(c));
         Traffic.cars.push(c);
       }
     }
     for (const c of Traffic.cars) {
+      if (c.parked) continue;
+      if (c.cop && c.siren && now > (c.sirenAt || 0) && Math.hypot(c.x - P.x, c.z - P.z) < 140) { c.sirenAt = now + 4200; siren(Math.max(0.3, 1 - Math.hypot(c.x - P.x, c.z - P.z) / 140)); }
       const at = carPos(c);
       const rx = at.hz, rz = -at.hx;
       let want = c.cruise;
@@ -4436,8 +4472,9 @@
       if (!moveCar(c, c.v * dt)) { c.gone = true; continue; }
       Object.assign(c, carPos(c));
     }
-    // far off: horns now and then
+    // far off: horns now and then, and sirens somewhere
     if (now > Traffic.ambAt) { if (Traffic.ambAt) honk(rand(0.15, 0.4)); Traffic.ambAt = now + rand(6000, 16000); }
+    if (now > (Traffic.sirenAt || 0)) { if (Traffic.sirenAt) siren(rand(0.2, 0.45)); Traffic.sirenAt = now + rand(18000, 40000); }
   }
   function greet(now) {
     const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
@@ -4451,7 +4488,7 @@
     best.waveUntil = now + 1800;
     Peds.waves++;
     award(XP.wave, 'said hi');
-    const line = best.kind === 'vendor' ? pick(VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
+    const line = best.lines ? pick(best.lines) : best.kind === 'vendor' ? pick(VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
     best.say = line; best.sayUntil = now + 4000;
     say(line, 'feedback');
     note(`\u201c${line}\u201d`, 4500);
@@ -4747,7 +4784,7 @@
   // of high knees. Fights run 20 to 40 s; the walking between is the active recovery.
   const FT = {
     firstAhead: 32, // m: the first opponent waits about 10 marching steps ahead of the start (they walk to meet you)
-    everyS: [75, 110], spawnAhead: 40, sees: 30, engage: 9,
+    everyS: [40, 70], spawnAhead: 40, sees: 30, engage: 9,
     // ranges (m): they drift between close and mid; a step back is out. Straights reach mid range,
     // hooks and uppercuts only land close (`reach`, against the real distance)
     rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
@@ -4760,6 +4797,7 @@
     // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
     // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
     shift: { ms: [1000, 4000], bonus: 1.4, cooldownMs: 2500, angleDeg: 45 },
+    upperLowHit: 2, // an uppercut that catches you level changing counts double
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
     // the glove hitbox: a glove moving at least `speed` (shoulder widths a second), at least `reach`
     // in front of your shoulders, that ends over their head or body on screen lands. One hit per
@@ -4792,7 +4830,7 @@
     // flashes the screen and gets an "ooh" from the crowd; a block flashes your shield blockMs
     fx: { comboMs: 1400, bigDmg: 1.4, shakeMs: 220, shakePx: 9, blockMs: 520 },
   };
-  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, guardHp: 5, guardBrokenUntil: -Infinity, guardK: 0, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
+  const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, guardHp: 5, guardBrokenUntil: -Infinity, guardK: 0, lastSlipAt: -Infinity, lastLowAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
     armTilt: 0, impacts: [], sparks: [], pops: [], combo: { n: 0, last: -Infinity }, shake: null, flashAt: -Infinity, block: null, clip: null, recording: false, people: [] };
   const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0, caught: 0, got_away: 0, shifts: 0 });
@@ -4907,6 +4945,7 @@
 
   // put an opponent on the street ahead, out of any building
   function spawnFoes(dist = FT.spawnAhead) {
+    Fight.scene = null;
     const lvl = level();
     const n = (G.fightsDone >= 2 || lvl >= 3) && Math.random() < 0.4 + 0.03 * Math.min(10, lvl) ? 2 : 1;
     let d = dist;
@@ -5097,6 +5136,8 @@
     if (isDemo()) setTouchButtons('fight');
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', fight: true, camera: engine.camera() }); Fight.recording = true; }
     for (const h of Object.values(Fight.hand)) { h.hist = []; h.armed = true; h.peak = 0; h.last = -Infinity; h.scr = null; }
+    for (const f of Fight.foes) f.faceTo = null;
+    if (Fight.scene) Fight.scene.busy = false;
     document.body.classList.add('fighting');
     note('');
     say('Fight! Guard up.', 'feedback');
@@ -5142,6 +5183,11 @@
       'Wow. You just ran. Very brave. Very cardio.',
       'Did you just leave me here? Thanks for nothing, marathon man.',
     ],
+    bag: [
+      'My bag! You got my bag back! My whole life is in there. Mostly receipts.',
+      'You chased him down? In this economy? Thank you!',
+      'He ran three blocks with my purse and you ran four. Legend.',
+    ],
     lost: [
       'Well. That was embarrassing for both of us.',
       'Stay down, hero. I will call someone who has done a push-up.',
@@ -5164,9 +5210,12 @@
   function aftermath(how, now, last) {
     const victim = Fight.people.find((p) => p.kind === 'victim');
     const foe = last && last.state === 'ko' ? last : null;
+    const bag = how === 'bag';
+    if (bag) how = 'won';
     for (const p of Fight.people) p.look = P; // everyone turns to you
     if (how === 'won' && foe) Fight.people.push({ kind: 'ko', x: foe.x, z: foe.z, look: P, col: foe.col, seed: 0 });
-    if (how === 'won' || how === 'fled') for (const p of Fight.people) p.cheerUntil = now + 2500;
+    if (how === 'won' || how === 'fled') for (const p of Fight.people) { p.cheerUntil = now + 2500; if (p.kind === 'victim') p.waveUntil = 0; }
+    for (const c of Traffic.cars) if (c.parked) c.alarm = false;
     const call = Fight.callFight;
     Fight.callFight = false;
     if (call && (how === 'won' || how === 'fled')) {
@@ -5183,6 +5232,7 @@
       setTimeout(() => { if (G.state === 'walk') { say(ol, 'confirm'); note(`Officer: \u201c${ol}\u201d`, 6000); } }, 6500);
     }
     if (!victim) return;
+    if (bag) { setTimeout(() => { if (G.state === 'walk') say(victim.say, 'confirm'); }, 1200); return; }
     const pool = how === 'won' ? (Math.random() < 0.6 ? LINES.thanks : LINES.roast) : LINES[how];
     const line = pick(pool);
     setTimeout(() => { if (G.state === 'walk') { say(line, 'confirm'); note(`\u201c${line}\u201d`, 6000); } }, 1200);
@@ -5293,6 +5343,13 @@
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
   engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
   // a drive up the fight machine did not take as a shot: say why
+  // a jump with no level change before it is only a jump (engine 0.8.1): say what a shot needs
+  engine.on('jump', () => {
+    const a = Fight.active, now = performance.now();
+    if (!a || a.tutor || engine.combat().phase !== 'standing' || now - (Fight.jumpSaidAt || 0) < 4000) return;
+    Fight.jumpSaidAt = now;
+    fightMsg('Level change first, then jump', 1100);
+  });
   // a level change with no jump out of it (requireJump): not a shot; say how, the first time
   engine.on('level_change', () => {
     const a = Fight.active;
@@ -5388,7 +5445,11 @@
       const guarded = now >= Fight.guardBrokenUntil && (s.guard_up || now - Fight.lastGuardAt < FT.graceMs ||
         (FT.oneHand && foe.kind === 'hook' && (s['guard_' + yours] || now - Fight.lastGuardSide[yours] < FT.graceMs)));
       const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
+      // 10/18 (Mark): a level change ducks a hook, but an uppercut catches you low for double
+      const low = now - Fight.lastLowAt < FT.graceMs + 150;
       if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
+      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
+      else if (foe.kind === 'uppercut' && low && !guarded) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
       else if (guarded) {
         // every block wears your guard down; they can break it with volume, like you can theirs
         Fight.guardHp -= foe.kind === 'hook' ? FT.myGuard.hook : FT.myGuard.straight;
@@ -5398,7 +5459,7 @@
           Fight.shake = { t: now, k: 1.6 }; tone(90, 0.3, 0.4, 'sine', 0, 40);
         } else { Fight.stats.blocked++; fightMsg('Blocked'); Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 }; }
       }
-      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(FT.oneHand ? `Hook: ${yours} hand up` : "Hook! Hands up", 1100); }
+      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(FT.oneHand ? `Hook: ${yours} hand up` : 'Hook! Hands up or duck', 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -5423,7 +5484,10 @@
     a.range = Math.random() < FT.midChance ? 'mid' : 'close';
     const r = Math.random();
     // they step in to punch: that is when your hooks reach
-    if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + windupMs(); foe.aim = Object.assign({}, Fight.head); }
+    // they read a level change: when you have been dropping your level, they look for the uppercut
+    const readLow = now - Fight.lastLowAt < 2500 && Math.random() < 0.55;
+    if (readLow || r < 0.08) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'uppercut'; foe.until = now + windupMs() + 50; foe.aim = Object.assign({}, Fight.head); }
+    else if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + windupMs(); foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.hookSide = Math.random() < 0.5 ? 'L' : 'R'; foe.until = now + windupMs() + 100; foe.aim = Object.assign({}, Fight.head); }
     else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
     else if (r < 0.8 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
@@ -5463,6 +5527,7 @@
     Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + FT.myGuard.regen * dt);
     for (const side of ['left', 'right']) if (s['guard_' + side]) Fight.lastGuardSide[side] = now;
     if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
+    if (s.level_low || (s.squat_depth || 0) >= LEVEL_SHOT * 0.7) Fight.lastLowAt = now;
     P.speed = 0;
     P.yaw = (m.facing * Math.PI) / 180;
     if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
@@ -5523,8 +5588,10 @@
       Fight.chase = null; Fight.stats.caught++; Fight.stats.won++;
       award(XP.win + XP.caught, 'caught him');
       f.state = 'ko'; Fight.foes = [];
-      bell(2); say('Caught him! Nowhere to run in this city.', 'feedback'); banner('Caught him', 2500, now);
-      aftermath('won', now, f);
+      bell(2); say(c.why === 'snatch' ? 'Got him! Bag recovered.' : 'Caught him! Nowhere to run in this city.', 'feedback'); banner(c.why === 'snatch' ? 'Bag recovered' : 'Caught him', 2500, now);
+      if (c.why === 'snatch') { const v = Fight.people.find((p) => p.kind === 'victim'); if (v) { v.waveUntil = 0; v.say = pick(LINES.bag); v.sayUntil = now + 6000; } }
+      if (c.car) c.car.alarm = false;
+      aftermath(c.why === 'snatch' ? 'bag' : 'won', now, f);
       Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
       return;
     }
@@ -5558,6 +5625,136 @@
     f.walk = (f.walk || 0) + dt * 14;
   }
 
+  // ---------- street crime (10/18, Mark: a crime-ridden New York, a modern Death Wish) ----------
+  // Every 40 to 70 s of walking something is going down ahead. Each scene sets up its people busy
+  // with the crime and reacts when you come close:
+  //   hassle   (the first one) two-bit thugs hassling someone: they turn on you
+  //   snatch   a purse snatcher already running, the victim yelling: chase him down
+  //   breakin  a guy smashing into a parked car, the alarm going: he fights, or runs
+  //   brawl    two guys brawling, a crowd filming: break it up and they both turn on you
+  //   deal     a corner deal: the buyer scatters, the dealer fights or runs
+  //   tagger   someone tagging a wall: he runs, catch him
+  const SCENES = ['hassle', 'snatch', 'breakin', 'brawl', 'deal', 'tagger'];
+  const SCENE_LINES = {
+    snatch: ['Stop him! He took my bag!', 'Thief! Somebody get him!'],
+    breakin: ['That is my car! Hey!'],
+    brawl: ['Somebody stop them!', 'World star! World star!'],
+    deal: ['Not on my stoop!'],
+    tagger: ['That wall was just painted!'],
+  };
+  const FOE_TAUNTS = { breakin: 'Mind your business!', brawl: 'You want some too?', deal: 'Wrong corner, pal.' };
+  // a sidewalk spot about dist ahead of you, on the street you are on
+  function aheadSpot(dist) {
+    let d = dist;
+    while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
+    return { x: P.x + Math.sin(P.yaw) * d, z: P.z + Math.cos(P.yaw) * d };
+  }
+  const makeFoe = (x, z, i, lvl) => {
+    const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
+    return { x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp, seed: Math.random() };
+  };
+  function spawnScene(kind, now) {
+    if (kind === 'hassle') { spawnFoes(); Fight.scene = null; return; }
+    const lvl = level(), at = aheadSpot(rand(36, 48)), hx = Math.sin(P.yaw), hz = Math.cos(P.yaw), rx = hz, rz = -hx;
+    const st = streetHere(at.x, at.z, 30), dir = st ? st.dir : { x: hx, z: hz };
+    const sc = { kind, busy: true, start: now, alarmAt: 0 };
+    Fight.foes = []; Fight.people = [];
+    const victim = (x, z, line) => ({ kind: 'victim', x, z, look: P, col: pick(VICTIM_COLS), seed: Math.random(), waveUntil: now + 60000, say: line, sayUntil: now + 60000 });
+    if (kind === 'snatch') {
+      // he is already running, away from you down the street (closer: he has a head start)
+      const v = aheadSpot(rand(16, 22));
+      at.x = v.x; at.z = v.z;
+      const f = makeFoe(at.x + hx * 6, at.z + hz * 6, 0, lvl);
+      Fight.people = [victim(at.x, at.z, pick(SCENE_LINES.snatch))];
+      Fight.foes = [f];
+      f.state = 'flee';
+      Fight.chase = { foe: f, start: now, v: FT.chase.speed, dir: null, why: 'snatch' };
+      say('Purse snatcher! High knees, run him down!', 'confirm'); banner('Stop that thief!', 2200, now);
+    } else if (kind === 'breakin') {
+      // a parked car at the curb, him on the sidewalk at its window
+      const n = MW.nearestEdge(at.x, at.z, 40, MW.walkEdge);
+      let cx = at.x + rx * 2.6, cz = at.z + rz * 2.6, ox = rx, oz = rz;
+      if (n) {
+        const vx = at.x - n.x, vz = at.z - n.z, vl = Math.hypot(vx, vz) || 1, off = Math.max(1.2, MW.roadW(n.e) / 2 - 1.2);
+        ox = -vx / vl; oz = -vz / vl; // from the sidewalk toward the street
+        cx = n.x + (vx / vl) * off; cz = n.z + (vz / vl) * off;
+      }
+      const car = { parked: true, alarm: true, x: cx, z: cz, hx: dir.x, hz: dir.z, col: pick(CAR_COLS), cab: false, v: 0, e: -1 };
+      Traffic.cars.push(car);
+      const f = makeFoe(cx - ox * 1.5, cz - oz * 1.5, 0, lvl);
+      f.state = 'smash'; f.faceTo = car;
+      Fight.foes = [f];
+      sc.car = car;
+      say('Car alarm up ahead. Someone is breaking in.', 'confirm'); banner('Car break-in ahead', 2000, now);
+    } else if (kind === 'brawl') {
+      const a = makeFoe(at.x - dir.x * 0.7, at.z - dir.z * 0.7, 0, lvl), b = makeFoe(at.x + dir.x * 0.7, at.z + dir.z * 0.7, 1, lvl);
+      a.state = b.state = 'brawl'; a.faceTo = b; b.faceTo = a;
+      Fight.foes = [a, b];
+      for (let i = 0; i < 4; i++) {
+        const ang = Math.PI * (0.3 + 0.35 * i), x = at.x + Math.cos(ang) * 3.4, z = at.z + Math.sin(ang) * 3.4;
+        if (!blocked(x, z)) Fight.people.push({ kind: 'crowd', x, z, tx: x, tz: z, sx: x, sz: z, joinAt: now, look: at, col: pick(CROWD_COLS), seed: Math.random(), phone: Math.random() < 0.7 });
+      }
+      if (Fight.people[0]) { Fight.people[0].say = pick(SCENE_LINES.brawl); Fight.people[0].sayUntil = now + 60000; }
+      say('A street fight up ahead. Go break it up.', 'confirm'); banner('Street fight ahead', 2000, now);
+    } else if (kind === 'deal') {
+      const f = makeFoe(at.x, at.z, 0, lvl);
+      const buyer = { kind: 'crowd', x: at.x + dir.x * 1.1, z: at.z + dir.z * 1.1, tx: 0, tz: 0, sx: 0, sz: 0, joinAt: -Infinity, look: f, col: pick(CROWD_COLS), seed: Math.random(), buyer: true };
+      buyer.tx = buyer.sx = buyer.x; buyer.tz = buyer.sz = buyer.z;
+      f.state = 'deal'; f.faceTo = buyer;
+      Fight.foes = [f]; Fight.people = [buyer];
+      sc.buyer = buyer;
+      say('Corner deal going down ahead.', 'confirm'); banner('Corner deal ahead', 2000, now);
+    } else if (kind === 'tagger') {
+      // at the wall behind the sidewalk, facing it
+      const side = blocked(at.x + rx * 7, at.z + rz * 7) ? 1 : -1;
+      let wx = at.x, wz = at.z;
+      for (let k = 1; k < 10 && !blocked(wx + rx * side, wz + rz * side); k++) { wx += rx * side; wz += rz * side; }
+      const f = makeFoe(wx, wz, 0, lvl);
+      f.state = 'spray'; f.faceTo = { x: wx + rx * side * 3, z: wz + rz * side * 3 };
+      Fight.foes = [f];
+      say('Someone is tagging a wall up ahead.', 'confirm'); banner('Tagger ahead', 2000, now);
+    }
+    Fight.scene = sc;
+  }
+  // a scene's people go about their crime until you get close, then it turns on you
+  function sceneTick(dt, now, foe, d) {
+    const sc = Fight.scene;
+    if (sc.car && sc.car.alarm && now > sc.alarmAt && Math.hypot(sc.car.x - P.x, sc.car.z - P.z) < 90) { sc.alarmAt = now + 900; honk(Math.max(0.15, 1 - Math.hypot(sc.car.x - P.x, sc.car.z - P.z) / 90)); }
+    if (sc.kind === 'tagger' && now > (sc.hissAt || 0) && d < 60) { sc.hissAt = now + 1400; burst(6000, 0.6, 0.5, 0.05 * Math.max(0.2, 1 - d / 60), 'highpass'); }
+    if (sc.buyer && sc.buyer.run) { const b = sc.buyer; b.x += b.run.x * 6 * dt; b.z += b.run.z * 6 * dt; b.tx = b.sx = b.x; b.tz = b.sz = b.z; b.walking = true; }
+    const near = { breakin: FT.engage + 3, brawl: FT.engage + 4, deal: 16, tagger: 14 }[sc.kind] || FT.engage;
+    if (!sc.busy || d > near) return sc.busy;
+    sc.busy = false;
+    for (const f of Fight.foes) f.faceTo = null;
+    const taunt = FOE_TAUNTS[sc.kind];
+    if (taunt) { foe.say = taunt; foe.sayUntil = now + 2500; }
+    if (sc.buyer) { const b = sc.buyer, bx = b.x - P.x, bz = b.z - P.z, bl = Math.hypot(bx, bz) || 1; b.run = { x: bx / bl, z: bz / bl }; b.look = { x: b.x + b.run.x * 10, z: b.z + b.run.z * 10 }; }
+    const runs = sc.kind === 'tagger' || (sc.kind === 'breakin' && Math.random() < 0.35) || (sc.kind === 'deal' && Math.random() < 0.5);
+    if (runs) {
+      foe.state = 'flee';
+      Fight.foes = [foe];
+      Fight.chase = { foe, start: now, v: FT.chase.speed, dir: null, why: sc.kind };
+      say(sc.kind === 'tagger' ? 'He is running! Catch him!' : 'He is running! High knees!', 'confirm'); banner('Chase him down!', 1800, now);
+      return false;
+    }
+    for (const f of Fight.foes) f.state = 'wait';
+    if (sc.kind !== 'brawl') return false;
+    startFight(now);
+    return true;
+  }
+  // the police roll by: sirens off in the distance now and then
+  function siren(far = 1) {
+    const ac = sfxOk(); if (!ac) return;
+    try {
+      const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
+      o.type = 'sawtooth'; o.frequency.value = 760; lfo.frequency.value = 0.6; lg.gain.value = 220;
+      lfo.connect(lg).connect(o.frequency);
+      const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.03 * far, t + 0.8); g.gain.exponentialRampToValueAtTime(0.0001, t + 4);
+      o.connect(f).connect(g).connect(ac.destination); o.start(t); lfo.start(t); o.stop(t + 4.1); lfo.stop(t + 4.1);
+    } catch (_) {}
+  }
+
   // walking: count down to the next encounter, and start the fight when you reach them
   function updateEncounters(dt, now) {
     if (Fight.active) return;
@@ -5566,12 +5763,15 @@
     if (Fight.people.length && !Fight.foes.length && Fight.people.every((p) => Math.hypot(p.x - P.x, p.z - P.z) > 60)) Fight.people = [];
     if (!Fight.foes.length) {
       if (P.speed > 0.5 && !Calls.active) Fight.waitS -= dt;
-      if (Fight.waitS <= 0) spawnFoes();
+      if (Fight.waitS <= 0) spawnScene(pick(SCENES), now);
       return;
     }
     const foe = current();
     const d = foeDist(foe);
-    if (d > 150) { Fight.foes = []; Fight.people = []; Fight.waitS = 20; return; } // walked away from them
+    if (d > 150) { Fight.foes = []; Fight.people = []; Fight.scene = null; Fight.waitS = 20; return; } // walked away from them
+    if (Fight.scene && Fight.scene.busy !== undefined && sceneTick(dt, now, foe, d)) return;
+    if (Fight.chase) return;
+    if (Fight.scene && Fight.scene.busy) return; // still at it
     // they walk toward you once they see you
     if (d < FT.sees && d > FT.engage) {
       foe.walk = (foe.walk || 0) + dt * 6;
@@ -5625,6 +5825,7 @@
   function foeFrame(f) {
     let fx = P.x - f.x, fz = P.z - f.z;
     if (f.state === 'flee') { fx = -fx; fz = -fz; }
+    if (f.faceTo) { fx = f.faceTo.x - f.x; fz = f.faceTo.z - f.z; } // busy with their crime
 
     const n = Math.hypot(fx, fz) || 1;
     fx /= n; fz /= n;
@@ -5652,6 +5853,30 @@
     for (const k in GUARD_POSE) p[k] = GUARD_POSE[k].slice();
     const bob = Math.sin(t * 2.4) * 0.015, sway = Math.sin(t * 1.3) * 0.03;
     for (const k in p) { p[k][1] += k.startsWith('ft') ? 0 : bob; p[k][0] += k.startsWith('ft') ? 0 : sway; }
+    if (st === 'smash') {
+      // bent over the car, the right arm hammering the window
+      const k = Math.sin(t * 7);
+      for (const q of ['chest', 'neck', 'head', 'shL', 'shR']) p[q][2] += 0.12;
+      p.elR = [0.3, 1.5, 0.2]; p.fiR = [0.26, 1.25 + 0.3 * k, 0.5]; p.elL = [-0.25, 1.15, 0.15]; p.fiL = [-0.2, 1.0, 0.35];
+      return p;
+    }
+    if (st === 'spray') {
+      // arm up at the wall, sweeping the can
+      p.elR = [0.24, 1.48, 0.25]; p.fiR = [0.14 + 0.18 * Math.sin(t * 3), 1.58 + 0.12 * Math.cos(t * 3), 0.55];
+      p.elL = [-0.22, 1.12, 0.06]; p.fiL = [-0.24, 0.92, 0.1];
+      return p;
+    }
+    if (st === 'brawl') {
+      // trading wild punches with each other
+      const k = Math.sin(t * 6);
+      if (k > 0.55) { p.fiL = [-0.08, 1.52, 0.6]; p.elL = [-0.16, 1.45, 0.3]; }
+      if (k < -0.55) { p.fiR = [0.08, 1.5, 0.6]; p.elR = [0.16, 1.44, 0.3]; }
+      return p;
+    }
+    if (st === 'deal') {
+      p.elR = [0.24, 1.12, 0.12]; p.fiR = [0.12, 1.15, 0.36]; p.elL = [-0.23, 1.14, 0.0]; p.fiL = [-0.18, 0.95, 0.04];
+      return p;
+    }
     if (st === 'wait' || st === 'flee') {
       // walking toward you, hands down
       const ph = Math.sin(f.walk || 0);
@@ -5688,9 +5913,18 @@
       const k = f.hookSide === 'R' ? 1 : -1, H = f.hookSide === 'R' ? 'R' : 'L';
       p['fi' + H] = [0.52 * k, 1.44, 0.04]; p['el' + H] = [0.44 * k, 1.4, -0.06]; p['sh' + H][2] -= 0.05;
     }
+    if (st === 'windup' && f.kind === 'uppercut') {
+      // the rear hand drops and the knees dip: an uppercut is loading
+      p.fiR = [0.16, 1.0, 0.16]; p.elR = [0.26, 1.06, -0.04]; p.shR[1] -= 0.04;
+      for (const k of ['pelvis', 'hipL', 'hipR', 'chest', 'neck', 'head', 'shL', 'shR']) p[k][1] -= 0.06;
+    }
     if (now < (f.swingUntil || 0)) {
       // the punch itself, thrown at where your head was when they wound up
-      if (f.swingKind === 'straight') {
+      if (f.swingKind === 'uppercut') {
+        p.shR[2] += 0.08;
+        p.fiR = reachTo(p.shR, [aim[0] * 0.5, aim[1] - 0.2, aim[2]], 0.55, 0.15);
+        p.elR = [p.shR[0] + 0.05, p.shR[1] - 0.22, (p.shR[2] + p.fiR[2]) / 2];
+      } else if (f.swingKind === 'straight') {
         p.shR[2] += 0.12; p.shL[2] -= 0.08;
         p.fiR = reachTo(p.shR, aim, 0.66, 0.12);
         p.elR = vlerp(p.shR, p.fiR, 0.5); p.elR[1] -= 0.04; p.elR[0] += 0.05;
@@ -5823,12 +6057,33 @@
     boxPrims(list, c.x - c.hx * 0.2, 1.3 - ty, c.z - c.hz * 0.2, 1.15, 0.8, 0.28, c.hx, c.hz, GLASS);
     boxPrims(list, c.x - c.hx * 0.2, 1.62 - ty, c.z - c.hz * 0.2, 1.0, 0.78, 0.04, c.hx, c.hz, c.col); // the roof
     if (c.cab) boxPrims(list, c.x - c.hx * 0.2, 1.76, c.z - c.hz * 0.2, 0.3, 0.45, 0.1, c.hx, c.hz, [250, 244, 214]);
+    const flash = Math.floor(performance.now() / 180) % 2;
+    if (c.cop) {
+      // a light bar, flashing red and blue when the siren is on; a dark band along the doors
+      boxPrims(list, c.x - c.hx * 0.2 + c.hz * 0.3, 1.74, c.z - c.hz * 0.2 - c.hx * 0.3, 0.14, 0.3, 0.07, c.hx, c.hz, c.siren && flash ? [255, 40, 40] : [120, 30, 30]);
+      boxPrims(list, c.x - c.hx * 0.2 - c.hz * 0.3, 1.74, c.z - c.hz * 0.2 + c.hx * 0.3, 0.14, 0.3, 0.07, c.hx, c.hz, c.siren && !flash ? [60, 120, 255] : [30, 40, 120]);
+      boxPrims(list, c.x, 0.76, c.z, 2.21, 0.91, 0.05, c.hx, c.hz, [30, 36, 60]);
+    }
     for (const b of [-0.62, 0.62]) {
       boxPrims(list, c.x + c.hx * 2.21 + rx * b, 0.82, c.z + c.hz * 2.21 + rz * b, 0.03, 0.17, 0.07, c.hx, c.hz, [255, 248, 214]);
       boxPrims(list, c.x - c.hx * 2.21 + rx * b, 0.86, c.z - c.hz * 2.21 + rz * b, 0.03, 0.15, 0.06, c.hx, c.hz, [200, 24, 24]);
     }
     for (const a of [-1.35, 1.35]) for (const b of [-0.84, 0.84]) { const q = toCam(c.x + c.hx * a + rx * b, 0.33, c.z + c.hz * a + rz * b); ball(list, q, 0.33, TIRE, F); }
     drawPrims(list);
+    // the siren's lights and a car alarm's blinkers glow, at any hour
+    if ((c.cop && c.siren) || c.alarm) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      const spots = c.cop ? [[1.74, flash ? '255,40,40' : '60,120,255', -0.2]] : flash ? [[0.84, '255,170,40', 2.3], [0.86, '255,170,40', -2.3]] : [];
+      for (const [y, col, along] of spots) {
+        const q = toCam(c.x + c.hx * along, y, c.z + c.hz * along);
+        if (q.z < NEAR3) continue;
+        const pp = projC(q, F), R = Math.max(6, pp.s * (c.cop ? 2.2 : 1.2));
+        const g = ctx.createRadialGradient(pp.x, pp.y, 0, pp.x, pp.y, R);
+        g.addColorStop(0, `rgba(${col},.7)`); g.addColorStop(1, `rgba(${col},0)`);
+        ctx.fillStyle = g; ctx.fillRect(pp.x - R, pp.y - R, R * 2, R * 2);
+      }
+      ctx.restore();
+    }
     // at night the lights glow
     if (L.night) {
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
@@ -5960,6 +6215,7 @@
     const st = hurt ? Object.assign({}, f.style, { top: shirt }) : f.style;
     bodyPrims(list, c, st, extraJoints(f, fr, j), 0);
     drawPrims(list);
+    if (now < (f.sayUntil || 0) && c.head.z > NEAR3) { const q = projC({ x: c.head.x, y: c.head.y + 0.25, z: c.head.z }, F); bubble(f.say, q.x, q.y); }
     // the telegraph: a pulsing ring on the hand that is coming, or around the hips on a shot
     if (f.state === 'windup' || f.state === 'shoot') {
       const q = f.state === 'shoot' ? c.pelvis : f.kind === 'hook' ? (f.hookSide === 'R' ? c.fiR : c.fiL) : c.fiR;
@@ -7182,7 +7438,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-18 \u00b7 shift attacks from a 45 degree angle';
+  const BUILD = '2026-10-18 PM \u00b7 street crime, ducking hooks, uppercuts, jump fix';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
@@ -7727,7 +7983,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

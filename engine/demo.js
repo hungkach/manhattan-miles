@@ -107,8 +107,13 @@
         // enough to sprawl on a shot or to drive out of
         case 'squat': this.squatUntil = now + this.cfg.squatHoldMs; this.emit('squat', { depth: 1, speed: 1 }); break;
         case 'drive_up': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 1.5 }); break;
-        // a jump: an explosive drive up that leaves the floor (the strongest shot)
-        case 'jump': this.squatUntil = 0; this.emit('drive_up', { depth: 1, speed: 2 }); this.emit('jump', { height: 0.2 }); break;
+        // a jump: out of a held squat it is an explosive drive up that leaves the
+        // floor (the strongest shot); from standing it is only a jump (0.8.1)
+        case 'jump':
+          if (now < this.squatUntil) this.emit('drive_up', { depth: 1, speed: 2 });
+          this.squatUntil = 0;
+          this.emit('jump', { height: 0.2 });
+          break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
         default: break;
       }

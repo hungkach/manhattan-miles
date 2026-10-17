@@ -2,6 +2,13 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-18 notes
+
+- A jump without a deep enough squat: only a jump, never a takedown (engine 0.8.1 tests; the shot needs a squat past 0.3 torso lengths, the drive up, then the jump). The touch Jump button now shoots only out of a held Squat. In a fight a lone jump says "Level change first, then jump".
+- Level changes duck hooks ("Ducked it: counter!"); opponents now throw uppercuts too (the rear hand drops, the knees dip), more often after you have been changing levels, and an uppercut that catches you low counts double ("Caught low!"). The guard still blocks it.
+- Shift feels strong: left as is until the garage test.
+- Crime-ridden New York (a modern Death Wish): encounters every 40 to 70 s, as scenes: thugs hassling someone, a purse snatcher already running (chase him down, bag recovered), a car break-in with the alarm going (he fights or runs), two guys brawling with a crowd filming (both turn on you), a corner deal (the buyer scatters, the dealer fights or runs), a tagger at a wall (he runs). Police cars with light bars and sirens drive by; sirens off in the distance; loitering groups on corners heckle you as you pass (wave at them for more); up to 34 pedestrians.
+
 ## 2026-10-17 notes and the graphics pass
 
 - 10/18 fix (Mark: the player punched the air; it should attack from a 45 degree angle, not head on): the view now swings 45 degrees around the opponent, facing them, while they still face where you were. Before, the view slid sideways and they turned away.
