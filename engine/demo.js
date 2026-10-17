@@ -90,6 +90,8 @@
         case 'cross': strike(this.rear(), 'cross'); break;
         case 'hook': strike(this.lead(), 'hook'); break;
         case 'uppercut': strike(this.rear(), 'uppercut'); break;
+        case 'overhand': strike(this.rear(), 'overhand'); break;
+        case 'bound_left': case 'bound_right': this.emit('bound', { side: action === 'bound_left' ? 'left' : 'right', dist: 1.2, ms: 600 }); break;
         case 'slip_left': case 'slip_right': {
           const side = action === 'slip_left' ? 'left' : 'right';
           this.slip = side === 'left' ? -1 : 1;
@@ -136,7 +138,7 @@
 
   const BUTTONS = [
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'], ['wave_left', 'Wave L'], ['wave_right', 'Wave'],
-    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
+    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['overhand', 'Overhand'], ['uppercut', 'Upper'], ['bound_left', 'Bound L'], ['bound_right', 'Bound R'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
     ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
   ];

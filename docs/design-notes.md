@@ -2,6 +2,23 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-17 notes and the graphics pass
+
+- Shifts: done. A bound out and back (engine 0.8.0 'bound') takes an angle like Dillashaw or Cruz: the opponent is turned away for 1 to 4 s (a quicker bound, longer), every punch does 1.4x (less than a ground and pound, but free), a punch in flight misses, 2.5 s cooldown. Touch: Bound L and Bound R. The tutorial ends with it.
+- The rear hook is the overhand: done (engine 0.8.0 and the glove hitbox). Damage 1.7, goes over a cover-up, close range.
+- The cover-up fills the view: done. Two big padded gloves with cuffs and forearms take most of the screen, a gap to peek through at the top.
+- Graphics pass (Mark: Vice City level, better models):
+  - Looks: golden hour (default; the sun low in the west-southwest lights the cross streets), day, night. Title screen and phone. Graphics high or low.
+  - Sky: gradient, sun or moon with glow, clouds, stars, horizon haze; distance haze in the look's color.
+  - Light: cool ambient in shadow plus warm sun on the walls that face it; everything (people, cars, props) lit the same way.
+  - Buildings: glass curtain walls on towers, punched windows on brick, storefronts with awnings, cornices, shading at the base, lit windows at night, rooftop water tanks.
+  - Streets: curbs and gutters, lane lines, zebra crossings at intersections.
+  - Street furniture: lamp posts (glowing at night with pools of light), trees on residential streets and in parks, hydrants, subway entrances with green globes.
+  - People: new bodies (waist and chest, shoulders, hair, hands, shoes), varied skin, hair and clothes, round shading, ground shadows; opponents in tank tops with taped fists.
+  - Cars: bumpers, roofs, head and tail lights that glow at night.
+  - Anything behind a building is hidden. Dynamic resolution keeps it smooth on busy blocks.
+- Next for graphics: textured walls (brick, stone), better park ground, shadows cast by buildings, rain, neon signs at night.
+
 ## 2026-10-16 PM test (20:02, 180 kcal, "actually pretty fun")
 
 - Warm-up like Homecoming Hero: low knees, high knees, wave left, wave right, turn left, turn right, two rounds. Done.

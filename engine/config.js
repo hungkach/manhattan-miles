@@ -159,6 +159,7 @@
           downBelow: 0.3,    // m below the shoulder
           downSpeed: 1.2,    // m/s downward
           refSpeed: 5,       // m/s of fist speed that is power 1
+          overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
         },
         // arm depth from foreshortening (ArmDepth in combat.js)
         depth: {
@@ -173,6 +174,14 @@
           full: 0.55,
           eventLevel: 0.5,
           eventReset: 0.2,
+        },
+        // a bound out to one side and back (0.8.0): hip midpoint in S from where it was at calibration
+        bound: {
+          center: 0.35,  // S: starts from within this of the middle
+          out: 0.9,      // S: gets this far to one side
+          outMs: 600,    // within this long of leaving the middle
+          back: 0.4,     // S: and comes back within this of the middle
+          backMs: 900,   // within this long of its furthest point
         },
         level: {
           squat: 0.3,      // T level drop that is a squat (spec 0.35; 0.4.2 eased for a fighting crouch)

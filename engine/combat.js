@@ -13,7 +13,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance']) RE.detectors.add(name);
+  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -148,8 +148,10 @@
         if (a.angle < this.c.rearm) h.armed = true;
         if (h.hist.length < 3 || t - h.last < this.c.refractoryMs) continue;
         if (ctx.upperLow) continue;
-        const type = this.classify(ctx, hand, a, h.hist, out);
+        let type = this.classify(ctx, hand, a, h.hist, out);
         if (!type) continue;
+        // 0.8.0 (Mark): a hook from the rear hand is the overhand
+        if (type === 'hook' && this.c.overhand && hand === (out.stance === 'southpaw' ? 'left' : 'right')) type = 'overhand';
         h.last = t;
         if (type === 'jab' || type === 'cross' || type === 'down') { h.armed = false; h.lastStraight = t; }
         const speed = this.peakSpeed(h.hist);
@@ -300,6 +302,35 @@
     }
   }
 
+  // Bound (0.8.0, Mark: a bound out and back, after Homecoming Hero, makes an
+  // angle like Dillashaw or Cruz). The hip midpoint, against where it was at
+  // calibration (body x, S): from near the middle (bound.center) it gets
+  // bound.out to one side within bound.outMs, then comes back near the middle
+  // (bound.back) within bound.backMs of its furthest point: 'bound' with the
+  // side it went to (the player's own left or right), how far (S) and how
+  // long the whole move took (ms).
+  class BoundDetector {
+    constructor(cfg) { this.c = cfg.combat.bound; this.hist = []; this.peak = null; }
+    update(ctx, out) {
+      const t = ctx.t, c = this.c;
+      if (!ctx.sig.hipsSeen && !ctx.sig.upperSeen) { this.peak = null; return; }
+      const x = ctx.sig.hipsSeen ? ctx.sig.body.hMid.x : ctx.sig.body.sMid.x;
+      this.hist.push({ t, x });
+      while (this.hist.length && t - this.hist[0].t > c.outMs) this.hist.shift();
+      if (!this.peak && Math.abs(x) >= c.out) {
+        // left the middle quickly: the bound is on
+        const start = this.hist.find((s) => Math.abs(s.x) <= c.center && Math.sign(s.x || x) !== -Math.sign(x));
+        if (start) this.peak = { t, x, from: start.t };
+      } else if (this.peak) {
+        if (Math.sign(x) === Math.sign(this.peak.x) && Math.abs(x) > Math.abs(this.peak.x)) { this.peak.t = t; this.peak.x = x; }
+        if (Math.abs(x) <= c.back) {
+          out.events.push(['bound', { side: this.peak.x > 0 ? 'right' : 'left', dist: Math.abs(this.peak.x), ms: t - this.peak.from }]);
+          this.peak = null;
+        } else if (t - this.peak.t > c.backMs) this.peak = null; // stepped over and stayed: not a bound
+      }
+    }
+  }
+
   // Arm depth (0.6.0, after the first camera fights: hooks and uppercuts
   // landed, straights did not). MediaPipe's world landmarks judge depth
   // poorly, and a straight goes right at the camera, so its world depth comes
@@ -385,7 +416,7 @@
   }
 
   // run after the locomotion detectors (stance reads the turn detector's yaw)
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all

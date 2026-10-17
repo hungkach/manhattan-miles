@@ -80,7 +80,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.7.0 from hungkach/body-arcade@5bfd132, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.8.0 from hungkach/body-arcade@9cd5eb8, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -89,7 +89,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.7.0';
+  RE.version = '0.8.0';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -350,6 +350,7 @@
           downBelow: 0.3,    // m below the shoulder
           downSpeed: 1.2,    // m/s downward
           refSpeed: 5,       // m/s of fist speed that is power 1
+          overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
         },
         // arm depth from foreshortening (ArmDepth in combat.js)
         depth: {
@@ -364,6 +365,14 @@
           full: 0.55,
           eventLevel: 0.5,
           eventReset: 0.2,
+        },
+        // a bound out to one side and back (0.8.0): hip midpoint in S from where it was at calibration
+        bound: {
+          center: 0.35,  // S: starts from within this of the middle
+          out: 0.9,      // S: gets this far to one side
+          outMs: 600,    // within this long of leaving the middle
+          back: 0.4,     // S: and comes back within this of the middle
+          backMs: 900,   // within this long of its furthest point
         },
         level: {
           squat: 0.3,      // T level drop that is a squat (spec 0.35; 0.4.2 eased for a fighting crouch)
@@ -1365,7 +1374,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance']) RE.detectors.add(name);
+  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -1500,8 +1509,10 @@
         if (a.angle < this.c.rearm) h.armed = true;
         if (h.hist.length < 3 || t - h.last < this.c.refractoryMs) continue;
         if (ctx.upperLow) continue;
-        const type = this.classify(ctx, hand, a, h.hist, out);
+        let type = this.classify(ctx, hand, a, h.hist, out);
         if (!type) continue;
+        // 0.8.0 (Mark): a hook from the rear hand is the overhand
+        if (type === 'hook' && this.c.overhand && hand === (out.stance === 'southpaw' ? 'left' : 'right')) type = 'overhand';
         h.last = t;
         if (type === 'jab' || type === 'cross' || type === 'down') { h.armed = false; h.lastStraight = t; }
         const speed = this.peakSpeed(h.hist);
@@ -1652,6 +1663,35 @@
     }
   }
 
+  // Bound (0.8.0, Mark: a bound out and back, after Homecoming Hero, makes an
+  // angle like Dillashaw or Cruz). The hip midpoint, against where it was at
+  // calibration (body x, S): from near the middle (bound.center) it gets
+  // bound.out to one side within bound.outMs, then comes back near the middle
+  // (bound.back) within bound.backMs of its furthest point: 'bound' with the
+  // side it went to (the player's own left or right), how far (S) and how
+  // long the whole move took (ms).
+  class BoundDetector {
+    constructor(cfg) { this.c = cfg.combat.bound; this.hist = []; this.peak = null; }
+    update(ctx, out) {
+      const t = ctx.t, c = this.c;
+      if (!ctx.sig.hipsSeen && !ctx.sig.upperSeen) { this.peak = null; return; }
+      const x = ctx.sig.hipsSeen ? ctx.sig.body.hMid.x : ctx.sig.body.sMid.x;
+      this.hist.push({ t, x });
+      while (this.hist.length && t - this.hist[0].t > c.outMs) this.hist.shift();
+      if (!this.peak && Math.abs(x) >= c.out) {
+        // left the middle quickly: the bound is on
+        const start = this.hist.find((s) => Math.abs(s.x) <= c.center && Math.sign(s.x || x) !== -Math.sign(x));
+        if (start) this.peak = { t, x, from: start.t };
+      } else if (this.peak) {
+        if (Math.sign(x) === Math.sign(this.peak.x) && Math.abs(x) > Math.abs(this.peak.x)) { this.peak.t = t; this.peak.x = x; }
+        if (Math.abs(x) <= c.back) {
+          out.events.push(['bound', { side: this.peak.x > 0 ? 'right' : 'left', dist: Math.abs(this.peak.x), ms: t - this.peak.from }]);
+          this.peak = null;
+        } else if (t - this.peak.t > c.backMs) this.peak = null; // stepped over and stayed: not a bound
+      }
+    }
+  }
+
   // Arm depth (0.6.0, after the first camera fights: hooks and uppercuts
   // landed, straights did not). MediaPipe's world landmarks judge depth
   // poorly, and a straight goes right at the camera, so its world depth comes
@@ -1737,7 +1777,7 @@
   }
 
   // run after the locomotion detectors (stance reads the turn detector's yaw)
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all
@@ -2482,6 +2522,8 @@
         case 'cross': strike(this.rear(), 'cross'); break;
         case 'hook': strike(this.lead(), 'hook'); break;
         case 'uppercut': strike(this.rear(), 'uppercut'); break;
+        case 'overhand': strike(this.rear(), 'overhand'); break;
+        case 'bound_left': case 'bound_right': this.emit('bound', { side: action === 'bound_left' ? 'left' : 'right', dist: 1.2, ms: 600 }); break;
         case 'slip_left': case 'slip_right': {
           const side = action === 'slip_left' ? 'left' : 'right';
           this.slip = side === 'left' ? -1 : 1;
@@ -2528,7 +2570,7 @@
 
   const BUTTONS = [
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'], ['wave_left', 'Wave L'], ['wave_right', 'Wave'],
-    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['uppercut', 'Upper'],
+    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['overhand', 'Overhand'], ['uppercut', 'Upper'], ['bound_left', 'Bound L'], ['bound_right', 'Bound R'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
     ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
   ];
@@ -3785,6 +3827,12 @@
       <p id="modeHint" class="hint"></p>
       <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
       <label class="check"><input type="checkbox" id="realNames" checked> Real business names</label>
+      <label class="pick">Look
+        <select id="look"><option value="golden">Golden hour</option><option value="day">Day</option><option value="night">Night</option></select>
+      </label>
+      <label class="pick">Graphics
+        <select id="gfx"><option value="high">High</option><option value="low">Low (older phones)</option></select>
+      </label>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
     <p class="hint" id="progLine"></p>
@@ -4516,6 +4564,7 @@
       { id: 'repeat', label: 'Repeat directions' },
       { id: 'skip', label: 'Skip this stop' },
       { id: 'tutor', label: 'Combat tutorial' },
+      { id: 'look', label: `Time of day: ${L.name}` },
       { id: 'teleport', label: 'Teleport (test)' },
       { id: 'spawn', label: 'Spawn opponent (test)' },
       { id: 'end', label: 'End session' },
@@ -4572,6 +4621,11 @@
     else if (it.id === 'tp') teleport(it.place, performance.now());
     else if (it.id === 'spawn') spawnFoes(14);
     else if (it.id === 'tutor') startTutor(performance.now());
+    else if (it.id === 'look') {
+      const ids = Object.keys(LOOKS), next = ids[(ids.indexOf(Object.keys(LOOKS).find((k) => LOOKS[k] === L)) + 1) % ids.length];
+      setLook(next); try { localStorage.setItem(LOOK_KEY, next); } catch (_) {}
+      $('look').value = next; say(LOOKS[next].name, 'confirm');
+    }
   }
   function phoneTick(now) {
     engine.set_facing(Phone.facing); // the turn picks; it does not steer
@@ -4697,11 +4751,15 @@
     // ranges (m): they drift between close and mid; a step back is out. Straights reach mid range,
     // hooks and uppercuts only land close (`reach`, against the real distance)
     rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
-    reach: { jab: 2.6, cross: 2.6, hook: 1.85, uppercut: 1.85 },
+    reach: { jab: 2.6, cross: 2.6, hook: 1.85, overhand: 1.95, uppercut: 1.85 },
     hp: [12, 16], playerHp: 10,
     windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, swingMs: 220,
     // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
-    damage: { jab: 0.7, cross: 1.0, hook: 1.5, uppercut: 1.3, down: 1.0, down_strike: 1.0 },
+    damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.3, down: 1.0, down_strike: 1.0 },
+    // a shift (Mark 10/17, Dillashaw and Cruz): a bound out and back takes an angle; for ms (1 to
+    // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
+    // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
+    shift: { ms: [1000, 4000], bonus: 1.4, cooldownMs: 2500, turnDeg: 60 },
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
     // the glove hitbox: a glove moving at least `speed` (shoulder widths a second), at least `reach`
     // in front of your shoulders, that ends over their head or body on screen lands. One hit per
@@ -4737,7 +4795,7 @@
   const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, guardHp: 5, guardBrokenUntil: -Infinity, guardK: 0, lastSlipAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
     armTilt: 0, impacts: [], sparks: [], pops: [], combo: { n: 0, last: -Infinity }, shake: null, flashAt: -Infinity, block: null, clip: null, recording: false, people: [] };
-  const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0, caught: 0, got_away: 0 });
+  const freshStats = () => ({ fled: 0, won: 0, lost: 0, escaped: 0, landed: 0, thrown: 0, glove: 0, shots: 0, takedowns: 0, stuffed: 0, guardBreaks: 0, reads: 0, blocked: 0, slipped: 0, sprawls: 0, ms: 0, caught: 0, got_away: 0, shifts: 0 });
   Fight.stats = freshStats();
   const rand = (a, b) => a + Math.random() * (b - a);
   function fightMsg(text, ms = 900) { Fight.msg = text; Fight.msgUntil = performance.now() + ms; }
@@ -4745,7 +4803,7 @@
   // a punch landing: a burst and sparks where the glove met them, the damage and the punch's name
   // floating up, a combo count, their head or body snapping back, the screen shaking with the
   // weight of it, and a layered smack (a crowd "ooh" on a big one)
-  const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike' };
+  const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', overhand: 'Overhand', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike' };
   function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
     const at = h && h.scr ? { x: h.scr.x, y: h.scr.y } : foe.hit ? (where === 'body' ? foe.hit.chestPt : foe.hit.head) : null;
@@ -4884,12 +4942,13 @@
     { id: 'jab', big: 'Jab', small: 'Lead hand, straight out and back.', say: 'Jab. Lead hand, straight out and back.', kind: 'straight', hand: 'lead' },
     { id: 'cross', big: 'Cross', small: 'Rear hand, straight out, turn the hip.', say: 'Cross. Rear hand, straight out.', kind: 'straight', hand: 'rear' },
     { id: 'leadHook', big: 'Lead hook', small: 'Lead elbow up, swing across.', say: 'Lead hook. Elbow up, swing it across.', kind: 'hook', hand: 'lead' },
-    { id: 'rearHook', big: 'Rear hook', small: 'Rear elbow up, swing across.', say: 'Rear hook.', kind: 'hook', hand: 'rear' },
+    { id: 'overhand', big: 'Overhand', small: 'Rear hand loops up and over, down onto them.', say: 'Overhand. Rear hand loops over the top.', kind: 'overhand', hand: 'rear' },
     { id: 'leadUpper', big: 'Lead uppercut', small: 'Dip the lead hand to your chest, drive it up.', say: 'Lead uppercut. Dip the hand, then drive it up.', kind: 'uppercut', hand: 'lead' },
     { id: 'rearUpper', big: 'Rear uppercut', small: 'Dip the rear hand to your chest, drive it up.', say: 'Rear uppercut.', kind: 'uppercut', hand: 'rear' },
     { id: 'cover', big: 'Cover up', small: 'Both gloves on your forehead, elbows in. Hold it.', say: 'Cover up. Both gloves high on your forehead, elbows in. Hold it.' },
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
+    { id: 'shift', big: 'Shift', small: 'Bound out to one side and back.', say: 'Shift. Bound out to one side, and straight back.', event: 'bound' },
   ];
   const Tutor = { steps: [], i: 0, n: 0, since: 0, holdSince: null, lead: 'left', stance: 'orthodox', log: [], results: [], clip: null, recording: false, lastRead: '', saved: null };
   const tutorDoneBefore = () => { try { return localStorage.getItem(TUTOR_KEY) === '1'; } catch (_) { return false; } };
@@ -4970,6 +5029,23 @@
   }
   engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('shot', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'shot' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  engine.on('bound', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'bound' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  // a shift: the bound takes an angle on them; a quick one buys a longer window
+  engine.on('bound', (e) => {
+    const a = Fight.active, now = performance.now();
+    if (!a || a.tutor || engine.combat().phase !== 'standing' || now < (Fight.shiftCd || 0)) return;
+    const foe = a.foe;
+    if (['down', 'ko', 'flee', 'shoot'].includes(foe.state) || a.range === 'out') return;
+    const q = Math.max(0, Math.min(1, (1300 - (e.ms || 1000)) / 700));
+    const ms = Math.round(FT.shift.ms[0] + (FT.shift.ms[1] - FT.shift.ms[0]) * q);
+    Fight.shift = { side: e.side === 'left' ? -1 : 1, start: now, until: now + ms, ms };
+    Fight.shiftCd = now + ms + FT.shift.cooldownMs;
+    Fight.stats.shifts = (Fight.stats.shifts || 0) + 1;
+    if (foe.state === 'windup') { foe.state = 'guard'; Fight.stats.slipped++; } // the punch misses: you are not there
+    foe.state = foe.state === 'cover' || foe.state === 'brace' ? 'guard' : foe.state;
+    foe.until = now + ms;
+    fightMsg('Angle! Free shots', 1000); say('Angle!', 'feedback'); tone(660, 0.12, 0.15, 'triangle'); tone(990, 0.18, 0.12, 'triangle', 0.08);
+  });
   function endTutor(now) {
     if (Tutor.recording) { Tutor.recording = false; if (engine.is_recording()) Tutor.clip = engine.stop_recording(); }
     if (engine.mode() === 'combat') engine.exit_combat();
@@ -5008,7 +5084,7 @@
     G.interval = null; G.intervalIn = SESSION.intervalEveryS;
     gatherCrowd(now);
     Fight.hp = FT.playerHp;
-    Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity;
+    Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity; Fight.shift = null; Fight.shiftCd = 0;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
     foe.guardHp = FT.guard.hp;
     Fight.lowSince = null;
@@ -5154,14 +5230,16 @@
     Fight.stats.thrown++;
     if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Out of range'); return; }
     // reach: hooks and uppercuts only land close; straights reach mid range
-    if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) { fightMsg(kind === 'hook' || kind === 'uppercut' ? `Too far for ${kind === 'hook' ? 'a hook' : 'an uppercut'}` : 'Out of range'); return; }
+    if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) { fightMsg({ hook: 'Too far for a hook', overhand: 'Too far for an overhand', uppercut: 'Too far for an uppercut' }[kind] || 'Out of range'); return; }
     if (kind === 'uppercut') where = 'body'; // uppercuts dig into the body
     if (kind === 'down_strike' && foe.state !== 'down') return;
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
     if (where === 'body' && kind !== 'uppercut') dmg *= FT.hit.body;
     // hooks, uppercuts and body shots go around a high guard; the rest wear it down until it breaks
-    if (foe.state === 'cover' && kind !== 'hook' && kind !== 'uppercut' && where !== 'body') {
+    const shifted = Fight.shift && now < Fight.shift.until;
+    if (shifted) dmg *= FT.shift.bonus; // you have the angle: free shots
+    if (foe.state === 'cover' && !shifted && kind !== 'hook' && kind !== 'overhand' && kind !== 'uppercut' && where !== 'body') {
       foe.guardHp -= dmg;
       dmg *= FT.coverFactor;
       if (foe.guardHp <= 0) {
@@ -5298,6 +5376,7 @@
     }
     if (Fight.lowSince === null) foe.bracedFor = null;
     if (foe.state === 'down' || now < foe.until) return;
+    if (Fight.shift && now < Fight.shift.until) return; // turned away, looking for you
     // a state just ran out
     if (foe.state === 'windup') {
       // the punch lands now unless you covered or slipped it (a little grace for camera lag)
@@ -5319,7 +5398,7 @@
           Fight.shake = { t: now, k: 1.6 }; tone(90, 0.3, 0.4, 'sine', 0, 40);
         } else { Fight.stats.blocked++; fightMsg('Blocked'); Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 }; }
       }
-      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(`Hook to your ${yours}: hand up by that ear`, 1300); }
+      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(FT.oneHand ? `Hook: ${yours} hand up` : "Hook! Hands up", 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -5546,6 +5625,13 @@
   function foeFrame(f) {
     let fx = P.x - f.x, fz = P.z - f.z;
     if (f.state === 'flee') { fx = -fx; fz = -fz; }
+    // shifted: they still face where you were, turning back toward you as the window runs out
+    const sh = Fight.shift, now = performance.now();
+    if (sh && Fight.active && Fight.active.foe === f && now < sh.until) {
+      const k = Math.min(1, (now - sh.start) / 200) * Math.min(1, (sh.until - now) / 400);
+      const ang = sh.side * (FT.shift.turnDeg * Math.PI / 180) * k, c = Math.cos(ang), sn = Math.sin(ang);
+      [fx, fz] = [fx * c - fz * sn, fx * sn + fz * c];
+    }
     const n = Math.hypot(fx, fz) || 1;
     fx /= n; fz /= n;
     return { fx, fz, rx: fz, rz: -fx };
@@ -5655,9 +5741,17 @@
     list.push({ kind: 'ball', c: projC(c, fv), r, col, depth: c.z });
   }
   const rgb = (c, k = 1) => `rgb(${c.map((v) => Math.max(0, Math.min(255, Math.round(v * k)))).join(',')})`;
+  // a prim's color under the look's light (cached per color array) and the haze at its depth
+  function litPrim(col) {
+    let c = PrimLit.cache.get(col);
+    if (!c) { c = col.map((v, i) => Math.min(255, v * (L.amb[i] + L.sun[i] * 0.75))); PrimLit.cache.set(col, c); }
+    return c;
+  }
+  const hazed = (c, depth) => { const f = fogOf(depth); return f < 0.01 ? c : c.map((v, i) => v * (1 - f) + L.fog[i] * f); };
   function drawPrims(list) {
     list.sort((p, q) => q.depth - p.depth);
-    for (const p of list) {
+    for (const p0 of list) {
+      const p = p0.col ? Object.assign({}, p0, { col: hazed(litPrim(p0.col), p0.depth) }) : p0;
       if (p.kind === 'poly') {
         ctx.fillStyle = rgb(p.col, p.k);
         ctx.beginPath(); p.pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.closePath(); ctx.fill();
@@ -5674,6 +5768,20 @@
       const ra = p.r * p.a.s, rb = p.r * p.b.s;
       const dx = p.b.x - p.a.x, dy = p.b.y - p.a.y, L = Math.hypot(dx, dy) || 1e-6;
       const nx = -dy / L, ny = dx / L;
+      if (HIGH && ra + rb > 6) {
+        // round shading across the limb: light from the upper left of the screen
+        const mx = (p.a.x + p.b.x) / 2, my = (p.a.y + p.b.y) / 2, rr = (ra + rb) / 2, lit = nx * -0.5 + ny * -0.85 > 0;
+        const g = ctx.createLinearGradient(mx - nx * rr, my - ny * rr, mx + nx * rr, my + ny * rr);
+        g.addColorStop(0, rgb(p.col, lit ? 0.58 : 1.0)); g.addColorStop(lit ? 0.68 : 0.32, rgb(p.col, 1.18)); g.addColorStop(1, rgb(p.col, lit ? 1.0 : 0.58));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(p.a.x + nx * ra, p.a.y + ny * ra); ctx.lineTo(p.b.x + nx * rb, p.b.y + ny * rb);
+        ctx.lineTo(p.b.x - nx * rb, p.b.y - ny * rb); ctx.lineTo(p.a.x - nx * ra, p.a.y - ny * ra);
+        ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.a.x, p.a.y, ra, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.b.x, p.b.y, rb, 0, Math.PI * 2); ctx.fill();
+        continue;
+      }
       ctx.fillStyle = rgb(p.col, 0.9);
       ctx.beginPath();
       ctx.moveTo(p.a.x + nx * ra, p.a.y + ny * ra); ctx.lineTo(p.b.x + nx * rb, p.b.y + ny * rb);
@@ -5708,19 +5816,38 @@
       const cs = ix.map((i) => toCam(v[i].x, v[i].y, v[i].z));
       if (cs.some((q) => q.z < NEAR3)) continue;
       const mc = toCam(m.x, m.y, m.z);
-      list.push({ kind: 'poly', pts: cs.map((q) => projC(q, F)), col, k: up ? 1.08 : 0.68 + 0.3 * Math.max(0, nx * SUN.x + nz * SUN.z), depth: mc.z });
+      list.push({ kind: 'poly', pts: cs.map((q) => projC(q, F)), col, k: up ? 1.1 : 0.62 + 0.45 * Math.max(0, nx * SUN.x + nz * SUN.z), depth: mc.z });
     }
   }
   const GLASS = [52, 66, 82], TIRE = [22, 22, 24];
   function drawCar(c) {
     const list = [];
     const ty = c.cab ? 0 : 0.05;
-    boxPrims(list, c.x, 0.72, c.z, 2.2, 0.9, 0.36, c.hx, c.hz, c.col);
-    boxPrims(list, c.x - c.hx * 0.2, 1.33 - ty, c.z - c.hz * 0.2, 1.2, 0.8, 0.26, c.hx, c.hz, GLASS);
-    if (c.cab) boxPrims(list, c.x - c.hx * 0.2, 1.7, c.z - c.hz * 0.2, 0.3, 0.45, 0.1, c.hx, c.hz, [250, 244, 214]);
     const rx = c.hz, rz = -c.hx;
-    for (const a of [-1.35, 1.35]) for (const b of [-0.82, 0.82]) { const q = toCam(c.x + c.hx * a + rx * b, 0.33, c.z + c.hz * a + rz * b); ball(list, q, 0.33, TIRE, F); }
+    boxPrims(list, c.x, 0.47, c.z, 2.28, 0.92, 0.17, c.hx, c.hz, [38, 40, 44]); // bumpers and sills
+    boxPrims(list, c.x, 0.82, c.z, 2.2, 0.9, 0.2, c.hx, c.hz, c.col);
+    boxPrims(list, c.x - c.hx * 0.2, 1.3 - ty, c.z - c.hz * 0.2, 1.15, 0.8, 0.28, c.hx, c.hz, GLASS);
+    boxPrims(list, c.x - c.hx * 0.2, 1.62 - ty, c.z - c.hz * 0.2, 1.0, 0.78, 0.04, c.hx, c.hz, c.col); // the roof
+    if (c.cab) boxPrims(list, c.x - c.hx * 0.2, 1.76, c.z - c.hz * 0.2, 0.3, 0.45, 0.1, c.hx, c.hz, [250, 244, 214]);
+    for (const b of [-0.62, 0.62]) {
+      boxPrims(list, c.x + c.hx * 2.21 + rx * b, 0.82, c.z + c.hz * 2.21 + rz * b, 0.03, 0.17, 0.07, c.hx, c.hz, [255, 248, 214]);
+      boxPrims(list, c.x - c.hx * 2.21 + rx * b, 0.86, c.z - c.hz * 2.21 + rz * b, 0.03, 0.15, 0.06, c.hx, c.hz, [200, 24, 24]);
+    }
+    for (const a of [-1.35, 1.35]) for (const b of [-0.84, 0.84]) { const q = toCam(c.x + c.hx * a + rx * b, 0.33, c.z + c.hz * a + rz * b); ball(list, q, 0.33, TIRE, F); }
     drawPrims(list);
+    // at night the lights glow
+    if (L.night) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (const [k, col] of [[2.3, '255,240,200'], [-2.3, '255,40,30']]) for (const b of [-0.62, 0.62]) {
+        const q = toCam(c.x + c.hx * k + rx * b, 0.84, c.z + c.hz * k + rz * b);
+        if (q.z < NEAR3) continue;
+        const pp = projC(q, F), R = Math.max(3, pp.s * (k > 0 ? 0.9 : 0.5));
+        const g = ctx.createRadialGradient(pp.x, pp.y, 0, pp.x, pp.y, R);
+        g.addColorStop(0, `rgba(${col},.8)`); g.addColorStop(1, `rgba(${col},0)`);
+        ctx.fillStyle = g; ctx.fillRect(pp.x - R, pp.y - R, R * 2, R * 2);
+      }
+      ctx.restore();
+    }
   }
   // a vendor's cart and umbrella, and what they sell on a sign when you are near
   function drawCart(v) {
@@ -5756,6 +5883,52 @@
     lines.forEach((l, i) => ctx.fillText(l, bx + w / 2, by + 5 * U + i * lh));
   }
   const SKIN = [214, 166, 128], PANTS = [44, 48, 60], SHOE = [30, 30, 34], GLOVE = [28, 30, 38];
+  // People (10/17 models): hips, a waist and a broader chest, shoulders, neck, a head with hair,
+  // sleeves or bare arms, hands, legs, and shoes with toes; each person their own skin, hair,
+  // clothes and shoes.
+  const SKINS = [[238, 200, 170], [224, 176, 138], [198, 148, 110], [164, 116, 82], [124, 84, 58], [94, 63, 44]];
+  const HAIRS = [[24, 20, 18], [52, 36, 26], [96, 64, 38], [170, 130, 74], [216, 186, 124], [96, 96, 102], [132, 46, 30]];
+  const PANTS_C = [[44, 48, 60], [28, 32, 44], [62, 78, 114], [112, 100, 82], [36, 36, 38], [162, 152, 130], [92, 42, 42]];
+  const SHOES_C = [[30, 30, 34], [236, 236, 232], [110, 66, 40], [62, 62, 72]];
+  const pickR = (a, r) => a[Math.floor(r() * a.length) % a.length];
+  function styleOf(seed, top, officer) {
+    const r = rng(Math.floor(seed * 1e6) + 3);
+    if (officer) return { skin: pickR(SKINS, r), hair: pickR(HAIRS, r), top, top2: top, pants: [30, 36, 60], shoes: SHOE, sleeve: true };
+    const jacket = r() < 0.35;
+    return { skin: pickR(SKINS, r), hair: pickR(HAIRS, r), bald: r() < 0.08, top, top2: jacket ? top.map((v) => v * 0.8) : top, pants: pickR(PANTS_C, r), shoes: pickR(SHOES_C, r), sleeve: r() < 0.8 };
+  }
+  // joints the poses do not carry: hair over the head, toes ahead of the feet
+  function extraJoints(o, fr, j) {
+    const at = (q) => { const w = toWorld(o, fr, q); return toCam(w.x, w.y, w.z); };
+    return { hair: at([j.head[0], j.head[1] + 0.035, j.head[2] - 0.03]), toeL: at([j.ftL[0], j.ftL[1] - 0.01, j.ftL[2] + 0.13]), toeR: at([j.ftR[0], j.ftR[1] - 0.01, j.ftR[2] + 0.13]) };
+  }
+  function bodyPrims(list, c, st, ex, depth) {
+    const lerp3 = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
+    const waist = lerp3(c.pelvis, c.chest, 0.45);
+    capsule(list, c.hipL, c.hipR, 0.105, st.pants, F);
+    capsule(list, c.pelvis, waist, 0.135, st.top2 || st.top, F);
+    capsule(list, waist, c.chest, 0.158, st.top, F);
+    capsule(list, c.shL, c.shR, 0.08, st.top, F);
+    capsule(list, c.chest, c.neck, 0.052, st.skin, F);
+    if (!st.bald) ball(list, ex.hair, 0.108, st.hair, F);
+    ball(list, c.head, 0.105, st.skin, F);
+    for (const sd of ['L', 'R']) {
+      capsule(list, c['sh' + sd], c['el' + sd], 0.052, st.sleeve ? st.top : st.skin, F);
+      capsule(list, c['el' + sd], c['fi' + sd], 0.042, st.skin, F);
+      ball(list, c['fi' + sd], st.fist || 0.047, st.hand || st.skin, F);
+      capsule(list, c['hip' + sd], c['kn' + sd], 0.078, st.pants, F);
+      capsule(list, c['kn' + sd], c['ft' + sd], 0.062, st.pants, F);
+      if (depth < 70) capsule(list, c['ft' + sd], ex['toe' + sd], 0.05, st.shoes, F);
+      else ball(list, c['ft' + sd], 0.06, st.shoes, F);
+    }
+  }
+  // a soft shadow on the ground under someone
+  function groundShadow(o, fr, along, across, lying) {
+    const sh = [];
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2, u = Math.cos(a) * (lying ? along * 2 : along), v = Math.sin(a) * across; sh.push(toCam(o.x + fr.fx * u + fr.rx * v, 0.02, o.z + fr.fz * u + fr.rz * v)); }
+    const pr = project(sh);
+    if (pr) fillPoly(pr, `rgba(0, 0, 0, ${L.night ? 0.18 : 0.25})`);
+  }
   function drawFoe(f, now) {
     let j = poseFoe(f, now);
     // a landed punch snaps the head (or folds the body) back for a moment
@@ -5788,19 +5961,10 @@
     }
     const shp = project(sh);
     if (shp) fillPoly(shp, 'rgba(0, 0, 0, .28)');
-    capsule(list, c.pelvis, c.chest, 0.15, shirt, F);
-    capsule(list, c.shL, c.shR, 0.075, shirt, F);
-    capsule(list, c.hipL, c.hipR, 0.1, PANTS, F);
-    capsule(list, c.chest, c.neck, 0.06, SKIN, F);
-    ball(list, c.head, 0.115, SKIN, F);
-    for (const s of ['L', 'R']) {
-      capsule(list, c['sh' + s], c['el' + s], 0.055, shirt, F);
-      capsule(list, c['el' + s], c['fi' + s], 0.047, SKIN, F);
-      ball(list, c['fi' + s], 0.075, GLOVE, F);
-      capsule(list, c['hip' + s], c['kn' + s], 0.08, PANTS, F);
-      capsule(list, c['kn' + s], c['ft' + s], 0.062, PANTS, F);
-      ball(list, c['ft' + s], 0.06, SHOE, F);
-    }
+    // a street fighter: tank top, bare arms, taped fists
+    if (!f.style) f.style = Object.assign(styleOf(f.seed || (f.col[0] * 7 + f.col[2]) / 1000, f.col, false), { sleeve: false, fist: 0.07, hand: GLOVE });
+    const st = hurt ? Object.assign({}, f.style, { top: shirt }) : f.style;
+    bodyPrims(list, c, st, extraJoints(f, fr, j), 0);
     drawPrims(list);
     // the telegraph: a pulsing ring on the hand that is coming, or around the hips on a shot
     if (f.state === 'windup' || f.state === 'shoot') {
@@ -5868,20 +6032,10 @@
     const c = {};
     for (const k in j) { const w = toWorld(p, fr, j[k]); c[k] = toCam(w.x, w.y, w.z); }
     const list = [];
-    const shirt = p.col;
-    capsule(list, c.pelvis, c.chest, 0.15, shirt, F);
-    capsule(list, c.shL, c.shR, 0.075, shirt, F);
-    capsule(list, c.hipL, c.hipR, 0.1, PANTS, F);
-    capsule(list, c.chest, c.neck, 0.06, SKIN, F);
-    ball(list, c.head, 0.11, SKIN, F);
-    for (const sd of ['L', 'R']) {
-      capsule(list, c['sh' + sd], c['el' + sd], 0.05, shirt, F);
-      capsule(list, c['el' + sd], c['fi' + sd], 0.042, SKIN, F);
-      ball(list, c['fi' + sd], 0.045, SKIN, F);
-      capsule(list, c['hip' + sd], c['kn' + sd], 0.075, PANTS, F);
-      capsule(list, c['kn' + sd], c['ft' + sd], 0.06, PANTS, F);
-      ball(list, c['ft' + sd], 0.055, SHOE, F);
-    }
+    const dpt = Math.hypot(p.x - cam.x, p.z - cam.z);
+    if (dpt < 45) groundShadow(p, fr, 0.38, 0.3, p.kind === 'ko');
+    if (!p.style) p.style = styleOf(p.seed || 0, p.col, p.officer);
+    bodyPrims(list, c, p.style, extraJoints(p, fr, j), dpt);
     if (p.officer) {
       // a flat cap
       const w = toWorld(p, fr, [j.head[0], j.head[1] + 0.09, j.head[2]]);
@@ -6024,6 +6178,7 @@
       else if (Math.abs(vx) > Math.max(vz, Math.abs(vy)) * 0.9 && ang < c.straightAngle) kind = 'hook';
       else if (vy > Math.max(vz, 0) * 1.2 && fromLow && ang < c.straightAngle) kind = 'uppercut';
       else kind = side === (engine.signals().stance === 'southpaw' ? 'right' : 'left') ? 'jab' : 'cross';
+      if (kind === 'hook' && side !== (engine.signals().stance === 'southpaw' ? 'right' : 'left')) kind = 'overhand'; // the rear hook
       h.lastKind = kind;
       landed(kind, power, now, side, onHead ? 'head' : 'body');
     }
@@ -6038,6 +6193,8 @@
       const s = engine.signals();
       const phase = engine.combat().phase;
       lat = (s.slip || 0) * 0.3;
+      const sh = Fight.shift, now = performance.now();
+      if (sh && now < sh.until) lat += sh.side * 0.55 * Math.min(1, (sh.until - now) / 400);
       roll = (s.slip || 0) * 0.07;
       dy = -Math.min(1, s.squat_depth || 0) * 0.6;
       if (phase === 'drive') { fwd = 0.6; dy = Math.min(dy, -0.55); }
@@ -6071,6 +6228,11 @@
     // the ones waiting their turn: their health, smaller
     const wait = others(a);
     wait.forEach((f, i) => bar(W / 2 - w / 2 + i * (w * 0.5 + 4), 94, w * 0.5 - 4, 14, Math.max(0, f.hp / f.maxHp), '#a8443e', 'Next'));
+    // a shift window counting down
+    if (Fight.shift && now < Fight.shift.until && !a.tutor) {
+      const left = (Fight.shift.until - now) / Fight.shift.ms;
+      bar(W / 2 - w / 2, wait.length ? 112 : 94, w, 16, left, '#7cf0a4', `Angle: free shots ${((Fight.shift.until - now) / 1000).toFixed(1)} s`);
+    }
     // the ground and pound burst counting down
     if (phase === 'top' && Fight.gnpMs) {
       const left = Math.max(0, 1 - (now - Fight.gnpStart) / Fight.gnpMs);
@@ -6132,30 +6294,47 @@
     Fight.guardK += (want - Fight.guardK) * 0.3;
     const k = Fight.guardK;
     if (k < 0.02 && !broken) return;
-    const m = Math.min(W, H), R = m * 0.17;
+    // 10/17 (Mark: this is first person, a cover-up takes most of your view): two gloves as wide as
+    // the screen between them, up to the middle of it, a gap to peek through at the top
+    const m = Math.min(W, H), R = Math.min(W * 0.27, H * 0.42);
     const blk = Fight.block && now - Fight.block.t < FT.fx.blockMs ? (now - Fight.block.t) / FT.fx.blockMs : null;
     const jolt = blk !== null ? Math.sin(blk * Math.PI) * R * 0.25 : 0;
     // edges darken: you are tucked behind your gloves
-    const vg = ctx.createRadialGradient(W / 2, H * 0.42, m * 0.25, W / 2, H * 0.42, Math.max(W, H) * 0.75);
-    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(0,0,0,${0.45 * k})`);
+    const vg = ctx.createRadialGradient(W / 2, H * 0.3, m * 0.2, W / 2, H * 0.3, Math.max(W, H) * 0.7);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(0,0,0,${0.6 * k})`);
     ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
     for (const side of [-1, 1]) {
       const spread = broken ? 1 : 0;
-      const cx = W / 2 + side * (R * 0.95 + spread * R * 1.2), cy = H + R * 1.1 - k * R * 2.25 + jolt + spread * R * 0.6;
-      // forearm down out of the view
-      ctx.fillStyle = 'rgb(196, 150, 116)';
-      ctx.beginPath(); ctx.moveTo(cx - R * 0.55, cy + R * 0.4); ctx.lineTo(cx + R * 0.55 - side * R * 0.2, cy + R * 0.4); ctx.lineTo(cx + side * R * 0.9 + R * 0.4, H + R); ctx.lineTo(cx + side * R * 0.9 - R * 0.6, H + R); ctx.closePath(); ctx.fill();
-      // the cuff, then the glove
-      ctx.fillStyle = '#f3f3f3'; ctx.fillRect(cx - R * 0.62, cy + R * 0.35, R * 1.24, R * 0.32);
-      const g = ctx.createRadialGradient(cx - side * R * 0.25, cy - R * 0.35, R * 0.1, cx, cy, R);
+      const cx = W / 2 + side * (R * 0.8 + spread * R * 1.2), cy = H + R * 1.2 - k * (H * 0.5 + R * 1.2) + jolt + spread * R * 0.8;
+      // the forearm straight down out of the view, round shaded, wrapped at the wrist
+      const fw = R * 0.62, fx = cx + side * R * 0.15;
+      const fa = ctx.createLinearGradient(fx - fw, 0, fx + fw, 0);
+      const skin = litPrim(SKINS[1]).map((v) => Math.round(v));
+      fa.addColorStop(0, rgb(skin, side < 0 ? 0.6 : 0.9)); fa.addColorStop(0.5, rgb(skin, 1.12)); fa.addColorStop(1, rgb(skin, side < 0 ? 0.9 : 0.6));
+      ctx.fillStyle = fa;
+      ctx.beginPath(); ctx.moveTo(cx - fw, cy + R * 0.5); ctx.lineTo(cx + fw, cy + R * 0.5); ctx.lineTo(fx + fw * 1.1, H + R * 2); ctx.lineTo(fx - fw * 1.1, H + R * 2); ctx.closePath(); ctx.fill();
+      // the cuff: white with a red stripe
+      ctx.fillStyle = '#ececec'; ctx.beginPath(); ctx.ellipse(cx, cy + R * 0.72, R * 0.64, R * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(cx - R * 0.64, cy + R * 0.5, R * 1.28, R * 0.22);
+      ctx.fillStyle = '#b0201a'; ctx.fillRect(cx - R * 0.64, cy + R * 0.6, R * 1.28, R * 0.06);
+      // the glove: padded, lit from above toward the middle, a darker rim
       const flash = blk !== null && blk < 0.4;
-      g.addColorStop(0, flash ? '#ffffff' : '#e8493f'); g.addColorStop(1, flash ? '#b9e9ff' : '#7c1612');
+      const g = ctx.createRadialGradient(cx - side * R * 0.3, cy - R * 0.45, R * 0.08, cx, cy, R * 1.05);
+      g.addColorStop(0, flash ? '#ffffff' : '#ff7a66'); g.addColorStop(0.35, flash ? '#dff6ff' : '#d8362b'); g.addColorStop(1, flash ? '#9fd8f0' : '#5a0d0a');
       ctx.fillStyle = g;
-      ctx.beginPath(); ctx.ellipse(cx, cy, R * 0.82, R, side * 0.12, 0, Math.PI * 2); ctx.fill();
-      // the thumb, toward the middle
-      ctx.beginPath(); ctx.ellipse(cx - side * R * 0.62, cy + R * 0.05, R * 0.26, R * 0.42, -side * 0.4, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = R * 0.04;
-      ctx.beginPath(); ctx.arc(cx, cy - R * 0.1, R * 0.55, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx, cy, R * 0.82, R, side * 0.1, 0, Math.PI * 2); ctx.fill();
+      // the thumb along the inside
+      ctx.beginPath(); ctx.ellipse(cx - side * R * 0.66, cy + R * 0.12, R * 0.24, R * 0.44, -side * 0.35, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(40,0,0,.35)'; ctx.lineWidth = R * 0.025;
+      ctx.beginPath(); ctx.ellipse(cx - side * R * 0.66, cy + R * 0.12, R * 0.24, R * 0.44, -side * 0.35, -Math.PI * 0.2, Math.PI * 0.9); ctx.stroke();
+      // knuckle seam and a shine
+      ctx.strokeStyle = 'rgba(40,0,0,.3)'; ctx.lineWidth = R * 0.03;
+      ctx.beginPath(); ctx.ellipse(cx, cy - R * 0.05, R * 0.6, R * 0.5, side * 0.1, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.22)';
+      ctx.beginPath(); ctx.ellipse(cx - side * R * 0.2, cy - R * 0.55, R * 0.3, R * 0.14, -side * 0.3, 0, Math.PI * 2); ctx.fill();
+      // laces over the palm side
+      ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = R * 0.02;
+      ctx.beginPath(); for (let i = 0; i < 4; i++) { const y = cy + R * (0.15 + i * 0.09); ctx.moveTo(cx - R * 0.12, y); ctx.lineTo(cx + R * 0.12, y + R * 0.05); } ctx.stroke();
     }
   }
   // landed punches, in screen pixels where the glove met them: a burst, sparks, and the punch's
@@ -6210,8 +6389,16 @@
 
   // ---------- rendering ----------
   const NEAR = 0.3;
-  const Perf = { faces: 0 };
-  const SKY = [150, 182, 214];
+  // Perf.scale: dynamic resolution. Frame times averaged over 2 s; slower than 22 ms (under about
+  // 45 fps) steps the canvas resolution down, faster than 14 ms steps it back up.
+  const Perf = { faces: 0, scale: 1, ft: 16, checkAt: 0 };
+  function perfTick(dtMs, now) {
+    Perf.ft += (Math.min(100, dtMs) - Perf.ft) * 0.05;
+    if (now < Perf.checkAt) return;
+    Perf.checkAt = now + 2000;
+    if (Perf.ft > 22 && Perf.scale > 0.5) Perf.scale = Math.max(0.5, Perf.scale - 0.15);
+    else if (Perf.ft < 14 && Perf.scale < 1) Perf.scale = Math.min(1, Perf.scale + 0.1);
+  }
   let W = 0, H = 0, F = 0, cam = null;
 
   function toCam(x, y, z) {
@@ -6231,11 +6418,17 @@
     if (out.length < 3) return null;
     return out.map((p) => ({ x: W / 2 + (F * p.x) / p.z, y: H / 2 - (F * p.y) / p.z }));
   }
-  function shade(col, k, depth) {
-    const fog = Math.min(1, Math.max(0, depth / T.drawDistance)) ** 1.3;
-    const c = col.map((v, i) => Math.round(Math.min(255, v * k) * (1 - fog) + SKY[i] * fog));
-    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  // light: the look's ambient (the sky's fill, cool in shadow) plus its sun by how square a
+  // surface is to it (sunlit 0..1), then haze toward the fog color with distance
+  const fogOf = (depth) => Math.min(1, Math.max(0, depth / T.drawDistance)) ** 1.3;
+  function litRGB(col, sunlit, depth, k = 1) {
+    const fog = fogOf(depth), c = [0, 0, 0];
+    for (let i = 0; i < 3; i++) c[i] = Math.round(Math.min(255, col[i] * k * (L.amb[i] + L.sun[i] * sunlit)) * (1 - fog) + L.fog[i] * fog);
+    return c;
   }
+  // flat things (ground, streets, roofs) take the sun from above
+  function shade(col, k, depth) { const c = litRGB(col, 0.85, depth, k); return `rgb(${c[0]},${c[1]},${c[2]})`; }
+  function shadeWall(col, sunlit, depth, k = 1) { const c = litRGB(col, sunlit * 1.25, depth, k); return `rgb(${c[0]},${c[1]},${c[2]})`; }
   function fillPoly(pts, color) {
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -6243,6 +6436,50 @@
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
+  }
+
+  // ---------- the sky: gradient, sun or moon with its glow, clouds, stars ----------
+  const STARS = Array.from({ length: 160 }, (_, i) => { const r = rng(i * 7919 + 13); return { az: r() * Math.PI * 2, el: 0.05 + r() * 1.1, s: r() }; });
+  const CLOUDS = Array.from({ length: 10 }, (_, i) => { const r = rng(i * 104729 + 7); return { az: r() * Math.PI * 2, el: 0.07 + r() * 0.2, w: 0.25 + r() * 0.35, puffs: Array.from({ length: 4 + Math.floor(r() * 3) }, () => [r() - 0.5, r() * 0.35, 0.3 + r() * 0.4]) }; });
+  // where a direction in the sky lands on screen (az from north, clockwise; el up), or null
+  function skyPoint(az, el, horizon) {
+    let a = az - P.view;
+    a = Math.atan2(Math.sin(a), Math.cos(a));
+    if (Math.abs(a) > 1.35) return null;
+    return { x: W / 2 + F * Math.tan(a), y: horizon - (F * Math.tan(el)) / Math.cos(a) };
+  }
+  function drawSky(horizon) {
+    const hy = Math.max(1, horizon);
+    const g = ctx.createLinearGradient(0, hy - H * 0.9, 0, hy);
+    g.addColorStop(0, rgbOf(L.top)); g.addColorStop(0.75, rgbOf(L.top.map((v, i) => (v + L.hor[i]) / 2))); g.addColorStop(1, rgbOf(L.hor));
+    ctx.fillStyle = g; ctx.fillRect(-W, -H, W * 3, hy + H);
+    if (L.night) for (const st of STARS) { const q = skyPoint(st.az, st.el, horizon); if (q && q.y < hy - 6) { ctx.fillStyle = `rgba(255,255,255,${0.3 + 0.6 * st.s})`; ctx.fillRect(q.x, q.y, 1 + st.s * 1.5, 1 + st.s * 1.5); } }
+    const sp = skyPoint(L.az, L.el, horizon);
+    if (sp) {
+      const R = Math.max(W, H) * (L.night ? 0.18 : 0.55), c = L.sunCol.join(',');
+      const gl = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, R);
+      gl.addColorStop(0, `rgba(${c},${L.night ? 0.3 : 0.9})`); gl.addColorStop(0.25, `rgba(${c},${L.night ? 0.08 : 0.35})`); gl.addColorStop(1, `rgba(${c},0)`);
+      ctx.fillStyle = gl; ctx.fillRect(sp.x - R, sp.y - R, R * 2, R * 2);
+      ctx.fillStyle = L.night ? '#eef2ff' : '#fffbea';
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, Math.max(W, H) * (L.night ? 0.018 : 0.026), 0, Math.PI * 2); ctx.fill();
+    }
+    if (!HIGH || !GX.clouds) return;
+    for (const cl of CLOUDS) {
+      const q = skyPoint(cl.az, cl.el, horizon);
+      if (!q || q.y > hy) continue;
+      const w = F * cl.w * 0.5;
+      for (const [dx, dy, r] of cl.puffs) {
+        const x = q.x + dx * w * 2, y = q.y - dy * w * 0.5, rx = w * r, ry = w * r * 0.42;
+        ctx.fillStyle = `rgba(${L.under.join(',')},0.45)`;
+        ctx.beginPath(); ctx.ellipse(x, y + ry * 0.35, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `rgba(${L.cloud.join(',')},0.5)`;
+        ctx.beginPath(); ctx.ellipse(x, y, rx * 0.92, ry * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // haze along the horizon
+    const hz = ctx.createLinearGradient(0, hy - H * 0.12, 0, hy);
+    hz.addColorStop(0, `rgba(${L.fog.join(',')},0)`); hz.addColorStop(1, `rgba(${L.fog.join(',')},0.7)`);
+    ctx.fillStyle = hz; ctx.fillRect(-W, hy - H * 0.12, W * 3, H * 0.12);
   }
 
   // ---------- the city: ground, streets, buildings, storefront signs ----------
@@ -6255,6 +6492,20 @@
   };
   const facadeOf = (b) => { const set = b.h > 40 ? FACADES.tower : b.h > 12 ? FACADES.mid : FACADES.house; return set[Math.floor(b.seed * set.length) % set.length]; };
   const SUN = { x: 0.6, z: -0.8 };
+  // ---------- the look (10/17 graphics pass): time of day and quality ----------
+  // Light per channel: ambient amb (the sky's fill) plus sun times how square a surface faces it.
+  // Golden hour puts the sun low in the west-southwest, so the cross streets glow (Manhattanhenge).
+  const LOOKS = {
+    golden: { name: 'Golden hour', top: [40, 60, 122], hor: [250, 170, 118], fog: [214, 160, 140], az: -1.95, el: 0.09, sunCol: [255, 206, 146], amb: [0.5, 0.53, 0.68], sun: [0.74, 0.54, 0.32], night: 0, cloud: [255, 186, 158], under: [150, 104, 128] },
+    day: { name: 'Day', top: [62, 120, 196], hor: [188, 212, 236], fog: [176, 198, 222], az: 2.6, el: 0.8, sunCol: [255, 252, 238], amb: [0.68, 0.71, 0.77], sun: [0.34, 0.32, 0.28], night: 0, cloud: [255, 255, 255], under: [196, 206, 222] },
+    night: { name: 'Night', top: [6, 8, 24], hor: [44, 36, 74], fog: [28, 28, 52], az: 1.1, el: 0.5, sunCol: [214, 224, 255], amb: [0.26, 0.28, 0.42], sun: [0.06, 0.07, 0.12], night: 1, cloud: [70, 70, 104], under: [34, 34, 56] },
+  };
+  const LOOK_KEY = 'manhattan-miles-look', GFX_KEY = 'manhattan-miles-gfx';
+  let L = LOOKS.golden, HIGH = true;
+  function setLook(id) { L = LOOKS[id] || LOOKS.golden; SUN.x = Math.sin(L.az); SUN.z = Math.cos(L.az); PrimLit.cache = new WeakMap(); }
+  const PrimLit = { cache: new WeakMap() };
+  const GX = { windows: true, store: true, cornice: true, facade: true, street: true, props: true, clouds: true, towers: true };
+  try { setLook(localStorage.getItem(LOOK_KEY) || 'golden'); HIGH = localStorage.getItem(GFX_KEY) !== 'low'; } catch (_) { setLook('golden'); }
   const GROUND_ORDER = [8, 0, 6, 4, 2, 1, 3, 5, 7];
   const ASPHALT = [66, 69, 74], WALK = [176, 172, 164], LINE_Y = [214, 178, 52];
   const rgbOf = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -6267,7 +6518,7 @@
     for (const cls of GROUND_ORDER) {
       const col = cls === 5 ? MW.WATER_COL : MW.GROUND_COL[cls];
       if (!col) continue;
-      ctx.fillStyle = rgbOf(col);
+      ctx.fillStyle = rgbOf(litRGB(col, 0.85, 0));
       for (const t of tiles) for (const p of t.polys) {
         if (p.cls !== cls || p.x1 < cam.x - D || p.x0 > cam.x + D || p.z1 < cam.z - D || p.z0 > cam.z + D) continue;
         ctx.beginPath();
@@ -6307,6 +6558,64 @@
         }
       }
     }
+    if (GX.street) streetDetail(edges, quad);
+  }
+  // curbs, lane lines and zebra crosswalks near you, each kind in one batch
+  function streetDetail(edges, quad) {
+    const DD = HIGH ? 170 : 90;
+    const curb = [], gutter = [], dash = [], zebra = [];
+    const seenNode = new Set();
+    for (const e of edges) {
+      if (!MW.walkEdge(e)) continue;
+      const w = MW.roadW(e) / 2;
+      let s0 = 0;
+      for (let k = MW.EP0[e]; k < MW.EP0[e + 1] - 1; k++) {
+        const ax = MW.PX[k], az = MW.PZ[k], bx = MW.PX[k + 1], bz = MW.PZ[k + 1];
+        const Ls = Math.hypot(bx - ax, bz - az) || 1, mx = (ax + bx) / 2, mz = (az + bz) / 2;
+        if (Math.hypot(mx - cam.x, mz - cam.z) - Ls / 2 > DD) { s0 += Ls; continue; }
+        const nx = (bz - az) / Ls, nz = -(bx - ax) / Ls, ux = (bx - ax) / Ls, uz = (bz - az) / Ls;
+        for (const sd of [-1, 1]) { curb.push(quad(ax, az, bx, bz, nx, nz, sd * w, sd * (w + 0.3), 0.025)); gutter.push(quad(ax, az, bx, bz, nx, nz, sd * (w - 0.35), sd * w, 0.022)); }
+        // lane lines on the wide streets: 3 m dashes every 9 m
+        if (MW.ECLS[e] <= 4 && w > 4.5) {
+          const lanes = Math.floor((2 * w) / 3.3), two = !MW.oneway(e);
+          for (let li = 1; li < lanes; li++) {
+            const off = -w + (li * 2 * w) / lanes;
+            if (two && Math.abs(off) < 1) continue;
+            for (let t = (9 - (s0 % 9)) % 9; t < Ls; t += 9) {
+              const t1 = Math.min(Ls, t + 3), x0 = ax + ux * t, z0 = az + uz * t, x1 = ax + ux * t1, z1 = az + uz * t1;
+              dash.push(quad(x0, z0, x1, z1, nx, nz, off - 0.08, off + 0.08, 0.03));
+            }
+          }
+        }
+        s0 += Ls;
+      }
+      // zebra crossings where three or more streets meet
+      for (const end of [0, 1]) {
+        const n = end ? MW.EN1[e] : MW.EN0[e];
+        if (n < 0 || MW.NODE_OFF[n + 1] - MW.NODE_OFF[n] < 3) continue;
+        const key = n * 1e5 + e;
+        if (seenNode.has(key)) continue;
+        seenNode.add(key);
+        const k0 = end ? MW.EP0[e + 1] - 1 : MW.EP0[e], k1 = end ? k0 - 1 : k0 + 1;
+        const px = MW.PX[k0], pz = MW.PZ[k0];
+        if (Math.hypot(px - cam.x, pz - cam.z) > DD) continue;
+        const Ls = Math.hypot(MW.PX[k1] - px, MW.PZ[k1] - pz) || 1, ux = (MW.PX[k1] - px) / Ls, uz = (MW.PZ[k1] - pz) / Ls, nx = uz, nz = -ux;
+        let cross = 0;
+        for (let q = MW.NODE_OFF[n]; q < MW.NODE_OFF[n + 1]; q++) { const e2 = MW.NODE_EDGES[q] >> 1; if (e2 !== e) cross = Math.max(cross, MW.roadW(e2) / 2); }
+        const a0 = cross + 1.2, a1 = Math.min(Ls, cross + 4.4);
+        if (a1 <= a0) continue;
+        for (let t = -w + 0.5; t < w - 0.4; t += 1.1) zebra.push(quad(px + ux * a0, pz + uz * a0, px + ux * a1, pz + uz * a1, nx, nz, t, t + 0.55, 0.03));
+      }
+    }
+    const batch = (list, color) => {
+      ctx.beginPath();
+      for (const pr of list) { if (!pr) continue; ctx.moveTo(pr[0].x, pr[0].y); for (let i = 1; i < pr.length; i++) ctx.lineTo(pr[i].x, pr[i].y); ctx.closePath(); }
+      ctx.fillStyle = color; ctx.fill();
+    };
+    batch(gutter, shade([46, 48, 52], 1, 60));
+    batch(curb, shade([196, 192, 184], 1.05, 60));
+    batch(dash, shade([226, 226, 220], 1, 60));
+    batch(zebra, shade([232, 232, 228], 1, 50));
   }
   // The route on the ground (10/16, Mark: a pathway to follow, not just the minimap): a blue
   // ribbon down the middle of the street from where you are to the next stop, with chevrons
@@ -6382,27 +6691,223 @@
           const nx = ez / L, nz = -ex / L; // outward for counterclockwise footprints
           if ((cam.x - ax) * nx + (cam.z - az) * nz <= 0) continue;
           const mx = (ax + bx) / 2, mz = (az + bz) / 2, depth = Math.hypot(mx - cam.x, mz - cam.z);
-          const lit = 0.74 + 0.26 * Math.max(0, nx * SUN.x + nz * SUN.z);
-          out.push({ cp: [toCam(ax, b.base, az), toCam(bx, b.base, bz), toCam(bx, h, bz), toCam(ax, h, az)], color: shade(col, lit, depth), depth, win: depth < 110 && h > 6 ? { ax, az, bx, bz, h } : null });
+          const sunlit = Math.max(0, nx * SUN.x + nz * SUN.z);
+          out.push({ cp: [toCam(ax, b.base, az), toCam(bx, b.base, bz), toCam(bx, h, bz), toCam(ax, h, az)], color: shadeWall(col, sunlit, depth), depth,
+            win: depth < (HIGH ? 105 : 60) && h > 5 && L > 3 ? { ax, az, bx, bz, h, base: b.base, L, kind: h > 40 ? 'tower' : h > 12 ? 'mid' : 'house', seed: b.seed + k * 0.618, col, sunlit, depth } : null });
         }
         if (cam.y > h) {
           const cp = [];
           for (let k = 0; k < n; k++) cp.push(toCam(pts[k * 2], h, pts[k * 2 + 1]));
-          out.push({ cp, color: shade(col, 1.08, dist), depth: dist + 0.1, win: null });
+          out.push({ cp, color: shade(col, 1.05, dist), depth: dist + 0.1, win: null });
         }
+        // a wooden water tank on the roof of an old mid-rise, the New York skyline's signature
+        if (HIGH && GX.towers && h > 12 && h < 45 && (b.seed * 7.3) % 1 > 0.55 && dist < 260 && cam.y < h && b.area > 250) out.push({ depth: dist - b.r * 0.7, draw: () => waterTower(b) });
       }
     }
   }
-  // floor lines on near facades, so speed reads at street level
-  function windows(face) {
-    const w = face.win;
-    ctx.strokeStyle = 'rgba(30, 40, 56, .2)';
-    ctx.lineWidth = 1;
-    for (let y = 4; y < Math.min(w.h - 1, 72); y += 3.6) {
-      const p = project([toCam(w.ax, y, w.az), toCam(w.bx, y, w.bz), toCam(w.bx, y + 0.01, w.bz)]);
-      if (!p) continue;
-      ctx.beginPath(); ctx.moveTo(p[0].x, p[0].y); ctx.lineTo(p[1].x, p[1].y); ctx.stroke();
+  // Facade detail on near walls (10/17): a darker street level, an awning over the storefront,
+  // windows by floor (glass curtain walls on towers, punched windows on brick and stone, lit at
+  // night), a cornice on the old ones, and shading toward the sidewalk. Points on the wall are
+  // linear in camera space, so each window is a cheap projection of four corners.
+  // a frame's budget of window quads, so a dense block (Times Square) stays smooth
+  const Facade = { budget: 0 };
+  const AWNINGS = [[150, 30, 34], [32, 84, 60], [30, 52, 96], [120, 84, 40], [70, 40, 80], [20, 20, 24], [170, 120, 30]];
+  function facade(f, pts) {
+    const d = f.win, depth = d.depth;
+    const A = toCam(d.ax, 0, d.az), B = toCam(d.bx, 0, d.bz), cp = cam.cp, sp = cam.sp;
+    const pt = (u, y) => {
+      const x = A.x + (B.x - A.x) * u, yy = A.y + (B.y - A.y) * u + y * cp, z = A.z + (B.z - A.z) * u - y * sp;
+      return z > NEAR ? { x: W / 2 + (F * x) / z, y: H / 2 - (F * yy) / z } : null;
+    };
+    const quad = (u0, u1, y0, y1) => {
+      Facade.budget--;
+      const p0 = pt(u0, y0), p1 = pt(u1, y0), p2 = pt(u1, y1), p3 = pt(u0, y1);
+      if (!p0 || !p1 || !p2 || !p3) return;
+      ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y); ctx.closePath();
+    };
+    const fill = (col) => { ctx.fillStyle = col; ctx.fill(); };
+    const rgbA = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+    const r = rng(Math.floor(d.seed * 1e6));
+    const street = d.base < 0.5;
+    const top = d.h, lowY = Math.max(d.base, 0);
+    // shading down the wall toward the sidewalk
+    if (HIGH && depth < 70) {
+      const g0 = pt(0.5, lowY), g1 = pt(0.5, lowY + Math.min(10, top - lowY));
+      if (g0 && g1) {
+        const g = ctx.createLinearGradient(g0.x, g0.y, g1.x, g1.y);
+        g.addColorStop(0, 'rgba(0,0,0,.32)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.closePath(); fill(g);
+      }
     }
+    // glass: the sky's color on shaded walls, the sun's on sunlit ones; lit rooms at night
+    // (glass is not lit like a wall: it reflects, so it takes the sky's own color, hazed)
+    const sky = L.top.map((v, i) => (v * 0.6 + L.hor[i] * 0.4));
+    const glassC = L.night ? [14, 18, 34] : L === LOOKS.golden && d.sunlit > 0.45 ? [236, 150, 96] : d.kind === 'tower' ? sky.map((v) => v * 0.85) : sky.map((v) => v * 0.55);
+    const glass = rgbOf(hazed(glassC, depth));
+    const warm = rgbOf(hazed([255, 196, 112], depth * 0.5));
+    const floorH = d.kind === 'house' ? 3.2 : 3.6;
+    const first = street ? lowY + 4.4 : lowY + 1.2;
+    const floors = Math.max(0, Math.min(Math.floor((top - 1 - first) / floorH), depth < 40 ? 30 : 12));
+    const spacing = d.kind === 'tower' ? 1.7 : 2.7;
+    const cols = Math.max(1, Math.floor(d.L / spacing));
+    if (floors > 0 && GX.windows) {
+      if (d.kind === 'tower' || cols * floors > 240 || depth > 75 || Facade.budget < cols * floors) {
+        // a glass curtain wall: a band per floor, mullions between panes
+        ctx.beginPath();
+        for (let i = 0; i < floors; i++) { const y = first + i * floorH; quad(0.01, 0.99, y + 0.45, y + floorH - 0.25); }
+        fill(glass);
+        if (L.night) {
+          ctx.beginPath();
+          for (let i = 0; i < floors && Facade.budget > 0; i++) for (let j = 0; j < cols; j++) if (r() < 0.32) { const y = first + i * floorH; quad(j / cols + 0.01, (j + 1) / cols - 0.01, y + 0.45, y + floorH - 0.25); }
+          fill(warm);
+        } else if (depth < 60) {
+          ctx.beginPath();
+          const y0 = first, y1 = first + floors * floorH;
+          for (let j = 1; j < cols; j++) { const p0 = pt(j / cols, y0), p1 = pt(j / cols, y1); if (p0 && p1) { ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); } }
+          ctx.strokeStyle = 'rgba(20,24,30,.28)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+      } else {
+        // punched windows, a lit room here and there at night
+        const ww = Math.min(1.3, (d.L / cols) * 0.5) / 2 / d.L; // half a window's width, along the wall
+        const dark = [], lit = [];
+        for (let i = 0; i < floors; i++) for (let j = 0; j < cols; j++) { const on = L.night && r() < 0.38; (on ? lit : dark).push([i, j]); }
+        const win = (list, col) => {
+          if (!list.length) return;
+          ctx.beginPath();
+          for (const [i, j] of list) { const c = (j + 0.5) / cols, y = first + i * floorH; quad(c - ww, c + ww, y + 0.9, y + 2.6); }
+          fill(col);
+        };
+        win(dark, glass); win(lit, warm);
+      }
+    }
+    if (GX.store && street && top > 5 && depth < 75) {
+      // the storefront: dark glass (lit at night), an awning over it
+      ctx.beginPath(); quad(0.03, 0.97, lowY + 0.35, lowY + 3.3);
+      fill(L.night && r() < 0.7 ? warm : rgbOf(litRGB([40, 48, 58], d.sunlit * 0.5, depth)));
+      ctx.beginPath(); quad(0, 1, lowY + 3.3, lowY + 3.95);
+      fill(rgbOf(litRGB(AWNINGS[Math.floor(r() * AWNINGS.length)], d.sunlit * 1.2, depth)));
+      ctx.beginPath(); quad(0, 1, lowY + 3.95, lowY + 4.3); fill('rgba(0,0,0,.18)');
+    }
+    if (GX.cornice && d.kind !== 'tower' && top > 8 && depth < 95) {
+      // the cornice along the top
+      ctx.beginPath(); quad(0, 1, top - 0.9, top - 0.3);
+      fill(rgbOf(litRGB(d.col, d.sunlit * 1.25, depth, 1.25)));
+    }
+  }
+  // is a point at height y hidden from the camera by a building (other than self) in the way?
+  function occluded(x, y, z, self) {
+    for (let f = 0.15; f < 0.95; f += 0.15) {
+      const b = MW.buildingAt(cam.x + (x - cam.x) * f, cam.z + (z - cam.z) * f);
+      if (b && b !== self && b.h > cam.y + (y - cam.y) * f) return true;
+    }
+    return false;
+  }
+  // ---------- street furniture ----------
+  // Along every walkable street, placed the same way every time (seeded by the street): lamp posts
+  // at the curb every 26 to 32 m, trees on residential streets and through the parks, a hydrant
+  // near some corners; subway entrances with their green globes at the stations.
+  const Props = { cache: new Map() };
+  function propsOfEdge(e) {
+    let list = Props.cache.get(e);
+    if (list) return list;
+    list = [];
+    if (MW.walkEdge(e)) {
+      const r = rng((e * 2654435761) % 1e9 + 11), off = MW.roadW(e) / 2 + 0.8;
+      const k0 = MW.EP0[e], k1 = MW.EP0[e + 1] - 1;
+      const midK = Math.floor((k0 + k1) / 2), park = MW.groundAt(MW.PX[midK], MW.PZ[midK]) === 1;
+      const leafy = park || MW.ECLS[e] === 5 || r() < 0.25;
+      let s0 = 0, next = 8 + r() * 10, n = 0;
+      for (let k = k0; k < k1; k++) {
+        const ax = MW.PX[k], az = MW.PZ[k], bx = MW.PX[k + 1], bz = MW.PZ[k + 1], Ls = Math.hypot(bx - ax, bz - az) || 1;
+        const nx = (bz - az) / Ls, nz = -(bx - ax) / Ls;
+        while (next < s0 + Ls) {
+          const t = (next - s0) / Ls, x = ax + (bx - ax) * t, z = az + (bz - az) * t, side = n++ % 2 ? 1 : -1;
+          const tree = leafy && r() < (park ? 0.85 : 0.55);
+          const px = x + nx * off * side, pz = z + nz * off * side;
+          if (!MW.buildingAt(px, pz, 0.5)) list.push({ kind: tree ? 'tree' : 'lamp', x: px, z: pz, dx: -nx * side, dz: -nz * side, seed: r() });
+          next += tree ? (park ? 9 : 13) + r() * 6 : 26 + r() * 6;
+        }
+        s0 += Ls;
+      }
+      if (r() < 0.45 && s0 > 30) {
+        const t = r() < 0.5 ? 0.12 : 0.88, k = Math.min(k1 - 1, k0 + Math.floor((k1 - k0) * t));
+        const ax = MW.PX[k], az = MW.PZ[k], bx = MW.PX[k + 1], bz = MW.PZ[k + 1], Ls = Math.hypot(bx - ax, bz - az) || 1, sd = r() < 0.5 ? 1 : -1;
+        const px = (ax + bx) / 2 + ((bz - az) / Ls) * off * sd, pz = (az + bz) / 2 - ((bx - ax) / Ls) * off * sd;
+        if (!MW.buildingAt(px, pz, 0.5)) list.push({ kind: 'hydrant', x: px, z: pz, seed: r() });
+      }
+    }
+    if (Props.cache.size > 5000) Props.cache.clear();
+    Props.cache.set(e, list);
+    return list;
+  }
+  function nearProps() {
+    const out = [], R = HIGH ? 130 : 70, edges = new Set();
+    MW.edgesNear(cam.x, cam.z, R, (e) => edges.add(e));
+    for (const e of edges) for (const pr of propsOfEdge(e)) {
+      const dx = pr.x - cam.x, dz = pr.z - cam.z;
+      if (dx * dx + dz * dz < R * R && dx * cam.sy + dz * cam.cy > -1) out.push(pr);
+    }
+    for (const st of MW.stations) {
+      if (Math.abs(st.x - cam.x) > R || Math.abs(st.z - cam.z) > R) continue;
+      if (!st.ent) { const sp = sidewalkNear(st.x, st.z, 1); st.ent = { kind: 'subway', x: sp.x, z: sp.z, dx: sp.dir ? sp.dir.x : 1, dz: sp.dir ? sp.dir.z : 0, seed: 0 }; }
+      out.push(st.ent);
+    }
+    return out;
+  }
+  const POLE = [46, 54, 52], BARK = [96, 70, 48], LEAVES = [[72, 112, 56], [86, 126, 62], [62, 100, 52]], HYDRANT = [196, 44, 34], RAIL = [34, 70, 50], GLOBE = [96, 230, 140];
+  function drawProp(pr) {
+    const list = [], at = (x, y, z) => toCam(x, y, z);
+    const glow = [];
+    if (pr.kind === 'lamp') {
+      const hx = pr.x + pr.dx * 1.4, hz = pr.z + pr.dz * 1.4;
+      capsule(list, at(pr.x, 0, pr.z), at(pr.x, 5.6, pr.z), 0.07, POLE, F);
+      capsule(list, at(pr.x, 5.5, pr.z), at(hx, 5.75, hz), 0.05, POLE, F);
+      ball(list, at(hx, 5.62, hz), 0.17, L.night ? [255, 236, 190] : [222, 222, 206], F);
+      if (L.night) glow.push([hx, 5.55, hz, 2.6, '255,214,140'], [hx, 0.05, hz, 5, '255,190,110']);
+    } else if (pr.kind === 'tree') {
+      const k = 0.8 + pr.seed * 0.5, lc = LEAVES[Math.floor(pr.seed * 3) % 3];
+      capsule(list, at(pr.x, 0, pr.z), at(pr.x, 2.6 * k, pr.z), 0.12 * k, BARK, F);
+      ball(list, at(pr.x, 3.9 * k, pr.z), 1.55 * k, lc, F);
+      ball(list, at(pr.x + 0.7 * k, 3.4 * k, pr.z + 0.3 * k), 1.15 * k, lc.map((v) => v * 0.9), F);
+      ball(list, at(pr.x - 0.6 * k, 3.5 * k, pr.z - 0.4 * k), 1.2 * k, lc.map((v) => v * 1.08), F);
+    } else if (pr.kind === 'hydrant') {
+      capsule(list, at(pr.x, 0, pr.z), at(pr.x, 0.55, pr.z), 0.13, HYDRANT, F);
+      ball(list, at(pr.x, 0.62, pr.z), 0.1, HYDRANT, F);
+    } else if (pr.kind === 'subway') {
+      // the stair railing and two green globes on posts
+      boxPrims(list, pr.x, 0.55, pr.z, 1.8, 0.75, 0.5, pr.dx, pr.dz, RAIL);
+      for (const k of [-1, 1]) {
+        const x = pr.x + pr.dx * 1.9 * k, z = pr.z + pr.dz * 1.9 * k;
+        capsule(list, at(x, 0, z), at(x, 2.5, z), 0.05, RAIL, F);
+        ball(list, at(x, 2.7, z), 0.22, GLOBE, F);
+        glow.push([x, 2.7, z, L.night ? 2.2 : 0.9, '120,255,160']);
+      }
+    }
+    drawPrims(list);
+    if (glow.length) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (const [x, y, z, r, col] of glow) {
+        const q = toCam(x, y, z);
+        if (q.z < NEAR3) continue;
+        const pp = projC(q, F), R = r * pp.s, flat = y < 0.5;
+        const g = ctx.createRadialGradient(pp.x, pp.y, 0, pp.x, pp.y, R);
+        g.addColorStop(0, `rgba(${col},${flat ? 0.28 : 0.55})`); g.addColorStop(1, `rgba(${col},0)`);
+        ctx.fillStyle = g;
+        if (flat) { ctx.beginPath(); ctx.ellipse(pp.x, pp.y, R, R * Math.max(0.15, Math.min(0.5, (cam.y * 2) / q.z)), 0, 0, Math.PI * 2); ctx.fill(); }
+        else ctx.fillRect(pp.x - R, pp.y - R, R * 2, R * 2);
+      }
+      ctx.restore();
+    }
+  }
+  // a rooftop water tank: legs, a wooden barrel, a pointed cap
+  const TANK = [126, 84, 52], TANK_CAP = [78, 58, 44], STEEL = [70, 72, 76];
+  function waterTower(b) {
+    const list = [], h = b.h, x = b.x + (b.seed - 0.5) * 4, z = b.z + ((b.seed * 3.7) % 1 - 0.5) * 4;
+    if (occluded(x, h + 4, z, b)) return;
+    for (const [lx, lz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) capsule(list, toCam(x + lx * 1.1, h, z + lz * 1.1), toCam(x + lx * 1.1, h + 2.4, z + lz * 1.1), 0.12, STEEL, F);
+    capsule(list, toCam(x, h + 3.5, z), toCam(x, h + 4.9, z), 1.5, TANK, F);
+    ball(list, toCam(x, h + 6.2, z), 1.05, TANK_CAP, F);
+    drawPrims(list);
   }
   // storefront names: real businesses within 60 m that you can see from here
   const BIZ_COL = { food: '#2a2c30', pizza: '#9e2a22', deli: '#b3121f', cafe: '#4b3223', bar: '#2a1f3d', sweet: '#a3405f', market: '#2f6b4a', shop: '#27456e', pharmacy: '#2f7d5f', clinic: '#2f6f8f', bank: '#1f3a5f', post: '#27456e', theater: '#6b1f2c', museum: '#4f4a43', library: '#5a4636', hotel: '#0b5e3e' };
@@ -6453,7 +6958,8 @@
   }
 
   function render(now) {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    // resolution: the screen's, capped at 2, scaled down while frames run slow (Perf.scale)
+    const dpr = Math.max(0.75, Math.min(HIGH ? 2 : 1, window.devicePixelRatio || 1) * Perf.scale);
     const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -6488,24 +6994,24 @@
     ctx.translate(shk.x, shk.y);
     if (pv.roll) { ctx.translate(W / 2, H / 2); ctx.rotate(-pv.roll); ctx.translate(-W / 2, -H / 2); }
     const horizon = H / 2 - F * (cam.sp / cam.cp);
-    const sky = ctx.createLinearGradient(0, 0, 0, Math.max(1, horizon));
-    sky.addColorStop(0, '#6f9cc9'); sky.addColorStop(1, `rgb(${SKY.join(',')})`);
-    ctx.fillStyle = sky; ctx.fillRect(-W, -H, W * 3, Math.max(0, horizon) + H);
+    drawSky(horizon);
     // below the horizon: the rivers, then land, parks and streets over them
-    ctx.fillStyle = rgbOf(MW.WATER_COL); ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
+    ctx.fillStyle = rgbOf(litRGB(MW.WATER_COL, 0.85, 0)); ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
     if (World.ready) {
       const D = T.drawDistance;
       drawGround(D);
       drawStreets(Math.min(D, 380));
       if (G.state === 'walk' && !Fight.active && !Fight.chase) drawRoute();
       const faces = [];
+      Facade.budget = HIGH ? 1400 : 500;
       buildingFaces(faces, D);
       faces.sort((a, b) => b.depth - a.depth);
       for (const f of faces) {
+        if (f.draw) { f.draw(); continue; }
         const pts = project(f.cp);
         if (!pts) continue;
         fillPoly(pts, f.color);
-        if (f.win) windows(f);
+        if (f.win && GX.facade) facade(f, pts);
       }
       if (G.state === 'walk' && !Fight.active) drawSigns();
       Perf.faces = faces.length;
@@ -6514,8 +7020,11 @@
     if (G.state === 'walk') {
       // opponents, far to near
       // opponents, the crowd and the person they were hassling, far to near
-      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f, foe: false })), Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f, foe: false })), Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })));
-      for (const it of all.sort((a, b) => foeDist(b.f) - foeDist(a.f))) { if (it.car) drawCar(it.f); else if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
+      // everyone and everything out on the street, far to near; the passers-by, cars and street
+      // furniture hide behind any building in the way
+      const street = Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f })).concat(Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })), World.ready && GX.props ? nearProps().map((f) => ({ f, prop: true })) : []);
+      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f })), street.filter((it) => Math.hypot(it.f.x - cam.x, it.f.z - cam.z) < 12 || !occluded(it.f.x, it.prop ? 2 : 1.2, it.f.z, null)));
+      for (const it of all.sort((a, b) => Math.hypot(b.f.x - cam.x, b.f.z - cam.z) - Math.hypot(a.f.x - cam.x, a.f.z - cam.z))) { if (it.prop) drawProp(it.f); else if (it.car) drawCar(it.f); else if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
     ctx.restore();
     if (G.state === 'walk') {
@@ -6669,7 +7178,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-17 \u00b7 combat tutorial, tag teams, chases, route ribbon, jump takedowns';
+  const BUILD = '2026-10-17 PM \u00b7 graphics pass, shifts, overhand, full cover-up';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
@@ -6680,11 +7189,15 @@
     $('playDemo').textContent = playLabel;
   }).catch((err) => { World.error = err; $('playDemo').textContent = 'Could not load the map: ' + err.message; });
   $('realNames').checked = realNames;
+  $('look').value = Object.keys(LOOKS).find((k) => LOOKS[k] === L);
+  $('gfx').value = HIGH ? 'high' : 'low';
+  $('look').addEventListener('change', () => { setLook($('look').value); try { localStorage.setItem(LOOK_KEY, $('look').value); } catch (_) {} });
+  $('gfx').addEventListener('change', () => { HIGH = $('gfx').value === 'high'; try { localStorage.setItem(GFX_KEY, $('gfx').value); } catch (_) {} });
   $('realNames').addEventListener('change', () => { realNames = $('realNames').checked; try { localStorage.setItem(REAL_KEY, realNames ? '1' : '0'); } catch (_) {} });
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
-    fight: ['jab', 'cross', 'hook', 'uppercut', 'guard', 'slip_left', 'slip_right', 'squat', 'drive_up', 'jump'],
+    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'guard', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
@@ -7198,6 +7711,7 @@
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
+    perfTick(now - last, now);
     last = now;
     update(dt, now);
     updateWarm(dt, now);
@@ -7209,7 +7723,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
