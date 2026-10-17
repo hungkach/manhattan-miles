@@ -4,6 +4,7 @@ Mark's notes from play sessions, sorted into a backlog. Newest session first. No
 
 ## 2026-10-17 notes and the graphics pass
 
+- 10/18 fix (Mark: the player punched the air; it should attack from a 45 degree angle, not head on): the view now swings 45 degrees around the opponent, facing them, while they still face where you were. Before, the view slid sideways and they turned away.
 - Shifts: done. A bound out and back (engine 0.8.0 'bound') takes an angle like Dillashaw or Cruz: the opponent is turned away for 1 to 4 s (a quicker bound, longer), every punch does 1.4x (less than a ground and pound, but free), a punch in flight misses, 2.5 s cooldown. Touch: Bound L and Bound R. The tutorial ends with it.
 - The rear hook is the overhand: done (engine 0.8.0 and the glove hitbox). Damage 1.7, goes over a cover-up, close range.
 - The cover-up fills the view: done. Two big padded gloves with cuffs and forearms take most of the screen, a gap to peek through at the top.

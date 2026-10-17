@@ -1062,7 +1062,7 @@
     // a shift (Mark 10/17, Dillashaw and Cruz): a bound out and back takes an angle; for ms (1 to
     // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
     // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
-    shift: { ms: [1000, 4000], bonus: 1.4, cooldownMs: 2500, turnDeg: 60 },
+    shift: { ms: [1000, 4000], bonus: 1.4, cooldownMs: 2500, angleDeg: 45 },
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
     // the glove hitbox: a glove moving at least `speed` (shoulder widths a second), at least `reach`
     // in front of your shoulders, that ends over their head or body on screen lands. One hit per
@@ -1928,13 +1928,7 @@
   function foeFrame(f) {
     let fx = P.x - f.x, fz = P.z - f.z;
     if (f.state === 'flee') { fx = -fx; fz = -fz; }
-    // shifted: they still face where you were, turning back toward you as the window runs out
-    const sh = Fight.shift, now = performance.now();
-    if (sh && Fight.active && Fight.active.foe === f && now < sh.until) {
-      const k = Math.min(1, (now - sh.start) / 200) * Math.min(1, (sh.until - now) / 400);
-      const ang = sh.side * (FT.shift.turnDeg * Math.PI / 180) * k, c = Math.cos(ang), sn = Math.sin(ang);
-      [fx, fz] = [fx * c - fz * sn, fx * sn + fz * c];
-    }
+
     const n = Math.hypot(fx, fz) || 1;
     fx /= n; fz /= n;
     return { fx, fz, rx: fz, rz: -fx };
@@ -2496,8 +2490,7 @@
       const s = engine.signals();
       const phase = engine.combat().phase;
       lat = (s.slip || 0) * 0.3;
-      const sh = Fight.shift, now = performance.now();
-      if (sh && now < sh.until) lat += sh.side * 0.55 * Math.min(1, (sh.until - now) / 400);
+
       roll = (s.slip || 0) * 0.07;
       dy = -Math.min(1, s.squat_depth || 0) * 0.6;
       if (phase === 'drive') { fwd = 0.6; dy = Math.min(dy, -0.55); }
@@ -2746,7 +2739,7 @@
   const CLOUDS = Array.from({ length: 10 }, (_, i) => { const r = rng(i * 104729 + 7); return { az: r() * Math.PI * 2, el: 0.07 + r() * 0.2, w: 0.25 + r() * 0.35, puffs: Array.from({ length: 4 + Math.floor(r() * 3) }, () => [r() - 0.5, r() * 0.35, 0.3 + r() * 0.4]) }; });
   // where a direction in the sky lands on screen (az from north, clockwise; el up), or null
   function skyPoint(az, el, horizon) {
-    let a = az - P.view;
+    let a = az - cam.yaw;
     a = Math.atan2(Math.sin(a), Math.cos(a));
     if (Math.abs(a) > 1.35) return null;
     return { x: W / 2 + F * Math.tan(a), y: horizon - (F * Math.tan(el)) / Math.cos(a) };
@@ -3277,6 +3270,17 @@
     const pv = povUpdate();
     const hx = Math.sin(P.view), hz = Math.cos(P.view), rx = hz, rz = -hx;
     const eye = { x: pos.x + rx * pv.lat + hx * pv.fwd, y: T.eyeHeight + bob + pv.dy, z: pos.z + rz * pv.lat + hz * pv.fwd };
+    let viewYaw = P.view;
+    // a shift (10/18, Mark: attack from the angle, not head on): your view swings around them to
+    // FT.shift.angleDeg off their line, facing them, while they still face where you were
+    const sh = Fight.shift;
+    if (Fight.active && sh && now < sh.until) {
+      const foe = Fight.active.foe, k = Math.min(1, (now - sh.start) / 220) * Math.min(1, (sh.until - now) / 400);
+      const vx = eye.x - foe.x, vz = eye.z - foe.z, d = Math.hypot(vx, vz) || 1, th = sh.side * (FT.shift.angleDeg * Math.PI / 180) * k;
+      const ex = foe.x + vx * Math.cos(th) + rx * d * Math.sin(th), ez = foe.z + vz * Math.cos(th) + rz * d * Math.sin(th);
+      eye.x = ex; eye.z = ez;
+      viewYaw = Math.atan2(foe.x - ex, foe.z - ez);
+    }
     Fight.head = eye;
     // look slightly up at the skyline; in a fight, tilt so the opponent sits a third of the way
     // down, or down at them when they are on the ground
@@ -3287,7 +3291,7 @@
       const ty = foe.state === 'down' || foe.state === 'ko' ? 0.3 : foe.state === 'shoot' || foe.state === 'stuffed' ? 0.8 : 1.6;
       pitch = Math.max(-0.12, Math.min(0.8, (0.17 * H) / F + (eye.y - ty) / d));
     }
-    cam = { x: eye.x, y: eye.y, z: eye.z, cy: Math.cos(P.view), sy: Math.sin(P.view), cp: Math.cos(pitch), sp: Math.sin(pitch) };
+    cam = { x: eye.x, y: eye.y, z: eye.z, yaw: viewYaw, cy: Math.cos(viewYaw), sy: Math.sin(viewYaw), cp: Math.cos(pitch), sp: Math.sin(pitch) };
 
     // a slip tilts the whole scene a little; a hit shakes it
     Ui.u = uiScale();
@@ -3481,7 +3485,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-17 PM \u00b7 graphics pass, shifts, overhand, full cover-up';
+  const BUILD = '2026-10-18 \u00b7 shift attacks from a 45 degree angle';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
