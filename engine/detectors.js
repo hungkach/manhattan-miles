@@ -212,12 +212,26 @@
       const s = ctx.sig;
       const speed = Math.max(out.wristSpeedL, out.wristSpeedR);
       if (speed > this.c.wristSpeedMax) this.suppressUntil = t + this.c.suppressHoldMs;
-      // a hand raised like a wave (wrist above its shoulder by wave.minAbove)
-      // tilts the shoulders and would read as a torso turn: no steering while
-      // it is up (0.6.2, Mark: waving turned him)
-      for (const [i, sh] of [[L.L_WRIST, s.body.ls], [L.R_WRIST, s.body.rs]]) {
+      // a hand raised like a wave (wrist above its shoulder by wave.minAbove,
+      // and out at or past the shoulder) tilts the shoulders and would read as
+      // a torso turn: no steering while it is up (0.6.2, Mark: waving turned
+      // him). 0.8.2: hands up in a guard, in front of the face, do not count
+      // (Mark: the warm-up stopped seeing his turns)
+      // "out" is along the shoulder line in the world (3D) landmarks, so a turned torso does
+      // not swing a guard hand outside its shoulder the way it does on screen
+      const wl = ctx.world, ax = wl && wl[L.R_SHOULDER] && wl[L.L_SHOULDER] ? { x: wl[L.R_SHOULDER].x - wl[L.L_SHOULDER].x, y: wl[L.R_SHOULDER].y - wl[L.L_SHOULDER].y, z: wl[L.R_SHOULDER].z - wl[L.L_SHOULDER].z } : null;
+      const axL = ax ? Math.hypot(ax.x, ax.y, ax.z) || 1 : 1;
+      for (const [i, si, sh, out] of [[L.L_WRIST, L.L_SHOULDER, s.body.ls, -1], [L.R_WRIST, L.R_SHOULDER, s.body.rs, 1]]) {
         const at = wristAt(ctx, i);
-        if (at && (at.offFrame ? at.p.y < 0 : RE.toBody(at.p, ctx.cal).y - sh.y >= this.raiseAbove)) this.suppressUntil = Math.max(this.suppressUntil, t + this.c.raisedHoldMs);
+        if (!at) continue;
+        let raised = at.offFrame && at.p.y < 0;
+        if (!at.offFrame) {
+          const w = RE.toBody(at.p, ctx.cal);
+          let outward = out * (w.x - sh.x);
+          if (ax && wl[i]) outward = (out * ((wl[i].x - wl[si].x) * ax.x + (wl[i].y - wl[si].y) * ax.y + (wl[i].z - wl[si].z) * ax.z)) / axL / axL;
+          raised = w.y - sh.y >= this.raiseAbove && outward >= this.c.raisedOut;
+        }
+        if (raised) this.suppressUntil = Math.max(this.suppressUntil, t + this.c.raisedHoldMs);
       }
       out.steerSuppressed = t < this.suppressUntil;
 

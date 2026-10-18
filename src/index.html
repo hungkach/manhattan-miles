@@ -57,6 +57,7 @@
   body.setup #pip, #skel { position: fixed; top: 0; left: 0; right: 0; bottom: var(--warmH); width: 100%; height: calc(100% - var(--warmH)); }
   body.setup #pip { display: block; max-width: none; aspect-ratio: auto; object-fit: contain; border: 0; border-radius: 0; z-index: 2; }
   #skel { z-index: 3; pointer-events: none; }
+  body.gym.cam #skel { top: auto; right: auto; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: min(34vw, 260px); height: min(46vh, 340px); background: rgba(0,0,0,.45); border: 2px solid rgba(255,255,255,.5); border-radius: 12px; }
   #warm { position: fixed; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom) + 8px); height: calc(var(--warmH) - 16px); z-index: 4; display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 16px; background: var(--panel); border: 1px solid rgba(255,255,255,.12); overflow: hidden; }
   #warm[hidden] { display: none; }
   #fig { height: calc(var(--warmH) - 40px); aspect-ratio: 3 / 4; border-radius: 12px; background: rgba(255,255,255,.06); }
@@ -957,7 +958,7 @@
     else if (it.id === 'spawn') spawnFoes(14);
     else if (it.id === 'tutor') startTutor(performance.now());
     else if (it.id === 'look') {
-      const ids = Object.keys(LOOKS), next = ids[(ids.indexOf(Object.keys(LOOKS).find((k) => LOOKS[k] === L)) + 1) % ids.length];
+      const ids = Object.keys(LOOKS).filter((k) => k !== 'gym'), next = ids[(ids.indexOf(Object.keys(LOOKS).find((k) => LOOKS[k] === L)) + 1) % ids.length];
       setLook(next); try { localStorage.setItem(LOOK_KEY, next); } catch (_) {}
       $('look').value = next; say(LOOKS[next].name, 'confirm');
     }
@@ -1109,7 +1110,12 @@
     td: { braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 1.5, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
     // guard breaks: blocked punches wear the guard down (guardHp, raw damage); at 0 the hands drop
     // for brokenMs and take openBonus damage. It refills by regen a second when they are not covering.
-    guard: { hp: 4, regen: 0.4, brokenMs: 1600 },
+    // 10/18 (Mark: the camera mistook a held guard; blocking is automatic now). Their guard bar
+    // takes your punches (chip of the damage gets through) until it is empty, then they are open
+    // for brokenMs. A punch within cleanMs of your slip or level change, from a shift angle, or
+    // into their wind-up, shot, brace or stuffed shot skips it and lands clean. A turtle's bar is
+    // turtleK bigger and refills faster while covering.
+    guard: { hp: 5, regen: 0.45, brokenMs: 2000, chip: 0.1, cleanMs: 1000, cleanBonus: 1.2, turtleK: 1.4 },
     // your guard (10/16): each block costs it (a hook more); at 0 it breaks and blocks nothing for
     // brokenMs. It comes back by regen a second while your hands are not taking punches.
     // two opponents tag team (Mark 10/16, the old kung fu movie rule: one at a time): the other
@@ -1120,7 +1126,10 @@
     // a beaten opponent who runs can be chased down (high knees): they run at speed (m/s), slowing
     // by tire a second; catch them within catchM before they get loseM away or ms runs out
     chase: { speed: 7.5, tire: 0.12, minSpeed: 4.5, catchM: 2.6, loseM: 80, ms: 25000 },
-    myGuard: { hp: 5, straight: 1, hook: 1.5, regen: 0.6, brokenMs: 1400 },
+    // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
+    // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
+    // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
+    myGuard: { hp: 6, straight: 1, hook: 1.5, uppercut: 1.5, regen: 0.3, pauseMs: 1200, bonus: { slip: 1, duck: 1, stuff: 1.5, ko: 3 } },
     oneHand: false,
     // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
     fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
@@ -1252,7 +1261,7 @@
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1))); // tougher as you level
-      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp });
+      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1) });
     }
     // the person they are hassling, just past them and to the side
     const side = Math.random() < 0.5 ? -1 : 1, rx = Math.cos(P.yaw) * side, rz = -Math.sin(P.yaw) * side;
@@ -1273,16 +1282,18 @@
   // whole run is recorded: a clip of known moves to send to Claude to tune the classifiers.
   // It runs once after the first camera warm-up, and any time from the phone.
   const TUTOR_KEY = 'manhattan-miles-tutor-done';
-  const TUTOR = { reps: 2, stepMs: 25000, holdMs: 1500, stanceWaitMs: 5000 };
+  // 10/18: each move gets up to `tries` attempts of tryMs in a row, then the tutorial moves on
+  // (Mark: repeat until it registers, at most three times so it never locks you in)
+  const TUTOR = { reps: 2, tryMs: 9000, tries: 3, holdMs: 2000 };
   const tutorSteps = () => [
-    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, hands up by your face.', say: 'Fighting stance. One foot forward, hands up by your face. Hold it.' },
+    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, a shoulder toward the screen. Hold it.', say: 'Fighting stance. One foot forward, turn a shoulder toward the screen. Hold it.' },
     { id: 'jab', big: 'Jab', small: 'Lead hand, straight out and back.', say: 'Jab. Lead hand, straight out and back.', kind: 'straight', hand: 'lead' },
     { id: 'cross', big: 'Cross', small: 'Rear hand, straight out, turn the hip.', say: 'Cross. Rear hand, straight out.', kind: 'straight', hand: 'rear' },
     { id: 'leadHook', big: 'Lead hook', small: 'Lead elbow up, swing across.', say: 'Lead hook. Elbow up, swing it across.', kind: 'hook', hand: 'lead' },
     { id: 'overhand', big: 'Overhand', small: 'Rear hand loops up and over, down onto them.', say: 'Overhand. Rear hand loops over the top.', kind: 'overhand', hand: 'rear' },
     { id: 'leadUpper', big: 'Lead uppercut', small: 'Dip the lead hand to your chest, drive it up.', say: 'Lead uppercut. Dip the hand, then drive it up.', kind: 'uppercut', hand: 'lead' },
     { id: 'rearUpper', big: 'Rear uppercut', small: 'Dip the rear hand to your chest, drive it up.', say: 'Rear uppercut.', kind: 'uppercut', hand: 'rear' },
-    { id: 'cover', big: 'Cover up', small: 'Both gloves on your forehead, elbows in. Hold it.', say: 'Cover up. Both gloves high on your forehead, elbows in. Hold it.' },
+    { id: 'slip', big: 'Slip', small: 'Move your head off the line, to either side.', say: 'Slip. Move your head off the line, left or right.', event: 'slip' },
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
     { id: 'shift', big: 'Shift', small: 'Bound out to one side and back.', say: 'Shift. Bound out to one side, and straight back.', event: 'bound' },
@@ -1299,6 +1310,12 @@
     Fight.foes = [foe]; Fight.people = [];
     Fight.active = { start: now, foe, range: 'close', tutor: true };
     Object.assign(Tutor, { steps: tutorSteps(), i: -1, log: [], results: [], lastRead: '', clip: null, lead: 'left', stance: 'orthodox' });
+    // 10/18 (Mark): its own place, the gym, not a street encounter: a room around you and your
+    // partner, and the camera's stick figure on the side so you can see what it sees
+    Tutor.room = { x: (P.x + foe.x) / 2, z: (P.z + foe.z) / 2, fx: hx, fz: hz };
+    document.body.classList.add('gym');
+    document.body.classList.toggle('cam', !isDemo());
+    if (Warm.overlay && !isDemo()) { Warm.overlay.panel = false; if (!Warm.overlay.visible) Warm.overlay.toggle(); }
     engine.enter_combat({
       bearing: () => bearingTo(foe),
       open: () => !!Fight.active && Fight.active.foe.state === 'pads',
@@ -1309,13 +1326,13 @@
     if (isDemo()) setTouchButtons('fight');
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', tutorial: true, camera: engine.camera() }); Tutor.recording = true; }
     document.body.classList.add('fighting');
-    say('Combat tutorial. Your partner holds pads. Every move twice.', 'instruction');
+    say('Welcome to the gym. Your partner holds pads. Every move twice, and watch your stick figure on the side.', 'instruction');
     tutorNext(now);
   }
   function tutorNext(now) {
     const cur = Tutor.steps[Tutor.i];
     if (cur) Tutor.results.push({ id: cur.id, big: cur.big, ok: Tutor.n >= (cur.kind || cur.event ? TUTOR.reps : 1), got: Tutor.n, read: Tutor.log.filter((l) => l.step === cur.id && !l.ok).map((l) => l.read) });
-    Tutor.i++; Tutor.n = 0; Tutor.since = now; Tutor.holdSince = null; Tutor.lastRead = '';
+    Tutor.i++; Tutor.n = 0; Tutor.since = now; Tutor.holdSince = now; Tutor.lastRead = ''; Tutor.try = 1;
     const st = Tutor.steps[Tutor.i];
     if (!st) { endTutor(now); return; }
     say(st.say, 'instruction');
@@ -1348,22 +1365,27 @@
     const st = Tutor.steps[Tutor.i];
     if (!st) return;
     const s = engine.signals();
-    if (st.id === 'stance' || st.id === 'cover') {
-      // hold the guard; for the stance, long enough to read which foot leads
-      if (s.guard_up) { if (Tutor.holdSince === null) Tutor.holdSince = now; } else Tutor.holdSince = null;
-      const held = Tutor.holdSince !== null && now - Tutor.holdSince >= TUTOR.holdMs;
-      if (st.id === 'stance' && held && (s.stance !== 'square' || now - Tutor.since > TUTOR.stanceWaitMs)) {
-        Tutor.stance = s.stance === 'southpaw' ? 'southpaw' : 'orthodox';
-        Tutor.lead = Tutor.stance === 'southpaw' ? 'right' : 'left';
-        Tutor.n = 1;
-        say(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}. ${Tutor.stance === 'southpaw' ? 'Right' : 'Left'} hand leads.`, 'confirm');
-        tutorNext(now);
+    if (st.id === 'stance' && Tutor.since !== Infinity && now - Tutor.holdSince >= TUTOR.holdMs) {
+      // which foot leads, from the bladed torso; still square: once more, then orthodox
+      if (s.stance === 'square' && Tutor.try < TUTOR.tries) {
+        Tutor.try++; Tutor.holdSince = now; Tutor.since = now;
+        say('Again. Turn one shoulder toward the screen and hold.', 'instruction');
         return;
       }
-      if (st.id === 'cover' && held) { Tutor.n = 1; say('Got it.', 'confirm'); tutorNext(now); return; }
+      Tutor.stance = s.stance === 'southpaw' ? 'southpaw' : 'orthodox';
+      Tutor.lead = Tutor.stance === 'southpaw' ? 'right' : 'left';
+      Tutor.n = 1;
+      say(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}. ${Tutor.stance === 'southpaw' ? 'Right' : 'Left'} hand leads.`, 'confirm');
+      tutorNext(now);
+      return;
     }
-    if (now - Tutor.since > TUTOR.stepMs) { say('Moving on.', 'confirm'); tutorNext(now); }
+    // missed: again, up to TUTOR.tries attempts in a row, then on to the next move
+    if (Tutor.since !== Infinity && now - Tutor.since > TUTOR.tryMs) {
+      if (Tutor.try < TUTOR.tries) { Tutor.try++; Tutor.since = now; say(`Again. ${st.say}`, 'instruction'); }
+      else { say('Moving on.', 'confirm'); tutorNext(now); }
+    }
   }
+  engine.on('slip', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'slip' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('shot', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'shot' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('bound', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'bound' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
@@ -1390,7 +1412,9 @@
     Fight.foes = Tutor.saved ? Tutor.saved.foes : []; Fight.people = Tutor.saved ? Tutor.saved.people : [];
     engine.set_facing((P.yaw * 180) / Math.PI);
     if (isDemo()) setTouchButtons('walk');
-    document.body.classList.remove('fighting');
+    document.body.classList.remove('fighting', 'gym');
+    if (Warm.overlay && Warm.overlay.visible) Warm.overlay.toggle();
+    if (Warm.overlay) Warm.overlay.panel = true;
     try { localStorage.setItem(TUTOR_KEY, '1'); } catch (_) {}
     const ok = Tutor.results.filter((r) => r.ok).length, all = Tutor.results.length;
     const missed = Tutor.results.filter((r) => !r.ok).map((r) => r.big);
@@ -1402,11 +1426,11 @@
     const st = Tutor.steps[Tutor.i];
     if (!st) return;
     const line = (txt, y, font, color) => { ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = color; ctx.strokeText(txt, W / 2, y); ctx.fillText(txt, W / 2, y); };
-    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.kind || st.event ? ` · ${Tutor.n} of ${TUTOR.reps}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
+    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.kind || st.event ? ` · ${Tutor.n} of ${TUTOR.reps}` : ''}${Tutor.try > 1 ? ` · try ${Tutor.try} of ${TUTOR.tries}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
     line(st.big, 30, '900 32px system-ui, sans-serif', '#ffcf3f');
     line(st.small, 70, '700 14px system-ui, sans-serif', '#fff');
     if (Tutor.i > 0) line(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}: ${Tutor.lead} hand leads`, 92, '600 12px system-ui, sans-serif', '#c9d1dd');
-    if ((st.id === 'stance' || st.id === 'cover') && Tutor.holdSince !== null) {
+    if (st.id === 'stance' && Tutor.holdSince !== null) {
       const k = Math.min(1, (now - Tutor.holdSince) / TUTOR.holdMs), bw = 160;
       ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(W / 2 - bw / 2, 112, bw, 10);
       ctx.fillStyle = '#3fc8ff'; ctx.fillRect(W / 2 - bw / 2 + 2, 114, (bw - 4) * k, 6);
@@ -1423,7 +1447,7 @@
     Fight.hp = FT.playerHp;
     Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity; Fight.shift = null; Fight.shiftCd = 0;
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
-    foe.guardHp = FT.guard.hp;
+    foe.guardHp = foe.guardMax || FT.guard.hp;
     Fight.lowSince = null;
     engine.enter_combat({
       bearing: () => bearingTo(Fight.active ? Fight.active.foe : foe),
@@ -1587,17 +1611,27 @@
     // hooks, uppercuts and body shots go around a high guard; the rest wear it down until it breaks
     const shifted = Fight.shift && now < Fight.shift.until;
     if (shifted) dmg *= FT.shift.bonus; // you have the angle: free shots
-    if (foe.state === 'cover' && !shifted && kind !== 'hook' && kind !== 'overhand' && kind !== 'uppercut' && where !== 'body') {
+    // their guard bar: it takes the punch unless you came in clean (out of a slip or a level
+    // change, from an angle, or into their wind-up, shot, brace or stuffed shot)
+    const outOf = now - Math.max(Fight.lastSlipAt, Fight.lastLowAt) < FT.guard.cleanMs;
+    const clean = shifted || outOf || now < Fight.counterUntil || ['broken', 'windup', 'shoot', 'brace', 'stuffed', 'down'].includes(foe.state);
+    if (!clean && (foe.guardHp ?? 0) > 0 && kind !== 'down_strike') {
       foe.guardHp -= dmg;
-      dmg *= FT.coverFactor;
+      foe.blockUntil = now + 380;
+      foe.hp -= dmg * FT.guard.chip;
+      clack();
+      const hd = foe.hit && foe.hit.head;
+      if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: 'Blocked', big: false });
       if (foe.guardHp <= 0) {
-        foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = FT.guard.hp;
+        foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = 0;
         Fight.openUntil = now + FT.guard.brokenMs;
         Fight.stats.guardBreaks++;
         award(XP.guardBreak, 'guard break');
-        say('Guard broken!', 'feedback'); fightMsg('Guard broken!', 1100);
+        say('Guard broken! Let them have it.', 'feedback'); fightMsg('Guard broken!', 1100);
       }
+      return;
     }
+    if (outOf && !shifted) { dmg *= FT.guard.cleanBonus; fightMsg('Clean shot!', 700); }
     // an uppercut catches them changing levels: shooting at you, or braced for your shot
     const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
@@ -1610,6 +1644,7 @@
     if (foe.state === 'windup' && kind !== 'jab' && Math.random() < 0.5) { foe.state = 'hurt'; foe.until = now + 500; } // a hard shot can break their wind-up
     if (foe.hp <= 0) {
       foe.state = 'ko'; foe.until = now + 1500;
+      guardBonus('ko');
       say('Knockdown!', 'feedback');
       bell(3); Fight.shake = { t: now, k: 2.4 }; Fight.flashAt = now;
       fightMsg('Knockout!', 1600);
@@ -1707,6 +1742,7 @@
     a.foe.state = 'stuffed'; a.foe.until = performance.now() + FT.stuffedMs;
     Fight.openUntil = performance.now() + FT.stuffedMs;
     Fight.stats.sprawls++;
+    guardBonus('stuff');
     say('Sprawl! Now hit.', 'feedback');
     fightMsg('Sprawl!');
   });
@@ -1721,7 +1757,7 @@
       return;
     }
     if (foe.state === 'flee') { if (now >= foe.until) endFight('won', now); return; }
-    if (foe.state !== 'cover') foe.guardHp = Math.min(FT.guard.hp, (foe.guardHp ?? FT.guard.hp) + FT.guard.regen * (now - (foe.thinkAt || now)) / 1000);
+    if (now > (foe.blockUntil || 0) + 800 && foe.state !== 'broken') foe.guardHp = Math.min(foe.guardMax || FT.guard.hp, (foe.guardHp ?? FT.guard.hp) + FT.guard.regen * (foe.state === 'cover' ? 3 : 1) * (now - (foe.thinkAt || now)) / 1000);
     foe.thinkAt = now;
     // they read a held crouch: braced for the double, hands low and level dropped
     if (s.level_low) { if (Fight.lowSince === null) Fight.lowSince = now; } else Fight.lowSince = null;
@@ -1740,24 +1776,23 @@
       const yours = foe.hookSide === 'R' ? 'left' : 'right';
       // 10/16 (Mark: smoothness first) only the full two-hand guard blocks; FT.oneHand brings back
       // the hand-by-the-ear block for hooks. A broken guard blocks nothing for a moment.
-      const guarded = now >= Fight.guardBrokenUntil && (s.guard_up || now - Fight.lastGuardAt < FT.graceMs ||
-        (FT.oneHand && foe.kind === 'hook' && (s['guard_' + yours] || now - Fight.lastGuardSide[yours] < FT.graceMs)));
       const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
       // 10/18 (Mark): a level change ducks a hook, but an uppercut catches you low for double
       const low = now - Fight.lastLowAt < FT.graceMs + 150;
-      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; fightMsg('Slipped: counter!'); }
-      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
-      else if (foe.kind === 'uppercut' && low && !guarded) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
-      else if (guarded) {
-        // every block wears your guard down; they can break it with volume, like you can theirs
-        Fight.guardHp -= foe.kind === 'hook' ? FT.myGuard.hook : FT.myGuard.straight;
-        if (Fight.guardHp <= 0) {
-          Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = now + FT.myGuard.brokenMs;
-          hurtPlayer(now, 1); fightMsg('Your guard broke!', 1200); say('Guard broken. Move!', 'feedback');
-          Fight.shake = { t: now, k: 1.6 }; tone(90, 0.3, 0.4, 'sine', 0, 40);
-        } else { Fight.stats.blocked++; fightMsg('Blocked'); Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 }; }
+      // 10/18 (Mark): no more reading a held guard. Slip a straight, duck a hook under a level
+      // change (both top up your guard bar and open a counter); an uppercut that catches you low
+      // lands double; anything else the guard bar blocks by itself while it has enough left
+      const cost = FT.myGuard[foe.kind] || 1;
+      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; guardBonus('slip'); fightMsg('Slipped: counter!'); }
+      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; guardBonus('duck'); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
+      else if (foe.kind === 'uppercut' && low) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
+      else if (Fight.guardHp >= cost * 0.5) {
+        Fight.guardHp = Math.max(0, Fight.guardHp - cost);
+        Fight.lastBlockAt = now; Fight.stats.blocked++;
+        Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
+        if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
-      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; if (foe.kind === 'hook') fightMsg(FT.oneHand ? `Hook: ${yours} hand up` : 'Hook! Hands up or duck', 1100); }
+      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: 'Duck the hook!', uppercut: 'Stand tall for the uppercut!' }[foe.kind] || 'Hit', 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -1771,6 +1806,7 @@
     }
     if (foe.state === 'out') { a.range = 'mid'; foe.state = 'guard'; foe.until = now + 600; return; } // they step back in on their own
     // a broken guard has run out: they step back and the other one comes in; or a switch is due
+    if (foe.state === 'broken') foe.guardHp = (foe.guardMax || FT.guard.hp) * 0.6; // hands back up, the bar partly back
     if (foe.state === 'broken' && switchFoe(now, 'broken')) return;
     if (a.tagAt && now >= a.tagAt && foe.state === 'guard' && switchFoe(now, 'tag')) return;
     if (!a.tagAt) a.tagAt = now + rand(FT.tag.everyS[0], FT.tag.everyS[1]) * 1000;
@@ -1809,6 +1845,8 @@
     fightMsg(why === 'ko' ? 'Next one!' : 'Switch!', 1100); say(line, 'feedback');
     return true;
   }
+  // slips, ducks, stuffed shots and knockouts top up your guard bar
+  function guardBonus(why) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0)); }
   function windupMs() { return Math.max(450, FT.windupMs - 20 * (level() - 1)); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
@@ -1822,7 +1860,7 @@
     const m = engine.locomotion();
     const s = engine.signals();
     if (s.guard_up) Fight.lastGuardAt = now;
-    Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + FT.myGuard.regen * dt);
+    if (now - (Fight.lastBlockAt || -Infinity) > FT.myGuard.pauseMs) Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + FT.myGuard.regen * dt);
     for (const side of ['left', 'right']) if (s['guard_' + side]) Fight.lastGuardSide[side] = now;
     if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
     if (s.level_low || (s.squat_depth || 0) >= LEVEL_SHOT * 0.7) Fight.lastLowAt = now;
@@ -1949,7 +1987,7 @@
   }
   const makeFoe = (x, z, i, lvl) => {
     const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
-    return { x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp, seed: Math.random() };
+    return { x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() };
   };
   function spawnScene(kind, now) {
     if (kind === 'hassle') { spawnFoes(); Fight.scene = null; return; }
@@ -2211,6 +2249,10 @@
       const k = f.hookSide === 'R' ? 1 : -1, H = f.hookSide === 'R' ? 'R' : 'L';
       p['fi' + H] = [0.52 * k, 1.44, 0.04]; p['el' + H] = [0.44 * k, 1.4, -0.06]; p['sh' + H][2] -= 0.05;
     }
+    if (now < (f.blockUntil || 0)) {
+      // your punch hit their guard: gloves up tight
+      p.fiL = [-0.07, 1.66, 0.22]; p.fiR = [0.07, 1.66, 0.22]; p.elL = [-0.13, 1.32, 0.26]; p.elR = [0.13, 1.32, 0.26];
+    }
     if (st === 'windup' && f.kind === 'uppercut') {
       // the rear hand drops and the knees dip: an uppercut is loading
       p.fiR = [0.16, 1.0, 0.16]; p.elR = [0.26, 1.06, -0.04]; p.shR[1] -= 0.04;
@@ -2269,8 +2311,9 @@
   const rgb = (c, k = 1) => `rgb(${c.map((v) => Math.max(0, Math.min(255, Math.round(v * k)))).join(',')})`;
   // a prim's color under the look's light (cached per color array) and the haze at its depth
   function litPrim(col) {
-    let c = PrimLit.cache.get(col);
-    if (!c) { c = col.map((v, i) => Math.min(255, v * (L.amb[i] + L.sun[i] * 0.75))); PrimLit.cache.set(col, c); }
+    const cache = L.primCache || (L.primCache = new WeakMap());
+    let c = cache.get(col);
+    if (!c) { c = col.map((v, i) => Math.min(255, v * (L.amb[i] + L.sun[i] * 0.75))); cache.set(col, c); }
     return c;
   }
   const hazed = (c, depth) => { const f = fogOf(depth); return f < 0.01 ? c : c.map((v, i) => v * (1 - f) + L.fog[i] * f); };
@@ -2768,26 +2811,26 @@
     const s = engine.signals();
     const phase = engine.combat().phase;
     const close = foeDist(a.foe) <= FT.reach.hook;
-    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : `${close ? 'Close: hooks land' : 'Mid range: straights'} · ${s.guard_up ? 'guard up' : s.guard_left ? 'left hand up' : s.guard_right ? 'right hand up' : 'guard down'}`;
+    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : close ? 'Close: hooks land' : 'Mid range: straights';
     // their guard, while it is worn down
-    const gh = a.foe.guardHp ?? FT.guard.hp;
-    if (gh < FT.guard.hp - 0.05) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / FT.guard.hp), '#9fb4c8', 'Guard');
+    const gh = a.foe.guardHp ?? FT.guard.hp, gmax = a.foe.guardMax || FT.guard.hp;
+    if (!a.tutor) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / gmax), a.foe.state === 'broken' ? '#ff5a4f' : '#9fb4c8', a.foe.state === 'broken' ? 'Open!' : 'Their guard');
     // the ones waiting their turn: their health, smaller
     const wait = others(a);
-    wait.forEach((f, i) => bar(W / 2 - w / 2 + i * (w * 0.5 + 4), 94, w * 0.5 - 4, 14, Math.max(0, f.hp / f.maxHp), '#a8443e', 'Next'));
+    wait.forEach((f, i) => bar(W / 2 - w / 2 + i * (w * 0.5 + 4), 102, w * 0.5 - 4, 14, Math.max(0, f.hp / f.maxHp), '#a8443e', 'Next'));
     // a shift window counting down
     if (Fight.shift && now < Fight.shift.until && !a.tutor) {
       const left = (Fight.shift.until - now) / Fight.shift.ms;
-      bar(W / 2 - w / 2, wait.length ? 112 : 94, w, 16, left, '#7cf0a4', `Angle: free shots ${((Fight.shift.until - now) / 1000).toFixed(1)} s`);
+      bar(W / 2 - w / 2, wait.length ? 120 : 102, w, 16, left, '#7cf0a4', `Angle: free shots ${((Fight.shift.until - now) / 1000).toFixed(1)} s`);
     }
     // the ground and pound burst counting down
     if (phase === 'top' && Fight.gnpMs) {
       const left = Math.max(0, 1 - (now - Fight.gnpStart) / Fight.gnpMs);
-      bar(W / 2 - w / 2, wait.length ? 112 : 94, w, 16, left, '#ffcf3f', `${((left * Fight.gnpMs) / 1000).toFixed(1)} s`);
+      bar(W / 2 - w / 2, wait.length ? 120 : 102, w, 16, left, '#ffcf3f', `${((left * Fight.gnpMs) / 1000).toFixed(1)} s`);
     }
     ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = s.guard_up || phase === 'top' ? '#fff' : '#ffcf3f';
-    if (!a.tutor) { ctx.strokeText(tag, W / 2, 74); ctx.fillText(tag, W / 2, 74); }
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = '#fff';
+    if (!a.tutor) { ctx.strokeText(tag, W / 2, 82); ctx.fillText(tag, W / 2, 82); }
     if (now < Fight.msgUntil) {
       ctx.font = '900 34px system-ui, sans-serif'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = '#ffcf3f';
@@ -2797,16 +2840,19 @@
     // and your hands are down
     {
       const foe = a.foe, gw = w * 0.6;
-      if (Fight.guardHp < FT.myGuard.hp - 0.05 || now < Fight.guardBrokenUntil) {
-        const broken = now < Fight.guardBrokenUntil;
-        ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(W / 2 - w / 2, 62, gw, 7);
-        ctx.fillStyle = broken ? '#ff5a4f' : '#3fc8ff'; ctx.fillRect(W / 2 - w / 2 + 1, 63, (gw - 2) * (broken ? 1 : Math.max(0, Fight.guardHp / FT.myGuard.hp)), 5);
+      if (!a.tutor) {
+        // your guard bar: it blocks for you while it lasts
+        const k = Math.max(0, Fight.guardHp / FT.myGuard.hp);
+        bar(W / 2 - w / 2, 62, gw, 15, k, k < 0.25 ? '#ff5a4f' : '#3fc8ff', 'Your guard');
       }
-      if (foe.state === 'windup' && !s.guard_up && phase === 'standing') {
-        ctx.font = '900 26px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      // a punch is coming: how to beat it (the guard bar only blocks it)
+      if (foe.state === 'windup' && phase === 'standing') {
+        const tip = { straight: 'Slip!', hook: 'Duck!', uppercut: 'Stand tall!' }[foe.kind];
+        const low = Fight.guardHp < (FT.myGuard[foe.kind] || 1) * 0.5;
+        ctx.font = `900 ${low ? 30 : 22}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.globalAlpha = 0.6 + 0.4 * Math.sin(now / 70);
-        ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = '#ffcf3f';
-        ctx.strokeText('Hands up!', W / 2, H * 0.62); ctx.fillText('Hands up!', W / 2, H * 0.62);
+        ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = low ? '#ff7a3d' : '#ffcf3f';
+        if (tip) { ctx.strokeText(tip, W / 2, H * 0.62); ctx.fillText(tip, W / 2, H * 0.62); }
         ctx.globalAlpha = 1;
       }
     }
@@ -2836,8 +2882,9 @@
   // jolts them and flashes; a broken guard knocks them apart.
   function drawGuardView(now) {
     const s = engine.signals();
-    const broken = now < Fight.guardBrokenUntil;
-    const want = s.guard_up && !broken && engine.combat().phase !== 'top' ? 1 : 0;
+    const broken = false;
+    // the gloves come up by themselves when the guard bar blocks a punch
+    const want = Fight.block && now - Fight.block.t < FT.fx.blockMs && engine.combat().phase !== 'top' ? 1 : 0;
     Fight.guardK += (want - Fight.guardK) * 0.3;
     const k = Fight.guardK;
     if (k < 0.02 && !broken) return;
@@ -2985,6 +3032,40 @@
     ctx.fill();
   }
 
+  // ---------- the gym (the combat tutorial) ----------
+  // A training room around you and your partner: blue mats, block walls with a red band, a
+  // ceiling with strip lights, a cage fence behind your partner, heavy bags on both sides.
+  function drawGym() {
+    const g = Tutor.room, rx = g.fz, rz = -g.fx, Rm = 8, Hh = 4.2;
+    const at = (u, v, y) => toCam(g.x + rx * u + g.fx * v, y, g.z + rz * u + g.fz * v);
+    const quad = (a, b, c, d, col) => { const pr = project([a, b, c, d]); if (pr) fillPoly(pr, col); };
+    ctx.fillStyle = '#16181d'; ctx.fillRect(-W, -H, W * 3, H * 3);
+    quad(at(-Rm, -Rm, Hh), at(Rm, -Rm, Hh), at(Rm, Rm, Hh), at(-Rm, Rm, Hh), '#23252b');
+    for (let v = -6; v <= 6; v += 4) quad(at(-2.5, v - 0.3, Hh - 0.02), at(2.5, v - 0.3, Hh - 0.02), at(2.5, v + 0.3, Hh - 0.02), at(-2.5, v + 0.3, Hh - 0.02), '#f6f2dc');
+    const walls = [[-Rm, -Rm, Rm, -Rm], [Rm, -Rm, Rm, Rm], [Rm, Rm, -Rm, Rm], [-Rm, Rm, -Rm, -Rm]];
+    for (const [u0, v0, u1, v1] of walls) {
+      quad(at(u0, v0, 0), at(u1, v1, 0), at(u1, v1, Hh), at(u0, v0, Hh), '#3b3e46');
+      quad(at(u0, v0, 1.0), at(u1, v1, 1.0), at(u1, v1, 1.35), at(u0, v0, 1.35), '#a32323');
+      quad(at(u0, v0, 3.6), at(u1, v1, 3.6), at(u1, v1, Hh), at(u0, v0, Hh), '#111216');
+    }
+    // the far wall's banner
+    quad(at(-3, Rm - 0.02, 2.0), at(3, Rm - 0.02, 2.0), at(3, Rm - 0.02, 3.2), at(-3, Rm - 0.02, 3.2), '#e3c34a');
+    const c = at(0, Rm - 0.05, 2.6);
+    if (c.z > NEAR) { const sz = (F * 0.9) / c.z; ctx.font = `900 ${Math.max(8, sz)}px system-ui, sans-serif`; ctx.fillStyle = '#16181d'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TRAIN HARD', W / 2 + (F * c.x) / c.z, H / 2 - (F * c.y) / c.z); }
+    // mats: a 2 m checker of two blues
+    for (let i = -4; i < 4; i++) for (let j = -4; j < 4; j++) quad(at(i * 2, j * 2, 0.01), at(i * 2 + 2, j * 2, 0.01), at(i * 2 + 2, j * 2 + 2, 0.01), at(i * 2, j * 2 + 2, 0.01), (i + j) & 1 ? '#1f4f9a' : '#2860b4');
+    // the cage behind your partner, and the bags
+    const list = [];
+    quad(at(-6, 4.5, 0), at(6, 4.5, 0), at(6, 4.5, 2.8), at(-6, 4.5, 2.8), 'rgba(190, 196, 206, .16)');
+    for (let u = -6; u <= 6; u += 3) capsule(list, at(u, 4.5, 0), at(u, 4.5, 2.9), 0.06, [30, 30, 34], F);
+    capsule(list, at(-6, 4.5, 2.85), at(6, 4.5, 2.85), 0.05, [30, 30, 34], F);
+    for (const u of [-4.5, 4.5]) {
+      capsule(list, at(u, 1.5, 1.95), at(u, 1.5, Hh), 0.015, [90, 90, 96], F);
+      capsule(list, at(u, 1.5, 0.7), at(u, 1.5, 1.8), 0.22, [150, 28, 30], F);
+    }
+    drawPrims(list);
+  }
+
   // ---------- the sky: gradient, sun or moon with its glow, clouds, stars ----------
   const STARS = Array.from({ length: 160 }, (_, i) => { const r = rng(i * 7919 + 13); return { az: r() * Math.PI * 2, el: 0.05 + r() * 1.1, s: r() }; });
   const CLOUDS = Array.from({ length: 10 }, (_, i) => { const r = rng(i * 104729 + 7); return { az: r() * Math.PI * 2, el: 0.07 + r() * 0.2, w: 0.25 + r() * 0.35, puffs: Array.from({ length: 4 + Math.floor(r() * 3) }, () => [r() - 0.5, r() * 0.35, 0.3 + r() * 0.4]) }; });
@@ -3045,6 +3126,8 @@
   const LOOKS = {
     golden: { name: 'Golden hour', top: [40, 60, 122], hor: [250, 170, 118], fog: [214, 160, 140], az: -1.95, el: 0.09, sunCol: [255, 206, 146], amb: [0.5, 0.53, 0.68], sun: [0.74, 0.54, 0.32], night: 0, cloud: [255, 186, 158], under: [150, 104, 128] },
     day: { name: 'Day', top: [62, 120, 196], hor: [188, 212, 236], fog: [176, 198, 222], az: 2.6, el: 0.8, sunCol: [255, 252, 238], amb: [0.68, 0.71, 0.77], sun: [0.34, 0.32, 0.28], night: 0, cloud: [255, 255, 255], under: [196, 206, 222] },
+    // indoors (the gym): even light, no sun to speak of
+    gym: { name: 'Gym', top: [30, 32, 38], hor: [30, 32, 38], fog: [24, 26, 32], az: 0.5, el: 1.2, sunCol: [255, 255, 255], amb: [0.86, 0.86, 0.88], sun: [0.18, 0.18, 0.18], night: 0, cloud: [0, 0, 0], under: [0, 0, 0] },
     night: { name: 'Night', top: [6, 8, 24], hor: [44, 36, 74], fog: [28, 28, 52], az: 1.1, el: 0.5, sunCol: [214, 224, 255], amb: [0.26, 0.28, 0.42], sun: [0.06, 0.07, 0.12], night: 1, cloud: [70, 70, 104], under: [34, 34, 56] },
   };
   const LOOK_KEY = 'manhattan-miles-look', GFX_KEY = 'manhattan-miles-gfx';
@@ -3552,10 +3635,15 @@
     ctx.translate(shk.x, shk.y);
     if (pv.roll) { ctx.translate(W / 2, H / 2); ctx.rotate(-pv.roll); ctx.translate(-W / 2, -H / 2); }
     const horizon = H / 2 - F * (cam.sp / cam.cp);
-    drawSky(horizon);
-    // below the horizon: the rivers, then land, parks and streets over them
-    ctx.fillStyle = rgbOf(litRGB(MW.WATER_COL, 0.85, 0)); ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
-    if (World.ready) {
+    const gym = Fight.active && Fight.active.tutor && Tutor.room;
+    const outdoorLook = L;
+    if (gym) { L = LOOKS.gym; drawGym(); }
+    else {
+      drawSky(horizon);
+      // below the horizon: the rivers, then land, parks and streets over them
+      ctx.fillStyle = rgbOf(litRGB(MW.WATER_COL, 0.85, 0)); ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
+    }
+    if (World.ready && !gym) {
       const D = T.drawDistance;
       drawGround(D);
       drawStreets(Math.min(D, 380));
@@ -3580,10 +3668,11 @@
       // opponents, the crowd and the person they were hassling, far to near
       // everyone and everything out on the street, far to near; the passers-by, cars and street
       // furniture hide behind any building in the way
-      const street = Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f })).concat(Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })), World.ready && GX.props ? nearProps().map((f) => ({ f, prop: true })) : []);
-      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(Fight.people.map((f) => ({ f })), street.filter((it) => Math.hypot(it.f.x - cam.x, it.f.z - cam.z) < 12 || !occluded(it.f.x, it.prop ? 2 : 1.2, it.f.z, null)));
+      const street = gym ? [] : Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f })).concat(Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })), World.ready && GX.props ? nearProps().map((f) => ({ f, prop: true })) : []);
+      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(gym ? [] : Fight.people.map((f) => ({ f })), street.filter((it) => Math.hypot(it.f.x - cam.x, it.f.z - cam.z) < 12 || !occluded(it.f.x, it.prop ? 2 : 1.2, it.f.z, null)));
       for (const it of all.sort((a, b) => Math.hypot(b.f.x - cam.x, b.f.z - cam.z) - Math.hypot(a.f.x - cam.x, a.f.z - cam.z))) { if (it.prop) drawProp(it.f); else if (it.car) drawCar(it.f); else if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
+    L = outdoorLook;
     ctx.restore();
     if (G.state === 'walk') {
       if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
@@ -3736,7 +3825,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-18 PM \u00b7 street crime, ducking hooks, uppercuts, jump fix';
+  const BUILD = '2026-10-18 late \u00b7 guard bar, gym tutorial, retries, turns fixed';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
@@ -3755,7 +3844,7 @@
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
-    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'guard', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
+    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
@@ -3789,7 +3878,7 @@
     spawnFoes(FT.firstAhead);
     hum(true);
     // the first camera walk runs the combat tutorial right after the warm-up
-    if (!isDemo() && !tutorDoneBefore()) setTimeout(() => startTutor(performance.now()), 2500);
+    if (!isDemo() && !tutorDoneBefore()) setTimeout(() => startTutor(performance.now()), 300);
     show(null);
     $('endBtn').hidden = false;
     $('phoneBtn').hidden = false;
@@ -3861,11 +3950,12 @@
     high: { big: 'High knees', small: 'Fast, knees up to hip height.', say: 'High knees! Fast.', event: 'run_start', need: 1, secs: 7 },
     waveL: { big: 'Wave left', small: 'Left hand up above your head, wave.', say: 'Wave your left hand.', event: 'wave', hand: 'left', need: 1, secs: 3.5 },
     waveR: { big: 'Wave right', small: 'Right hand up above your head, wave.', say: 'Wave your right hand.', event: 'wave', hand: 'right', need: 1, secs: 3.5 },
-    turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1 },
-    turnR: { big: 'Turn right', small: 'Feet still. Turn your shoulders right, then back.', say: 'Turn your shoulders right.', event: 'turn_right', need: 1, side: 1 },
+    turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1, secs: 4 },
+    turnR: { big: 'Turn right', small: 'Feet still. Turn your shoulders right, then back.', say: 'Turn your shoulders right.', event: 'turn_right', need: 1, side: 1, secs: 4 },
   };
   const MOVE_NAMES = { march: 'low knees', high: 'high knees', waveL: 'left wave', waveR: 'right wave', turnL: 'left turn', turnR: 'right turn' };
   const WARM_IDS = ['march', 'high', 'waveL', 'waveR', 'turnL', 'turnR'];
+  const WARM_TRIES = 3;
   const move = (id, secs, round) => Object.assign({}, MOVES[id], { id, secs, round });
   const warmPlan = () => [
     { id: 'intro', big: 'Warm-up', small: 'Low knees, high knees, waves and turns. Two rounds.', say: 'Warm-up. Low knees, high knees, waves and turns.', secs: 2.5 },
@@ -4096,7 +4186,7 @@
   function setStep(i) {
     const c = Warm.plan[i];
     Warm.i = i;
-    Warm.left = Warm.len = c.secs;
+    Warm.left = Warm.len = c.secs > 0 ? c.secs : 3; // (10/17's turn steps had no length and ended at once)
     Warm.hits = 0;
     Warm.coached = false;
     if (c.id === 'round' && Warm.retuned) { c.say += ' I tuned to your steps.'; c.small += ' Tuned to your steps.'; Warm.retuned = false; }
@@ -4150,6 +4240,12 @@
         const tuned = engine.apply_capture();
         if (!ok && tuned.seen.step) Warm.retuned = true;
       }
+      // 10/18 (Mark): a move that did not register goes again right away, up to three tries in
+      // a row, so the warm-up never locks you in
+      const tries = c.tries || 1;
+      if (!ok && tries < WARM_TRIES) {
+        Warm.plan.splice(Warm.i + 1, 0, Object.assign({}, c, { tries: tries + 1, say: `Again. ${MOVES[c.id].say}`, small: `Try ${tries + 1} of ${WARM_TRIES}. ${MOVES[c.id].small}` }));
+      }
     }
     if (Warm.i + 1 >= Warm.plan.length && !Warm.extra) {
       Warm.extra = true;
@@ -4159,9 +4255,6 @@
         Warm.plan.push({ id: 'round', big: 'Full warm-up', small: 'Low knees, high knees, waves and turns.', say: 'Let us do the full warm-up.', secs: 2 },
           ...warmPlan().slice(1));
         Warm.quick = false; Warm.extra = false;
-      } else if (again.length) {
-        Warm.plan.push({ id: 'round', big: 'One more round', small: `Just the ${again.map((id) => MOVE_NAMES[id]).join(' and ')}.`, say: 'One more round.', secs: 2 },
-          ...again.map((id) => move(id, MOVES[id].secs, 3)));
       }
     }
     if (Warm.i + 1 >= Warm.plan.length && !Warm.done) {

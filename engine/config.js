@@ -92,7 +92,8 @@
         // marching, 11 S/s high knees); swipes peak at 35 S/s and up.
         wristSpeedMax: 12,
         suppressHoldMs: 250, // steering stays off this long after the wrists slow down
-        raisedHoldMs: 600,   // and this long after a hand comes down from above the nose
+        raisedHoldMs: 600,   // and this long after a raised (waving) hand comes down
+        raisedOut: -0.05,    // shoulder widths along the shoulder line: a raised wrist counts only out at its shoulder or wider (a guard is inside)
         eventLevel: 0.5,     // steering level that fires lean_left / lean_right
         eventReset: 0.2,     // steering must return below this to fire again
       },

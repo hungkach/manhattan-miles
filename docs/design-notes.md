@@ -2,6 +2,14 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-18 late: guard bar, gym, retries
+
+- The camera misread a held guard, so blocking by holding your hands up is gone. Your guard bar blocks their punches by itself (the gloves come up), each block costing it (straight 1, hook and uppercut 1.5 of 6); it refills slowly, and slips, ducks, stuffed shots and knockouts top it up. Empty, punches land. A wind-up prompt says how to beat it (Slip, Duck, Stand tall).
+- Their guard bar works the same way on your punches (a tenth gets through) until it breaks and they are open for 2 s. A punch within 1 s of your slip or level change, from a shift angle, or into their wind-up, shot, brace or stuffed shot skips it and lands clean.
+- The combat tutorial happens at the gym, its own place: mats, a cage, heavy bags, your partner on pads, and the camera's stick figure in a panel on the side. Cover-up is out of it (no more guard reading); slip is in.
+- Shoulder turns stopped registering in the warm-up. Two causes, both fixed: the 10/17 warm-up rewrite gave the turn steps no length, so they ended the moment they began (the real culprit); and hands up by the face switched off steering (engine 0.8.2).
+- Every warm-up move and tutorial move repeats until it registers, at most three tries in a row.
+
 ## 2026-10-18 notes
 
 - A jump without a deep enough squat: only a jump, never a takedown (engine 0.8.1 tests; the shot needs a squat past 0.3 torso lengths, the drive up, then the jump). The touch Jump button now shoots only out of a held Squat. In a fight a lone jump says "Level change first, then jump".
