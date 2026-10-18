@@ -2,12 +2,16 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
-## 2026-10-19 honest reps audit
+## 2026-10-19 PM honest reps v2 (done)
 
-- Effort scaling, floor to capped top, measured against the player's own body: punch power against your own fast punch from early in the session (held, so fatigue shows), takedown quality from squat depth, drive speed and jump height (longer ground and pound; only a quality shot beats a brace), slip size and duck depth top up the guard bar more, a quicker and wider bound buys a longer shift.
-- Scoring needs quality: walking XP per minute by its quality against your early minutes, intervals by seconds run, wins by clean shots, accuracy and damage taken, takedowns by quality. No XP for waving. "Big takedown" only for a quality one.
-- The summary states facts: steps, distance, work and rest time, intervals (seconds run), fights won, clean punches, takedowns, how walking quality held first minutes to last, punch power first fight to last. Praise only a personal best or quality held late (95% or better over 10 or more active minutes). A first walk sets the records without praise.
-- Fatigue: when your last two walking minutes are under 80% of your early effort, the game says the numbers (steps a minute and stride, then and now) and offers a cab toward your stop or a minute's rest; both log as rest. Also on the phone any time: Take a breather.
+Mark: effort is subjective, output is objective, and the player's own fitness is the progression model. This replaces the morning's audit, which scaled rewards against the player's early reps.
+
+- Absolute output in body units, floor to capped top. Punch power from fist speed in shoulder widths a second (2.5 floor still lands, 10 is the cap); takedown quality from squat depth, drive speed and jump height in torso lengths; slip size, duck depth and bound size the same. Nothing is compared to your first punches or minutes.
+- XP from outcomes only: stops, wins (by clean shots, accuracy, hits taken), takedowns (by output), guard breaks, calls, runners caught, and new records. No per-minute XP, no interval XP, nothing for waving.
+- Records in body units, saved across sessions (camera play only): best 30 s cadence, highest knees (engine 0.8.3 `knee_lift`), fastest punch, deepest level change, longest bound. The summary shows each with the previous best.
+- Summary is plain facts: time, steps, distance, work and rest time, intervals with seconds run, fights, punches, takedowns. No early-vs-late percentages, no praise lines.
+- No quality-drop rest offer. Rest is the player's choice: Take a breather (phone), cab, subway.
+- No cheering voice, no scolding, no fatigue commentary. Humor aims at the city, never the player's effort or body.
 
 ## 2026-10-18 late: guard bar, gym, retries
 

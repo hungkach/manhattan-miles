@@ -152,6 +152,7 @@
           guard_left: det && det.guardHands ? det.guardHands.left : false,
           guard_right: det && det.guardHands ? det.guardHands.right : false,
           stride: det && det.stride ? det.stride : 1,
+          knee_lift: det && det.kneeLift ? det.kneeLift : 0, // T, average peak knee rise of the recent steps (0.8.3)
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
           level_low: det ? !!det.levelLow : false,
@@ -459,6 +460,6 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, stride: 1, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, stride: 1, knee_lift: 0, confidence: 0 };
   }
 })(globalThis);
