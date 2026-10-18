@@ -4128,13 +4128,13 @@
     if (moving) {
       const m0 = Math.floor(G.activeMs / 60000);
       G.activeMs += dt * 1000; G.idleS = 0; G.idleSaid = 0;
-      if (Math.floor(G.activeMs / 60000) > m0) award(XP.minute, 'active minute');
+      // (XP for walking comes per walking minute, by its quality: see qualityTick)
     } else G.idleS += dt;
     const mins = G.activeMs / 60000;
     let next = null;
     while (G.milestone < SESSION.milestones.length && mins >= SESSION.milestones[G.milestone]) next = SESSION.milestones[G.milestone++];
     if (next) {
-      say(next === 20 ? '20 active minutes. That is a full session. Keep exploring, or end it from the phone.' : `${next} active minutes. Nice.`, 'confirm');
+      say(next === 20 ? '20 active minutes. That is a full session. Keep exploring, or end it from the phone.' : `${next} active minutes.`, 'confirm');
       banner(`${next} active minutes`, 2500, now);
     }
     // standing around: a nudge at idleNudgeS, then every 30 s
@@ -4157,9 +4157,11 @@
     if (P.running) iv.ran += dt;
     if (!iv.tenSaid && iv.left <= 10) { iv.tenSaid = true; say('Ten more seconds.', 'feedback'); }
     if (iv.left <= 0) {
-      const good = iv.ran >= SESSION.intervalS * 0.6;
-      if (good) { G.intervals++; award(XP.interval, 'interval'); }
-      say(good ? 'Done. Walk it off.' : 'Interval over. Higher knees next time.', 'feedback');
+      // it counts when you ran most of it; XP by how much of it you ran
+      const ran = Math.round(iv.ran), good = iv.ran >= SESSION.intervalS * 0.6;
+      if (good) { G.intervals++; award(Math.round(effort(iv.ran, SESSION.intervalS * 0.6, SESSION.intervalS, XP.interval * 0.5, XP.interval)), 'interval'); }
+      G.intervalLog.push(ran);
+      say(good ? `Done: ${ran} of ${SESSION.intervalS} seconds running. Walk it off.` : `Interval over: ${ran} of ${SESSION.intervalS} seconds running.`, 'feedback');
       G.interval = null;
       G.intervalIn = SESSION.intervalEveryS;
     }
@@ -4503,7 +4505,6 @@
     best.stopUntil = now + 2600;
     best.waveUntil = now + 1800;
     Peds.waves++;
-    award(XP.wave, 'said hi');
     const line = best.lines ? pick(best.lines) : best.kind === 'vendor' ? pick(VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
     best.say = line; best.sayUntil = now + 4000;
     say(line, 'feedback');
@@ -4543,6 +4544,33 @@
   function subwayTick(dt, now) {
     const r = Subway.ride;
     const left = Math.max(0, (r.until - now) / 1000);
+    if (r.kind) {
+      $('subTitle').textContent = r.kind === 'cab' ? `Cab toward ${r.to.name}` : 'Resting';
+      $('subInfo').textContent = `${Math.ceil(left)} s \u00b7 rest`;
+      $('subFill').style.transform = `scaleX(${1 - left / r.rideS})`;
+      G.restMs += dt * 1000;
+      if (left > 0) return;
+      Subway.ride = null; $('subway').hidden = true;
+      if (r.kind === 'cab') {
+        // out about two blocks short of your stop, so the last of it is still walked
+        const tg = target(), way = MW.route(P.x, P.z, tg.x, tg.z);
+        let out = { x: P.x, z: P.z };
+        if (way && way.nodes.length > 1) {
+          let rem = 0, n = way.nodes.length - 1;
+          while (n > 0 && rem < 160) { rem += Math.hypot(MW.NODEX[way.nodes[n]] - MW.NODEX[way.nodes[n - 1]], MW.NODEZ[way.nodes[n]] - MW.NODEZ[way.nodes[n - 1]]); n--; }
+          out = sidewalkNear(MW.NODEX[way.nodes[n]], MW.NODEZ[way.nodes[n]]);
+        }
+        const yaw = Math.atan2(tg.x - out.x, tg.z - out.z);
+        Object.assign(P, { x: out.x, z: out.z, yaw, view: yaw, speed: 0, cell: null });
+        Nav.tg = null; engine.set_facing((yaw * 180) / Math.PI);
+        Fight.foes = []; Fight.people = []; Fight.chase = null; Peds.list = []; Traffic.cars = []; Vendors.list = []; G.cueKey = '';
+        Fight.waitS = Math.max(Fight.waitS, 30);
+        G.cabs++;
+        say(`Here. ${target().name}: ${destWords()}.`, 'instruction');
+      } else say('Rest done. March when you are ready.', 'instruction');
+      Q.cur = { ms: 0, spm: 0, stride: 0 };
+      return;
+    }
     if (r.phase === 'wait') {
       $('subTitle').textContent = `${r.from.name} \u00b7 ${r.from.lines.join(' ')}`;
       $('subInfo').textContent = `Next train in ${Math.ceil(left)} s. March in place while you wait.`;
@@ -4578,20 +4606,116 @@
     banner(st.name, 2500, now);
   }
 
+  // ---------- honest reps (body-arcade design philosophy) ----------
+  // Every rep counts, better reps count more, and the scoreboard does not lie. Each rewarded move
+  // turns its magnitude into a reward the same way: an honest minimum rep (tired, small, slow)
+  // still works at `lo`, more effort pays more up to `hi`, and nothing past the top pays extra.
+  // The range is the player's own: punch speed is fitted to their first punches of the session
+  // and then held, so fatigue shows as less power instead of being fitted away.
+  function effort(x, floor, full, lo = 0.6, hi = 1.4) {
+    const k = Math.max(0, Math.min(1, (x - floor) / Math.max(1e-6, full - floor)));
+    return lo + (hi - lo) * k;
+  }
+  const Q = {
+    // punches: the player's own fast punch (75th percentile of their first `fitN`), per source
+    fitN: 12, punch: { engine: { seen: [], ref: 0 }, glove: { seen: [], ref: 0 } },
+    // walking: one sample per walking minute (cadence, stride and their product, the effort index)
+    cur: { ms: 0, spm: 0, stride: 0 }, mins: [], base: null, baseMins: 3, offerAt: 0,
+    // fights: what each one looked like
+    fights: [], fight: null,
+  };
+  const pctl = (arr, p) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * a.length))]; };
+  // a punch's power from its speed against the player's own fitted range: 0.6 for the slowest
+  // punch the camera counts, 1.3 at their own fast punch, capped at 1.4
+  function punchPower(speed, src) {
+    const f = Q.punch[src], dflt = src === 'engine' ? 5 : 6;
+    if (!f.ref) { f.seen.push(speed); if (f.seen.length >= Q.fitN) f.ref = Math.max(dflt * 0.5, pctl(f.seen, 0.75)); }
+    const ref = f.ref || Math.max(dflt * 0.5, f.seen.length >= 4 ? pctl(f.seen, 0.75) : dflt);
+    return effort(speed, ref * 0.25, ref * 1.12, 0.6, 1.4);
+  }
+  // walking quality: cadence relative to an easy 110 steps a minute, times stride
+  const walkIndex = (spm, stride) => (spm / 110) * stride;
+  function qualityTick(dt) {
+    if (Fight.active || P.speed < 0.5 || !(P.cadence > 0)) return;
+    const c = Q.cur, st = engine.signals().stride || 1;
+    c.ms += dt * 1000; c.spm += P.cadence * dt; c.stride += st * dt;
+    if (c.ms < 60000) return;
+    const sec = c.ms / 1000, m = { spm: c.spm / sec, stride: c.stride / sec, at: G.activeMs };
+    m.e = walkIndex(m.spm, m.stride);
+    Q.mins.push(m);
+    Q.cur = { ms: 0, spm: 0, stride: 0 };
+    if (!Q.base && Q.mins.length >= Q.baseMins) {
+      const first = Q.mins.slice(0, Q.baseMins);
+      Q.base = { e: avg(first.map((x) => x.e)), spm: avg(first.map((x) => x.spm)), stride: avg(first.map((x) => x.stride)) };
+    }
+    // XP for the minute: an honest minute earns a little, a quality one (against your own early
+    // range) earns up to the full amount
+    const ref = Q.base ? Q.base.e : 1;
+    award(Math.round(effort(m.e, ref * 0.6, ref, XP.minute * 0.3, XP.minute)), 'walking minute');
+    sideline(m);
+  }
+  const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  // Fatigue is information: when the last two minutes are well under your own early range, say
+  // what changed in plain numbers and offer a rest (a cab to your stop, or a minute standing
+  // easy). Never scold, never round up; once every few minutes at most.
+  function sideline(m) {
+    if (!Q.base || Q.mins.length < Q.baseMins + 2 || G.activeMs < Q.offerAt) return;
+    const last = Q.mins.slice(-2), e = avg(last.map((x) => x.e));
+    if (e >= Q.base.e * QUALITY.dropAt) return;
+    Q.offerAt = G.activeMs + QUALITY.offerGapMs;
+    const spm0 = Math.round(Q.base.spm), spm1 = Math.round(avg(last.map((x) => x.spm)));
+    const s0 = Math.round(Q.base.stride * 100), s1 = Math.round(avg(last.map((x) => x.stride)) * 100);
+    const line = `Your steps are down from ${spm0} to ${spm1} a minute, stride from ${s0} to ${s1} percent. Take a cab to your stop and rest, or rest here a minute, or keep going.`;
+    Q.dropLine = `Steps ${spm0} to ${spm1} a minute, stride ${s0} to ${s1}%`;
+    openPhone({ title: 'Take a breather?', items: restItems(), line });
+  }
+  const QUALITY = { dropAt: 0.8, offerGapMs: 5 * 60000, restS: 60, cabS: [25, 50] };
+  // a fight's quality: how much of the damage was clean, accuracy, and how little you took
+  function fightQuality(f) {
+    const acc = f.thrown ? f.landed / f.thrown : 0, clean = f.landed ? f.clean / f.landed : 0;
+    return Math.max(0, Math.min(1, 0.45 * clean + 0.35 * acc + 0.2 * Math.max(0, 1 - f.hits / FT.playerHp)));
+  }
+
+  // first minutes against last: steps a minute, stride and the effort index (null until there are
+  // enough walking minutes to compare)
+  function qualityHeld() {
+    const m = Q.mins;
+    if (m.length < Q.baseMins + 1) return null;
+    const n = Math.min(3, Math.floor(m.length / 2)), e0 = m.slice(0, n), e1 = m.slice(-n);
+    const sum = (a) => ({ spm: Math.round(avg(a.map((x) => x.spm))), stride: Math.round(avg(a.map((x) => x.stride)) * 100), e: avg(a.map((x) => x.e)) });
+    const early = sum(e0), late = sum(e1);
+    return { n, early, late, pct: Math.round((100 * late.e) / Math.max(1e-6, early.e)) };
+  }
+  // personal bests, saved with progress; returns what this walk beat (nothing on a first walk)
+  function updateBests(now) {
+    const b = Prog.best, first = !b.walks;
+    const names = { minute: (v) => `best walking minute (effort ${v.toFixed(2)})`, meters: (v) => `longest walk (${(v / 1609.34).toFixed(2)} mi)`, clean: (v) => `most clean shots (${v})`, takedown: (v) => `best takedown (quality ${Math.round(v * 100)})`, fight: (v) => `cleanest win (quality ${Math.round(v * 100)})`, held: (v) => `quality held late (${v}%)` };
+    const list = [];
+    for (const k in names) {
+      const v = now[k] || 0;
+      if (v > (b[k] || 0)) { if (!first && v > 0) list.push(names[k](v)); b[k] = v; }
+    }
+    b.walks = (b.walks || 0) + 1;
+    saveProg();
+    return { first, list };
+  }
+
   // ---------- progression: XP, levels and titles, saved between walks ----------
   // An RPG layer: XP for active minutes, stops, intervals, fights, takedowns, guard breaks, police
   // calls and saying hi. Levels raise the opponents (more health, quicker punches, pairs sooner)
   // and give a title. Saved in localStorage with lifetime totals.
-  const XP = { minute: 10, stop: 50, interval: 30, win: 60, takedown: 15, guardBreak: 10, call: 80, wave: 2, caught: 40 };
+  // (honest reps: minutes, intervals, wins and takedowns pay by quality, not by showing up; saying
+  // hi earns nothing)
+  const XP = { minute: 10, stop: 50, interval: 30, win: 60, takedown: 25, guardBreak: 10, call: 80, caught: 40 };
   const TITLES = ['Tourist', 'Commuter', 'Bodega Regular', 'Block Captain', 'Neighborhood Watch', 'Express Train', 'Borough Hero', 'Midtown Myth', 'The Mayor (unofficially)', 'King of New York'];
   const levelFor = (xp) => Math.floor(Math.sqrt(xp / 250)) + 1; // 250, 1000, 2250, 4000 ...
   const xpFor = (lvl) => 250 * (lvl - 1) * (lvl - 1);
   const titleOf = (lvl) => TITLES[Math.min(TITLES.length - 1, lvl - 1)];
   const PROG_KEY = 'manhattan-miles-progress';
-  const Prog = { xp: 0, walkXp: 0, pop: '', popUntil: 0, life: { activeMs: 0, meters: 0, steps: 0, fights: 0, takedowns: 0, calls: 0, stops: 0, intervals: 0, walks: 0 } };
-  try { const saved = JSON.parse(localStorage.getItem(PROG_KEY) || 'null'); if (saved) { Prog.xp = saved.xp || 0; Object.assign(Prog.life, saved.life || {}); } } catch (_) {}
+  const Prog = { xp: 0, walkXp: 0, pop: '', popUntil: 0, best: {}, life: { activeMs: 0, meters: 0, steps: 0, fights: 0, takedowns: 0, calls: 0, stops: 0, intervals: 0, walks: 0 } };
+  try { const saved = JSON.parse(localStorage.getItem(PROG_KEY) || 'null'); if (saved) { Prog.xp = saved.xp || 0; Object.assign(Prog.life, saved.life || {}); Prog.best = saved.best || {}; } } catch (_) {}
   const level = () => levelFor(Prog.xp);
-  function saveProg() { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: Prog.xp, life: Prog.life })); } catch (_) {} }
+  function saveProg() { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: Prog.xp, life: Prog.life, best: Prog.best })); } catch (_) {} }
   function award(n, why) {
     const before = level();
     Prog.xp += n; Prog.walkXp += n;
@@ -4614,6 +4738,7 @@
       { id: 'resume', label: 'Back to the walk' },
       ...(st ? [{ id: 'subway', label: `Subway: ${st.name}` }] : []),
       { id: 'radio', label: 'Police radio' },
+      { id: 'breather', label: 'Take a breather' },
       { id: 'repeat', label: 'Repeat directions' },
       { id: 'skip', label: 'Skip this stop' },
       { id: 'tutor', label: 'Combat tutorial' },
@@ -4647,11 +4772,21 @@
     renderPhone();
     say(line, 'prompt');
   }
-  function openPhone() {
+  function openPhone(menu) {
     if (G.state !== 'walk' || Fight.active || Phone.open || Subway.ride) return;
     Object.assign(Phone, { open: true, movedAt: performance.now(), ready: false, facing: engine.locomotion().facing });
     $('phone').hidden = false;
-    phoneMenu('Phone', mainItems(), 'Phone. Turn to choose, wave your right hand to pick.');
+    if (menu) phoneMenu(menu.title, menu.items, menu.line);
+    else phoneMenu('Phone', mainItems(), 'Phone. Turn to choose, wave your right hand to pick.');
+  }
+  // a breather: a cab most of the way to your stop, or a minute standing easy; both count as rest
+  const restItems = () => [{ id: 'cab', label: 'Cab toward my stop (rest)' }, { id: 'rest', label: `Rest here ${QUALITY.restS} s` }, { id: 'resume', label: 'Keep going' }];
+  function startRest(kind, now) {
+    const rideS = kind === 'cab' ? Math.round(rand(QUALITY.cabS[0], QUALITY.cabS[1])) : QUALITY.restS;
+    Subway.ride = { kind, phase: 'ride', until: now + rideS * 1000, rideS, to: { name: kind === 'cab' ? target().name : 'here' } };
+    G.interval = null;
+    $('subway').hidden = false;
+    say(kind === 'cab' ? `Cab toward ${target().name}. Sit back: this ride is rest.` : `Resting ${rideS} seconds. Breathe, shake out your legs.`, 'instruction');
   }
   function closePhone() {
     if (!Phone.open) return;
@@ -4664,6 +4799,8 @@
     if (!it) return;
     if (it.id === 'subway') { phoneMenu(it.label.replace('Subway: ', ''), stationItems(stationNear()), 'Subway. Pick a station.'); return; }
     if (it.id === 'back') { phoneMenu('Phone', mainItems(), 'Phone.'); return; }
+    if (it.id === 'breather') { phoneMenu('Take a breather', restItems(), 'A cab, or rest here.'); return; }
+    if (it.id === 'cab' || it.id === 'rest') { closePhone(); startRest(it.id, performance.now()); return; }
     if (it.id === 'teleport') { phoneMenu('Teleport', [{ id: 'back', label: 'Back' }, ...PLACES.map((pl) => ({ id: 'tp', label: pl.name.replace(/^the /, 'The '), place: pl }))], 'Teleport. Pick a place.'); return; }
     closePhone();
     if (it.id === 'ride') { startRide(it.from, it.to, performance.now()); return; }
@@ -4707,6 +4844,7 @@
     if (Subway.ride) { subwayTick(dt, now); P.speed = 0; return; }
     sessionTick(dt, now);
     if (G.state !== 'walk') return;
+    qualityTick(dt);
     pedTick(dt, now);
     if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
@@ -4824,7 +4962,7 @@
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
     // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
     // timed into their wind-up, a hurt or a broken guard earns a longer ground and pound.
-    td: { braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 1.5, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
+    td: { fullDepth: 0.6, fullJump: 0.3, braceAfterMs: 700, braceChance: 0.6, braceMs: 1400, beatBrace: 0.45, timedBonus: 0.4, gnpMs: [2000, 5000], levelBonus: 2 },
     // guard breaks: blocked punches wear the guard down (guardHp, raw damage); at 0 the hands drop
     // for brokenMs and take openBonus damage. It refills by regen a second when they are not covering.
     // 10/18 (Mark: the camera mistook a held guard; blocking is automatic now). Their guard bar
@@ -5112,7 +5250,8 @@
     if (!a || a.tutor || engine.combat().phase !== 'standing' || now < (Fight.shiftCd || 0)) return;
     const foe = a.foe;
     if (['down', 'ko', 'flee', 'shoot'].includes(foe.state) || a.range === 'out') return;
-    const q = Math.max(0, Math.min(1, (1300 - (e.ms || 1000)) / 700));
+    // (honest reps: a quicker and a wider bound buys a longer window, 1 to 4 s)
+    const q = 0.5 * effort(1300 - (e.ms || 1000), 0, 700, 0, 1) + 0.5 * effort(e.dist || 0.9, 0.9, 1.6, 0, 1);
     const ms = Math.round(FT.shift.ms[0] + (FT.shift.ms[1] - FT.shift.ms[0]) * q);
     Fight.shift = { side: e.side === 'left' ? -1 : 1, start: now, until: now + ms, ms };
     Fight.shiftCd = now + ms + FT.shift.cooldownMs;
@@ -5163,6 +5302,7 @@
     gatherCrowd(now);
     Fight.hp = FT.playerHp;
     Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity; Fight.shift = null; Fight.shiftCd = 0;
+    Q.fight = { start: now, thrown: 0, landed: 0, clean: 0, hits: 0, power: [], takedowns: [] };
     foe.state = 'guard'; foe.until = now + rand(900, 1600);
     foe.guardHp = foe.guardMax || FT.guard.hp;
     Fight.lowSince = null;
@@ -5284,7 +5424,10 @@
     Fight.stats.ms += now - a.start;
     Fight.stats[how]++;
     G.fightsDone++;
-    if (how === 'won') award(XP.win, a.foe.state === 'flee' ? 'they ran' : 'knockout');
+    // a win pays by how it was won: clean shots, accuracy, and how little you took
+    const fq = Q.fight ? fightQuality(Q.fight) : 0;
+    if (Q.fight) { Q.fights.push(Object.assign({ how, q: fq, ms: now - a.start }, Q.fight)); Q.fight = null; }
+    if (how === 'won') award(Math.round(XP.win * (0.4 + 0.6 * fq)), a.foe.state === 'flee' ? 'they ran' : 'knockout');
     Fight.active = null;
     Fight.foes = [];
     Fight.waitS = rand(FT.everyS[0], FT.everyS[1]);
@@ -5317,6 +5460,7 @@
       return;
     }
     Fight.stats.thrown++;
+    if (Q.fight) Q.fight.thrown++;
     if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Out of range'); return; }
     // reach: hooks and uppercuts only land close; straights reach mid range
     if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) { fightMsg({ hook: 'Too far for a hook', overhand: 'Too far for an overhand', uppercut: 'Too far for an uppercut' }[kind] || 'Out of range'); return; }
@@ -5355,6 +5499,7 @@
     else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
     foe.hp -= dmg;
+    if (Q.fight) { Q.fight.landed++; Q.fight.power.push(power); if (clean) Q.fight.clean++; }
     impact(foe, hand, where, power, now, kind, dmg);
     Fight.stats.landed++;
     foe.hurtUntil = now + 220;
@@ -5385,7 +5530,7 @@
     const now = performance.now();
     Fight.fistFlash[e.hand] = now + 180;
     if (engine.combat().phase === 'top') return; // it comes back as a down_strike
-    if (claim(e.hand, now)) { landed(e.type, e.power, now, e.hand, null); return; }
+    if (claim(e.hand, now)) { landed(e.type, punchPower(e.speed || e.power * 5, 'engine'), now, e.hand, null); return; }
     // the glove hitbox got this punch first: the engine's classifier is stricter, so its kind wins
     const h = Fight.hand[e.hand], pop = h && h.pop;
     if (pop && now - pop.t < FT.hit.pairMs && h.lastKind !== e.type) { pop.text = pop.text.replace(/^\S+( strike)?/, KIND_NAME[e.type] || e.type); h.lastKind = e.type; if (Fight.active && Fight.active.tutor) tutorFix(e.type, e.hand); }
@@ -5410,14 +5555,31 @@
   });
   // the engine asks the game how a shot goes (engine target.shot): a braced opponent stuffs a weak
   // one; a shot timed into their wind-up, a hurt or a broken guard is a longer ground and pound
+  // honest reps: a takedown's quality from how deep the level change went, how fast you drove
+  // out of it and how high you jumped, each from the engine's floor (anything that counts as a
+  // shot still takes them down) to a capped top
+  engine.on('drive_up', (e) => { Fight.lastDrive = { depth: e.depth || 0, speed: e.speed || 0, t: performance.now() }; });
+  engine.on('jump', (e) => { Fight.lastJump = { height: e.height || 0, t: performance.now() }; });
+  function takedownQuality(power) {
+    const now = performance.now(), dr = Fight.lastDrive && now - Fight.lastDrive.t < 1500 ? Fight.lastDrive : null, jp = Fight.lastJump && now - Fight.lastJump.t < 800 ? Fight.lastJump : null;
+    const sq = RE.defaultConfig().combat.level;
+    const depthQ = dr ? effort(dr.depth, sq.squat, FT.td.fullDepth, 0, 1) : 0;
+    const riseQ = effort(power - (jp ? 0.5 : 0), 0.3, 1.2, 0, 1);
+    const jumpQ = jp ? effort(jp.height, sq.jump, FT.td.fullJump, 0, 1) : 0;
+    return { q: 0.35 * depthQ + 0.35 * riseQ + 0.3 * jumpQ, depth: dr ? dr.depth : 0, jump: jp ? jp.height : 0 };
+  }
   function resolveShot({ power }) {
     const a = Fight.active;
     if (!a) return { takedown: false };
     if (a.tutor) return { takedown: true, topMs: 1500 };
     const foe = a.foe;
-    if (foe.state === 'brace' && power < FT.td.beatBrace) return { takedown: false, braced: true };
+    const tq = takedownQuality(power);
+    Fight.lastTq = tq;
+    if (Q.fight) Q.fight.takedowns.push(tq.q);
+    // a braced opponent was waiting for it: only a quality shot gets through
+    if (foe.state === 'brace' && tq.q < FT.td.beatBrace) return { takedown: false, braced: true };
     const timed = ['windup', 'hurt', 'broken', 'stuffed'].includes(foe.state);
-    const q = Math.max(0, Math.min(1, (power + (timed ? FT.td.timedBonus : 0) - 0.5) / 1.0));
+    const q = Math.max(0, Math.min(1, tq.q + (timed ? FT.td.timedBonus : 0)));
     // on the ground with their friend standing over you: a short burst
     const cut = others(a).length ? FT.tag.gnpCut : 1;
     return { takedown: true, topMs: Math.round((FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q) * cut), timed };
@@ -5430,8 +5592,8 @@
     a.foe.state = 'down'; a.foe.until = Infinity;
     Fight.gnpStart = now; Fight.gnpMs = e.topMs || FT.td.gnpMs[0];
     Fight.stats.takedowns++;
-    award(XP.takedown, 'takedown');
-    const big = e.jumped || Fight.gnpMs >= 4000;
+    award(Math.round(effort(Fight.lastTq ? Fight.lastTq.q : 0, 0, 1, XP.takedown * 0.4, XP.takedown)), 'takedown');
+    const big = (Fight.lastTq ? Fight.lastTq.q : 0) >= 0.7; // a big takedown is a quality one, not just any jump
     Fight.backHitAt = now + FT.tag.backHitMs;
     if (others(a).length) say('Takedown! Quick, his friend is coming.', 'feedback');
     else say(big ? 'Big takedown! Ground and pound.' : 'Takedown! Ground and pound.', 'feedback');
@@ -5442,7 +5604,8 @@
     if (!a) return;
     Fight.stats.stuffed++;
     fightMsg('Stuffed');
-    if (a.foe.state === 'brace') say('Stuffed. They saw it coming: jump into it, or uppercut.', 'feedback');
+    const tq = Fight.lastTq;
+    if (a.foe.state === 'brace') say(tq ? `Stuffed. They were braced. Squat ${Math.round(tq.depth * 100)}, jump ${Math.round(tq.jump * 100)}: go deeper and higher, or uppercut.` : 'Stuffed. They were braced: go deeper and higher, or uppercut.', 'feedback');
     else say('Stuffed. Drive up faster.', 'feedback');
     a.foe.state = 'guard'; a.foe.until = performance.now() + 800;
   });
@@ -5500,8 +5663,8 @@
       // change (both top up your guard bar and open a counter); an uppercut that catches you low
       // lands double; anything else the guard bar blocks by itself while it has enough left
       const cost = FT.myGuard[foe.kind] || 1;
-      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; guardBonus('slip'); fightMsg('Slipped: counter!'); }
-      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; guardBonus('duck'); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
+      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; guardBonus('slip', effort(Math.abs(s.slip), 0.5, 1)); fightMsg('Slipped: counter!'); }
+      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; guardBonus('duck', effort(s.squat_depth || 0, LEVEL_SHOT * 0.7, Math.min(1, LEVEL_SHOT * 1.8))); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
       else if (foe.kind === 'uppercut' && low) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
       else if (Fight.guardHp >= cost * 0.5) {
         Fight.guardHp = Math.max(0, Fight.guardHp - cost);
@@ -5563,10 +5726,12 @@
     return true;
   }
   // slips, ducks, stuffed shots and knockouts top up your guard bar
-  function guardBonus(why) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0)); }
+  // (honest reps: a bigger slip or a deeper duck tops it up more, from 60% to 140% of the bonus)
+  function guardBonus(why, k = 1) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0) * k); }
   function windupMs() { return Math.max(450, FT.windupMs - 20 * (level() - 1)); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
+    if (Q.fight) Q.fight.hits += n;
     Fight.hurtUntil = now + 350;
     fightMsg(n > 1 ? 'Taken down' : 'Hit');
     if (Fight.hp <= 0) endFight('lost', now);
@@ -5619,6 +5784,7 @@
   // on. They run down the street away from you, tiring; high knees to catch them.
   function startChase(foe, now) {
     const a = Fight.active;
+    if (Q.fight) { Q.fights.push(Object.assign({ how: 'chase', q: fightQuality(Q.fight), ms: now - a.start }, Q.fight)); Q.fight = null; }
     stopFightClip();
     Fight.stats.ms += now - a.start;
     G.fightsDone++;
@@ -5639,7 +5805,7 @@
     if (d > 6) c.away = true; // they get a few steps clear before you can catch them
     if (c.away && d <= FT.chase.catchM) {
       Fight.chase = null; Fight.stats.caught++; Fight.stats.won++;
-      award(XP.win + XP.caught, 'caught him');
+      award(XP.caught + Math.round(XP.win * 0.5), 'caught him'); // you ran him down
       f.state = 'ko'; Fight.foes = [];
       bell(2); say(c.why === 'snatch' ? 'Got him! Bag recovered.' : 'Caught him! Nowhere to run in this city.', 'feedback'); banner(c.why === 'snatch' ? 'Bag recovered' : 'Caught him', 2500, now);
       if (c.why === 'snatch') { const v = Fight.people.find((p) => p.kind === 'victim'); if (v) { v.waveUntil = 0; v.say = pick(LINES.bag); v.sayUntil = now + 6000; } }
@@ -6461,7 +6627,7 @@
           h.gnpArmed = false;
           Fight.stats.glove++;
           Fight.fistFlash[side] = now + 180;
-          landed('down_strike', Math.max(0.5, Math.min(1.5, speed / 5)), now, side, 'body');
+          landed('down_strike', punchPower(speed, 'glove'), now, side, 'body');
         }
         continue;
       }
@@ -6474,7 +6640,7 @@
       if (!claim(side, now)) continue;
       Fight.stats.glove++;
       Fight.fistFlash[side] = now + 180;
-      const power = Math.max(0.5, Math.min(1.5, speed / 6));
+      const power = punchPower(speed, 'glove');
       // the punch's kind from how it moved. 10/16: jabs and crosses read as uppercuts (a straight
       // thrown from the face rises a little, and its depth is squashed), so an uppercut now has to
       // come up from below the shoulder with a bent elbow; anything else that is not a sideways
@@ -7542,7 +7708,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-18 late \u00b7 guard bar, gym tutorial, retries, turns fixed';
+  const BUILD = '2026-10-19 \u00b7 honest reps: effort scaling, quality scoring, factual summary, rest offers';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
@@ -7585,6 +7751,8 @@
     Object.assign(Calls, { active: null, answered: 0, missed: 0 });
     Object.assign(Peds, { list: [], waves: 0, chatAt: 0, voiceAt: -Infinity });
     Object.assign(Tutor, { report: '', clip: null });
+    Object.assign(Q, { cur: { ms: 0, spm: 0, stride: 0 }, mins: [], base: null, offerAt: 0, fights: [], fight: null, dropLine: '' });
+    Object.assign(G, { restMs: 0, cabs: 0, intervalLog: [] });
     Traffic.cars = []; Vendors.list = [];
     Object.assign(Subway, { ride: null, rides: 0, restMs: 0 }); $('subway').hidden = true;
     Prog.walkXp = 0;
@@ -7621,15 +7789,38 @@
     const ms = now - G.start;
     const fmt = (t) => `${Math.floor(t / 60000)}:${String(Math.floor((t % 60000) / 1000)).padStart(2, '0')}`;
     const miles = G.meters / 1609.34;
+    // honest reps: the summary states what you did. Praise is kept for what was earned: a
+    // personal best, or quality held late in the session.
+    const restMs = Subway.restMs + G.restMs;
+    const fq = Q.fights, won = Fight.stats.won + (Fight.stats.caught || 0) - 0;
+    const clean = fq.reduce((n, f) => n + f.clean, 0), landed = fq.reduce((n, f) => n + f.landed, 0), thrown = fq.reduce((n, f) => n + f.thrown, 0);
+    const tds = fq.flatMap((f) => f.takedowns);
     $('sumStats').innerHTML = [
-      ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi`],
-      ['Blocks', G.blocks], ['Active time', fmt(G.activeMs)], ['Stops reached', G.arrived], ['High knees intervals', G.intervals], ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['People you waved at', Peds.waves], ['Subway rides (rest)', `${Subway.rides}${Subway.restMs ? ` (${fmt(Subway.restMs)})` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Running time', fmt(G.runMs)], ['Peak cadence', `${Math.round(G.peakCadence)} spm`],
-      ...(G.fightsDone ? [['Fights (won, dropped, escaped)', `${Fight.stats.won}, ${Fight.stats.lost}, ${Fight.stats.escaped}`], ['Punches landed', `${Fight.stats.landed} of ${Fight.stats.thrown}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []), ['Fight time', fmt(Fight.stats.ms)]] : []),
+      ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi (${G.blocks} blocks)`], ['Work (moving or fighting)', fmt(G.activeMs)], ['Rest (subway, cab, breathers)', fmt(restMs)], ['Running', fmt(G.runMs)],
+      ['Stops reached', G.arrived], ['High knees intervals', `${G.intervals} of ${G.intervalLog.length}${G.intervalLog.length ? ` (${G.intervalLog.join(', ')} s run of ${SESSION.intervalS})` : ''}`],
+      ...(G.fightsDone || fq.length ? [['Fights won', `${Fight.stats.won} of ${G.fightsDone}`], ['Punches landed', `${landed} of ${thrown}, ${clean} clean`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
+      ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []),
+      ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`],
       ...(Tutor.report ? [['Combat tutorial', Tutor.report]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
-    const lines = [`<p><b>Aerobic base:</b> ${fmt(ms - G.runMs)} of marching is low-intensity steady state, the kind you can stack on tired days.</p>`];
-    if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${G.intervals ? `${G.intervals} high knees intervals, ` : ''}${fmt(G.runMs)} of running in all, works hip flexor endurance and pushes your heart rate up, with walking as the recovery.</p>`);
-    if (G.fightsDone) lines.push(`<p><b>Fight rounds:</b> ${fmt(Fight.stats.ms)} of fighting in short bursts, with marching between as active recovery: ${Fight.stats.landed} punches build striking power and shoulder endurance${Fight.stats.takedowns ? `, ${Fight.stats.takedowns} takedowns train explosive hip extension` : ''}${Fight.stats.sprawls ? `, ${Fight.stats.sprawls} sprawls train reactive level changes` : ''}.</p>`);
+    const lines = [];
+    // how quality held, first minutes against last
+    const held = qualityHeld();
+    if (held) lines.push(`<p><b>How it held:</b> walking ${held.early.spm} steps a minute at ${held.early.stride}% stride in your first ${held.n} minutes, ${held.late.spm} at ${held.late.stride}% in your last ${held.n}: ${held.pct}% of your early effort.${held.pct >= 95 && G.activeMs >= 10 * 60000 ? ' You held your quality late.' : ''}</p>`);
+    else lines.push(`<p><b>How it held:</b> ${Q.mins.length} walking ${Q.mins.length === 1 ? 'minute' : 'minutes'} logged; it takes ${Q.baseMins + 1} to compare early and late.</p>`);
+    if (fq.length >= 2) {
+      const p0 = avg(fq[0].power), p1 = avg(fq[fq.length - 1].power);
+      lines.push(`<p><b>Punch power</b> (against your own fast punch): ${p0.toFixed(2)} in your first fight, ${p1.toFixed(2)} in your last.</p>`);
+    }
+    if (Q.dropLine) lines.push(`<p><b>Fatigue:</b> ${Q.dropLine} late in the walk; you were offered a rest.</p>`);
+    // personal bests (compared only with your own history)
+    const bests = updateBests({ minute: Q.mins.length ? Math.max(...Q.mins.map((m) => m.e)) : 0, meters: G.meters, clean, takedown: tds.length ? Math.max(...tds) : 0, fight: fq.length ? Math.max(...fq.filter((f) => f.how === 'won').map((f) => f.q), 0) : 0, held: held ? held.pct : 0 });
+    if (bests.first) lines.push(`<p><b>Records:</b> your first walk; these numbers are your records to beat.</p>`);
+    else if (bests.list.length) lines.push(`<p><b>Personal best:</b> ${bests.list.join('; ')}.</p>`);
+    // what the work trains (the S&C payoff)
+    lines.push(`<p><b>Aerobic base:</b> ${fmt(Math.max(0, G.activeMs - G.runMs - Fight.stats.ms))} of marching, low-intensity steady state.</p>`);
+    if (G.runMs > 0) lines.push(`<p><b>Intervals:</b> ${fmt(G.runMs)} of running, hip flexor endurance and heart rate up, with walking as the recovery.</p>`);
+    if (G.fightsDone) lines.push(`<p><b>Fight rounds:</b> ${fmt(Fight.stats.ms)} in short bursts with marching between: ${landed} punches for striking power and shoulder endurance${Fight.stats.takedowns ? `, ${Fight.stats.takedowns} ${Fight.stats.takedowns === 1 ? 'takedown' : 'takedowns'} for explosive hip extension` : ''}${Fight.stats.sprawls ? `, ${Fight.stats.sprawls} ${Fight.stats.sprawls === 1 ? 'sprawl' : 'sprawls'} for reactive level changes` : ''}.</p>`);
     $('payoff').innerHTML = lines.join('');
     $('saveClip').hidden = !Warm.clip;
     $('saveFight').hidden = !Fight.clip;
@@ -8091,7 +8282,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Q, sideline, qualityHeld, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

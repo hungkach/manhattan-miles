@@ -2,6 +2,13 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-19 honest reps audit
+
+- Effort scaling, floor to capped top, measured against the player's own body: punch power against your own fast punch from early in the session (held, so fatigue shows), takedown quality from squat depth, drive speed and jump height (longer ground and pound; only a quality shot beats a brace), slip size and duck depth top up the guard bar more, a quicker and wider bound buys a longer shift.
+- Scoring needs quality: walking XP per minute by its quality against your early minutes, intervals by seconds run, wins by clean shots, accuracy and damage taken, takedowns by quality. No XP for waving. "Big takedown" only for a quality one.
+- The summary states facts: steps, distance, work and rest time, intervals (seconds run), fights won, clean punches, takedowns, how walking quality held first minutes to last, punch power first fight to last. Praise only a personal best or quality held late (95% or better over 10 or more active minutes). A first walk sets the records without praise.
+- Fatigue: when your last two walking minutes are under 80% of your early effort, the game says the numbers (steps a minute and stride, then and now) and offers a cab toward your stop or a minute's rest; both log as rest. Also on the phone any time: Take a breather.
+
 ## 2026-10-18 late: guard bar, gym, retries
 
 - The camera misread a held guard, so blocking by holding your hands up is gone. Your guard bar blocks their punches by itself (the gloves come up), each block costing it (straight 1, hook and uppercut 1.5 of 6); it refills slowly, and slips, ducks, stuffed shots and knockouts top it up. Empty, punches land. A wind-up prompt says how to beat it (Slip, Duck, Stand tall).
