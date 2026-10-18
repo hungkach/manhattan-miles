@@ -7,11 +7,12 @@ First-person walking and fighting game on all of Manhattan, street by street (Ma
 Every rep counts, better reps count more, and the scoreboard doesn't lie. The full version lives in `hungkach/body-arcade` CLAUDE.md and wins over any habit here. In short:
 
 - A minimum honest rep (tired, small, slow) always works, and more effort always pays more, smoothly, capped at the top.
-- Minimum reps keep you playing; quality reps win. Wins, grades, combos, records and bonuses need real quality, never just time spent.
-- Summaries state what the player did in plain numbers; praise only what was earned (a personal best, quality held late).
-- Fatigue is information: when quality drops, rotate out or rest and say what changed. Never scold, never round up.
+- Two jobs: encourage effort out loud, keep the scoreboard honest. Cheer good reps as they happen, specifically ("Knees up, there it is"), and credit pushing through; never mock low effort.
+- Minimum reps keep you playing; quality reps win. Wins, grades, combos and records need real quality; every honest minute still earns some progress (a gentle slope, about half of the top).
+- Summaries lead with the work done, then highlights and bests, then one forward cue. No percentage grades on effort.
+- Fatigue is information: credit the work, then rotate out or rest with one plain, forward line ("12 minutes in. Knees are dropping, take 60 seconds and come back strong"). Never scold.
 - The bar is fitted to the player's own calibration and warm-up, not lowered.
-- Coaching tone, not slogans or preaching.
+- Coaching tone: warm during the work, honest about the numbers, no slogans or preaching.
 
 ## How this repo works
 
