@@ -6,13 +6,12 @@ First-person walking and fighting game on all of Manhattan, street by street (Ma
 
 Every rep counts, better reps count more, and the scoreboard doesn't lie. The full version lives in `hungkach/body-arcade` CLAUDE.md and wins over any habit here. In short:
 
-- A minimum honest rep (tired, small, slow) always works, and more effort always pays more, smoothly, capped at the top.
-- Two jobs: encourage effort out loud, keep the scoreboard honest. Cheer good reps as they happen, specifically ("Knees up, there it is"), and credit pushing through; never mock low effort.
-- Minimum reps keep you playing; quality reps win. Wins, grades, combos and records need real quality; every honest minute still earns some progress (a gentle slope, about half of the top).
-- Summaries lead with the work done, then highlights and bests, then one forward cue. No percentage grades on effort.
-- Fatigue is information: credit the work, then rotate out or rest with one plain, forward line ("12 minutes in. Knees are dropping, take 60 seconds and come back strong"). Never scold.
-- The bar is fitted to the player's own calibration and warm-up, not lowered.
-- Coaching tone: warm during the work, honest about the numbers, no slogans or preaching.
+- Effort is subjective, output is objective. A tired rep or an unfit player's best rep always works (the floor is the player's own weakest honest warm-up rep).
+- Reward scales with absolute output in body units, capped at a safe range. Never re-normalize to the player's best or early-session reps: fitness gains are the progression.
+- Outcomes need the reps that earn them; nothing for time spent or showing up, no XP-per-minute grind.
+- Records track output across weeks (deepest squat, highest knees, fastest punch, longest bound, best cadence).
+- Summaries state facts: no cheering, no praise lines, no scolding, no fatigue commentary. Rest comes from the sport's rhythm.
+- Plain tone; humor aims at the world, never the player's effort.
 
 ## How this repo works
 
