@@ -2,6 +2,17 @@
 
 First-person walking and fighting game on all of Manhattan, street by street (Mark's Vigil map: OpenStreetMap streets, buildings, parks and water, real businesses, the MTA subway): march to walk, high knees to run, steer by turning your shoulders like a steering wheel, walk to real places. Play: https://hungkach.github.io/manhattan-miles/
 
+## Design philosophy: honest reps
+
+Every rep counts, better reps count more, and the scoreboard doesn't lie. The full version lives in `hungkach/body-arcade` CLAUDE.md and wins over any habit here. In short:
+
+- A minimum honest rep (tired, small, slow) always works, and more effort always pays more, smoothly, capped at the top.
+- Minimum reps keep you playing; quality reps win. Wins, grades, combos, records and bonuses need real quality, never just time spent.
+- Summaries state what the player did in plain numbers; praise only what was earned (a personal best, quality held late).
+- Fatigue is information: when quality drops, rotate out or rest and say what changed. Never scold, never round up.
+- The bar is fitted to the player's own calibration and warm-up, not lowered.
+- Coaching tone, not slogans or preaching.
+
 ## How this repo works
 
 - `src/index.html` is the game. Edit it, then `npm run build` writes the playable page to `index.html` at the repo root (GitHub Pages serves that). Commit both.
