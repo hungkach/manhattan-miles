@@ -2,6 +2,13 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-19 late: quick additions (done)
+
+- Opponent and crowd comments during fights (bubbles, spoken when the voice is free).
+- Dual stick mode for testing: left moves, right looks.
+- More pedestrians and traffic, scaled to what the device keeps up with.
+- Combos pay: each landed punch in a combo adds 8% damage, capped at 32%.
+
 ## 2026-10-19 PM honest reps v2 (done)
 
 Mark: effort is subjective, output is objective, and the player's own fitness is the progression model. This replaces the morning's audit, which scaled rewards against the player's early reps.

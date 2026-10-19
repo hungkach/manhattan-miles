@@ -12,6 +12,13 @@
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
   body.fighting #demo .re-demo { height: 34%; }
+  /* dual sticks (testing): the engine's tap and drag zones give way to two floating sticks */
+  body.sticks #demo .re-demo-zone { visibility: hidden; pointer-events: none; }
+  #sticks { position: fixed; inset: 0; z-index: 3; pointer-events: none; }
+  #sticks .pad { position: absolute; pointer-events: auto; touch-action: none; border-radius: 14px; border: 1.5px dashed rgba(255,255,255,.35); background: rgba(0,0,0,.12); }
+  #sticks .pad span { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; font: 600 12px system-ui, sans-serif; color: rgba(255,255,255,.75); pointer-events: none; }
+  #sticks .ring { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; border: 2px solid rgba(255,255,255,.55); background: rgba(255,255,255,.08); pointer-events: none; }
+  #sticks .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(255,255,255,.6); }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
   #endBtn { position: fixed; right: 10px; top: calc(env(safe-area-inset-top) + 212px * var(--ui, 1)); z-index: 4; font: 700 13px system-ui, sans-serif; padding: 8px 12px; min-height: 36px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; }
   #endBtn[hidden] { display: none; }
@@ -3804,6 +3811,7 @@
 <body>
 <canvas id="game"></canvas>
 <div id="demo"></div>
+<div id="sticks" hidden><div class="pad" id="stickL"><span>Move</span><div class="ring"><div class="knob"></div></div></div><div class="pad" id="stickR"><span>Look</span><div class="ring"><div class="knob"></div></div></div></div>
 <video id="pip" playsinline muted></video>
 <div id="note" hidden></div>
 <button id="endBtn" hidden>End walk</button>
@@ -3837,6 +3845,7 @@
     <p>Explore the city: there is always a next stop, the game talks you through each turn, calls high knees intervals and nudges you when you stand around. Twenty active minutes is a full session. Wave your left hand to open the phone menu.</p>
     <div class="btns">
       <button id="playDemo" class="main">Walk with touch controls</button>
+      <button id="playSticks" class="secondary">Dual sticks (testing)</button>
       <label class="pick">Camera setup
         <select id="mode">
           <option value="phone_upright">Phone upright</option>
@@ -3886,6 +3895,9 @@
     runMps: 3.5,           // high knees pace
     speedScale: 3,         // game moves 3x real pace so blocks pass at a fun clip
     runCadence: 150,
+    // dual sticks (testing): left stick moves (game m/s at the edge of walk, past runAt it runs),
+    // right stick turns (degrees a second) and tilts the view (radians a second, within pitch)
+    stick: { dead: 0.12, walk: [1.5, 5], runAt: 0.9, turnDps: 120, pitchRate: 1.1, pitch: [-0.55, 0.6] },
     centerWithin: 12,      // degrees: not steering and this close to a street's direction, you settle onto it
     centerRate: 1.5,       // how fast that self-centering pulls (per second)
     eyeHeight: 1.7,
@@ -4264,7 +4276,7 @@
   // your right hand at someone within a few meters ahead and they wave back with a line.
   // a busy city: up to max people on the sidewalks (texting of them on their phones), and you
   // overhear one when you pass within chatM (a bubble; spoken now and then, never over directions)
-  const PED = { max: 34, near: 22, far: 140, drop: 170, greetM: 9, texting: 0.3, chatM: 4.5, chatGapS: 6, voiceGapS: 22 };
+  const PED = { max: 64, near: 22, far: 140, drop: 170, greetM: 9, texting: 0.3, chatM: 4.5, chatGapS: 6, voiceGapS: 22 };
   const CHATTER = [
     'And I said, that is not a bagel, that is a donut with an attitude.',
     'The rent went up again. For a closet. With a view of another closet.',
@@ -4342,7 +4354,11 @@
   function pedTick(dt, now) {
     Peds.list = Peds.list.filter((p) => Math.hypot(p.x - P.x, p.z - P.z) < PED.drop);
     // fill up fast at first, then keep it topped up
-    if (Peds.list.length < PED.max && Math.random() < dt * (Peds.list.length < PED.max / 2 ? 10 : 2)) {
+    // how many: PED.max scaled by what the device keeps up with (Perf.crowd); over the cap, the
+    // farthest walker leaves
+    const pedMax = Math.round(PED.max * crowdK());
+    if (Peds.list.length > pedMax + 2) { let far = -1, fd = 0; Peds.list.forEach((p, i) => { const d = Math.hypot(p.x - P.x, p.z - P.z); if (!p.stand && d > fd) { fd = d; far = i; } }); if (far >= 0 && fd > 40) Peds.list.splice(far, 1); }
+    if (Peds.list.length < pedMax && Math.random() < dt * (Peds.list.length < pedMax / 2 ? 10 : 2)) {
       const sp = sidewalkSpot(PED.near, PED.far);
       if (sp) Peds.list.push({ kind: 'ped', x: sp.x, z: sp.z, dx: sp.dx, dz: sp.dz, v: rand(1.1, 1.7), col: pick(CROWD_COLS), seed: Math.random(), walking: true, phone: false, texting: Math.random() < PED.texting, look: null });
     }
@@ -4400,7 +4416,7 @@
   // Cars drive the drivable streets (one-way the right way), pick a way at each corner (mostly
   // straight on), keep to their lane, stop for you and for the car ahead, and honk if you stand
   // in the road in front of them.
-  const CAR = { cop: 0.1, max: 18, near: 45, far: 230, drop: 280, v: [7, 12], stopM: 10, laneHalf: 2.2, honkM: 8, honkGapMs: 3500, cab: 0.4 };
+  const CAR = { cop: 0.1, max: 32, near: 45, far: 230, drop: 280, v: [7, 12], stopM: 10, laneHalf: 2.2, honkM: 8, honkGapMs: 3500, cab: 0.4 };
   const CAR_COLS = [[34, 36, 42], [205, 205, 210], [130, 24, 28], [40, 62, 112], [96, 98, 104], [236, 236, 238]];
   const CAB_COL = [242, 190, 32];
   const Traffic = { cars: [], honkAt: -Infinity, ambAt: 0 };
@@ -4456,7 +4472,8 @@
   }
   function trafficTick(dt, now) {
     Traffic.cars = Traffic.cars.filter((c) => !c.gone && Math.hypot(c.x - P.x, c.z - P.z) < CAR.drop);
-    if (Traffic.cars.length < CAR.max && Math.random() < dt * (Traffic.cars.length < CAR.max / 2 ? 8 : 1.5)) {
+    const carMax = Math.round(CAR.max * crowdK());
+    if (Traffic.cars.length < carMax && Math.random() < dt * (Traffic.cars.length < carMax / 2 ? 8 : 1.5)) {
       const c = carSpot();
       if (c) {
         const cop = Math.random() < CAR.cop, cab = !cop && Math.random() < CAR.cab;
@@ -4813,6 +4830,7 @@
     if (G.state !== 'walk') return;
     recordTick(dt);
     pedTick(dt, now);
+    if (Sticks.on) sticksTick(dt, now);
     if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
     const s = engine.signals();
@@ -4820,13 +4838,14 @@
     G.peakCadence = Math.max(G.peakCadence, P.cadence);
     P.running = m.state === 'run';
     P.speed = m.speed * T.speedScale;
+    if (Sticks.on) { P.speed = Sticks.speed; P.running = Sticks.run; }
     if (P.running && P.speed > 1) G.runMs += dt * 1000;
 
     // self-centering, like a steering wheel letting go: not steering and walking within a few
     // degrees of a street's direction, you settle onto it and go straight down the block
     // (the street's own direction, either way along it: the grid runs 29 degrees off north)
     let facing = m.facing;
-    const here = Math.abs(s.turn || 0) < 0.05 && P.speed > 0.5 ? streetHere(P.x, P.z, 25) : null;
+    const here = Math.abs(s.turn || 0) < 0.05 && !(Sticks.on && Math.abs(Sticks.r.x) > 0.05) && P.speed > 0.5 ? streetHere(P.x, P.z, 25) : null;
     if (here) {
       const a = (angleOf(here.dir) * 180) / Math.PI;
       let diff = Infinity;
@@ -4840,7 +4859,8 @@
 
     // walk where you face; blocked by a building or the river, slide along the street instead
     const step = P.speed * dt, ox = P.x, oz = P.z;
-    const nx = P.x + Math.sin(P.yaw) * step, nz = P.z + Math.cos(P.yaw) * step;
+    const mv = P.yaw + (Sticks.on ? Sticks.dir : 0); // the sticks can strafe and back up
+    const nx = P.x + Math.sin(mv) * step, nz = P.z + Math.cos(mv) * step;
     const tryMove = (x, z) => { if (blocked(x, z)) return false; P.x = x; P.z = z; return true; };
     if (step > 0 && !tryMove(nx, nz)) {
       const st = streetHere(P.x, P.z, 30);
@@ -4850,7 +4870,7 @@
     const moved = Math.hypot(P.x - ox, P.z - oz);
     // marching into a wall: after a moment, swing onto the street direction nearest your facing
     // that is open (a real player would turn; this keeps a missed turn from feeling stuck)
-    if (step > 0.02 && moved < step * 0.2) {
+    if (step > 0.02 && moved < step * 0.2 && !Sticks.on) {
       P.stuckT = (P.stuckT || 0) + dt;
       if (P.stuckT > 0.6) {
         P.stuckT = 0;
@@ -4958,6 +4978,9 @@
     // feedback: punches within comboMs of each other count as a combo; a hit of bigDmg or more
     // flashes the screen and gets an "ooh" from the crowd; a block flashes your shield blockMs
     fx: { comboMs: 1400, bigDmg: 1.4, shakeMs: 220, shakePx: 9, blockMs: 520 },
+    // combos pay: each punch that lands within fx.comboMs of the last adds step to its damage, up
+    // to cap (the 5th punch on). A punch they block does not extend it; a hit you take ends it.
+    combo: { step: 0.08, cap: 0.32 },
   };
   const Fight = { foes: [], active: null, waitS: FT.everyS[0], stats: null, lastGuardAt: -Infinity, lastGuardSide: { left: -Infinity, right: -Infinity }, guardHp: 5, guardBrokenUntil: -Infinity, guardK: 0, lastSlipAt: -Infinity, lastLowAt: -Infinity, fistFlash: { left: 0, right: 0 }, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 }, head: { x: 0, y: 1.7, z: 0 }, hurtUntil: 0, msg: '', msgUntil: 0, counterUntil: 0, openUntil: 0, hp: FT.playerHp, demoFight: false,
     hand: { left: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null }, right: { hist: [], armed: true, peak: 0, last: -Infinity, scr: null } },
@@ -4971,6 +4994,7 @@
   // floating up, a combo count, their head or body snapping back, the screen shaking with the
   // weight of it, and a layered smack (a crowd "ooh" on a big one)
   const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', overhand: 'Overhand', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike' };
+  const comboBonus = (n) => Math.min(FT.combo.cap, FT.combo.step * Math.max(0, n - 1));
   function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
     const at = h && h.scr ? { x: h.scr.x, y: h.scr.y } : foe.hit ? (where === 'body' ? foe.hit.chestPt : foe.hit.head) : null;
@@ -5289,6 +5313,8 @@
     note('');
     say('Fight! Guard up.', 'feedback');
     fightMsg('Fight!', 1200);
+    Object.assign(Talk, { at: -Infinity, foeAt: -Infinity, voiceAt: performance.now(), idleAt: performance.now() + 4000 });
+    setTimeout(() => fightTalk('foe', 'start', performance.now()), 900);
   }
 
   // the first 28 s of each camera fight is recorded (the recorder stops itself at 30 s, and its
@@ -5339,6 +5365,58 @@
     ],
   };
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  // ---------- fight talk: the opponent and the crowd comment as it happens ----------
+  // A bubble over whoever talks, and now and then a spoken line when the voice is free (fight
+  // cues come first). The humor aims at the city and at the opponent, never at your effort.
+  const TALK = { gapMs: 2000, foeGapMs: 3500, voiceGapMs: 9000, idleS: [5, 9], bubbleMs: 2800 };
+  const FOE_TALK = {
+    start: ['Wrong block, hero.', 'This is my corner. I do not pay rent on it, but it is mine.', 'Hold my phone. Actually nobody touch my phone.', 'Let us go. I skipped leg day for this.', 'You know who my cousin is? Neither do I. Big family.'],
+    hurt: ['Okay! Okay. That one counted.', 'My dentist is going to love this.', 'I felt that in my rent.', 'Ow. Hold on. Ow.', 'Not the face, I have a headshot on Tuesday.'],
+    landed: ['That one is from the MTA.', 'Brooklyn says hello.', 'Tip included.', 'Did not even spill my coffee.'],
+    blocked: ['Nope.', 'Through the guard, chief.', 'I watched a video about this.', 'My uncle taught me this. He was a bouncer at a library.'],
+    broken: ['My arms! These are rental arms!', 'Who taught you that?', 'Hold on, my guard went to get a bagel.'],
+    stuffed: ['Not today. Not on this sidewalk.', 'I wrestled in high school. For one week.'],
+    sprawled: ['Fine, we stand. The sidewalk is gross anyway.', 'Worth a try.'],
+    down: ['The sidewalk! Do you know what is on this sidewalk?', 'This pavement has seen things.', 'I just had this jacket cleaned.'],
+    low: ['I have a lawyer. He is also my cousin.', 'Can we talk about this? At a bodega?', 'I am calling my mom. She is worse than me.'],
+  };
+  const CROWD_TALK = {
+    start: ['Fight! Somebody film it!', 'Not again. Every Tuesday on this block.', 'I am going live. Hey chat.', 'Ten bucks on whoever is not bleeding.'],
+    big: ['Ohhh!', 'He felt that in Jersey.', 'That is going on the news.', 'My grandma felt that and she lives in Queens.'],
+    combo: ['This is better than the Knicks.', 'Somebody ring a bell!', 'That is a whole playlist of punches.'],
+    takedown: ['To the pavement! Gross!', 'That sidewalk has not been washed since 1987.', 'Ground game in Midtown!'],
+    broken: ['His guard is gone!', 'Arms down, arms down!'],
+    hit: ['Oof!', 'Right on the chin. I felt that.', 'Somebody call somebody!'],
+    idle: ['Is this a TikTok?', 'My Uber is three minutes out. Wrap it up.', 'Can you two move? I live here.', 'The pizza place closes at two, just so everyone knows.', 'Who is filming vertical? Film horizontal.'],
+  };
+  const Talk = { at: -Infinity, foeAt: -Infinity, voiceAt: -Infinity, idleAt: 0 };
+  // who: 'foe' or 'crowd'; ev: a key of FOE_TALK or CROWD_TALK; chance: how often it happens
+  function fightTalk(who, ev, now, chance = 1) {
+    const a = Fight.active;
+    if (!a || a.tutor || Math.random() > chance) return;
+    if (now - Talk.at < TALK.gapMs || (who === 'foe' && now - Talk.foeAt < TALK.foeGapMs)) return;
+    const lines = (who === 'foe' ? FOE_TALK : CROWD_TALK)[ev];
+    let by = null;
+    if (who === 'foe') by = a.foe;
+    else {
+      const free = (p) => !p.officer && now > (p.joinAt || 0) && now > (p.sayUntil || 0);
+      const crowd = Fight.people.filter((p) => p.kind === 'crowd' && free(p));
+      const victim = Fight.people.filter((p) => p.kind === 'victim' && free(p));
+      if (crowd.length || victim.length) by = pick(crowd.length ? crowd : victim);
+    }
+    if (!lines || !by) return;
+    const line = pick(lines);
+    by.say = line; by.sayUntil = now + TALK.bubbleMs;
+    Talk.at = now; if (who === 'foe') Talk.foeAt = now;
+    Talk.idleAt = now + rand(TALK.idleS[0], TALK.idleS[1]) * 1000;
+    if (now - Talk.voiceAt > TALK.voiceGapMs && !voiceBusy()) { Talk.voiceAt = now; say(line, 'feedback'); }
+  }
+  function talkTick(now) {
+    const a = Fight.active;
+    if (!a || a.tutor || now < Talk.idleAt) return;
+    fightTalk('crowd', 'idle', now);
+    Talk.idleAt = now + rand(TALK.idleS[0], TALK.idleS[1]) * 1000;
+  }
   function gatherCrowd(now) {
     const a = Fight.active, foe = a.foe;
     const n = Math.hypot(foe.x - P.x, foe.z - P.z) || 1, dx = (foe.x - P.x) / n, dz = (foe.z - P.z) / n;
@@ -5349,7 +5427,7 @@
       let x = foe.x + Math.sin(ang) * r, z = foe.z + Math.cos(ang) * r;
       if (blocked(x, z)) { x = foe.x + Math.sin(ang) * 2.4; z = foe.z + Math.cos(ang) * 2.4; if (blocked(x, z)) continue; }
       Fight.people.push({ kind: 'crowd', x, z, tx: x, tz: z, sx: foe.x + Math.sin(ang) * (r + 9), sz: foe.z + Math.cos(ang) * (r + 9),
-        joinAt: now + 700 + i * 1300, look: foe, phone: Math.random() < 0.75, col: CROWD_COLS[i % CROWD_COLS.length], seed: Math.random() });
+        joinAt: now + 500 + i * 700, look: foe, phone: Math.random() < 0.75, col: CROWD_COLS[i % CROWD_COLS.length], seed: Math.random() });
     }
   }
   function aftermath(how, now, last) {
@@ -5449,12 +5527,14 @@
       clack();
       const hd = foe.hit && foe.hit.head;
       if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: 'Blocked', big: false });
+      fightTalk('foe', 'blocked', now, 0.25);
       if (foe.guardHp <= 0) {
         foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = 0;
         Fight.openUntil = now + FT.guard.brokenMs;
         Fight.stats.guardBreaks++;
         award(XP.guardBreak, 'guard break');
         say('Guard broken! Let them have it.', 'feedback'); fightMsg('Guard broken!', 1100);
+        Talk.voiceAt = now; fightTalk(Math.random() < 0.5 ? 'foe' : 'crowd', 'broken', now);
       }
       return;
     }
@@ -5464,11 +5544,18 @@
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
     else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
+    const cn = now - Fight.combo.last < FT.fx.comboMs ? Fight.combo.n + 1 : 1;
+    dmg *= 1 + comboBonus(cn);
     foe.hp -= dmg;
     if (Q.fight) { Q.fight.landed++; Q.fight.power.push(power); if (clean) Q.fight.clean++; }
     impact(foe, hand, where, power, now, kind, dmg);
     Fight.stats.landed++;
     foe.hurtUntil = now + 220;
+    if (foe.hp > 0) {
+      if (dmg >= FT.fx.bigDmg) { if (Math.random() < 0.55) fightTalk('crowd', 'big', now, 0.7); else fightTalk('foe', 'hurt', now, 0.7); }
+      else if (Fight.combo.n >= 3) fightTalk('crowd', 'combo', now, 0.6);
+      else if (foe.hp < foe.maxHp * 0.3) fightTalk('foe', 'low', now, 0.3);
+    }
     if (foe.state === 'windup' && kind !== 'jab' && Math.random() < 0.5) { foe.state = 'hurt'; foe.until = now + 500; } // a hard shot can break their wind-up
     if (foe.hp <= 0) {
       foe.state = 'ko'; foe.until = now + 1500;
@@ -5568,6 +5655,7 @@
     Fight.backHitAt = now + FT.tag.backHitMs;
     if (others(a).length) say('Takedown! Quick, his friend is coming.', 'feedback');
     else say('Takedown. Ground and pound.', 'feedback');
+    Talk.voiceAt = performance.now(); if (Math.random() < 0.5) fightTalk('crowd', 'takedown', performance.now(), 0.8); else fightTalk('foe', 'down', performance.now(), 0.8);
     fightMsg('Takedown', 1200);
   });
   engine.on('stuffed', () => {
@@ -5575,6 +5663,7 @@
     if (!a) return;
     Fight.stats.stuffed++;
     fightMsg('Stuffed');
+    fightTalk('foe', 'stuffed', performance.now(), 0.7);
     const tq = Fight.lastTq;
     if (a.foe.state === 'brace') say(tq ? `Stuffed. They were braced. Squat ${Math.round(tq.depth * 100)}, jump ${Math.round(tq.jump * 100)}: go deeper and higher, or uppercut.` : 'Stuffed. They were braced: go deeper and higher, or uppercut.', 'feedback');
     else say('Stuffed. Drive up faster.', 'feedback');
@@ -5595,6 +5684,7 @@
     Fight.stats.sprawls++;
     guardBonus('stuff');
     say('Sprawl! Now hit.', 'feedback');
+    Talk.voiceAt = performance.now(); fightTalk('foe', 'sprawled', performance.now(), 0.6);
     fightMsg('Sprawl!');
   });
   engine.on('escape', () => { if (Fight.active) endFight('escaped', performance.now()); });
@@ -5702,6 +5792,9 @@
   function windupMs() { return Math.max(450, FT.windupMs - 20 * (level() - 1)); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
+    Fight.combo.n = 0;
+    if (n > 1) fightTalk('crowd', 'hit', now, 0.6);
+    else if (Math.random() < 0.5) fightTalk('foe', 'landed', now, 0.4); else fightTalk('crowd', 'hit', now, 0.4);
     if (Q.fight) Q.fight.hits += n;
     Fight.hurtUntil = now + 350;
     fightMsg(n > 1 ? 'Taken down' : 'Hit');
@@ -5721,6 +5814,7 @@
     P.yaw = (m.facing * Math.PI) / 180;
     if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
     if (a.tutor) { P.speed = 0; tutorTick(now); return; }
+    talkTick(now);
     // the opponent keeps the range: close in, or a step back
     const foe = a.foe;
     if (foe.state === 'flee') {
@@ -6718,7 +6812,8 @@
       ctx.save(); ctx.translate(W - 16, H * 0.46); ctx.scale(k, k);
       ctx.font = '900 28px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = cb.n >= 5 ? '#ff7a3d' : '#ffcf3f';
-      ctx.strokeText(`${cb.n} hit combo`, 0, 0); ctx.fillText(`${cb.n} hit combo`, 0, 0);
+      const ct = `${cb.n} hit combo +${Math.round(comboBonus(cb.n) * 100)}%`;
+      ctx.strokeText(ct, 0, 0); ctx.fillText(ct, 0, 0);
       ctx.restore();
     }
     if (now - Fight.flashAt < 90) { ctx.fillStyle = 'rgba(255,255,255,.2)'; ctx.fillRect(0, 0, W, H); }
@@ -6840,14 +6935,20 @@
   const NEAR = 0.3;
   // Perf.scale: dynamic resolution. Frame times averaged over 2 s; slower than 22 ms (under about
   // 45 fps) steps the canvas resolution down, faster than 14 ms steps it back up.
-  const Perf = { faces: 0, scale: 1, ft: 16, checkAt: 0 };
+  // Perf.crowd: how full the streets are (people and cars), 0.35 to 1. It starts at 0.7, grows
+  // while frames are quick at full resolution, and drops when the resolution is already down and
+  // frames are still slow. Low quality caps it at 0.55.
+  const Perf = { faces: 0, scale: 1, ft: 16, checkAt: 0, crowd: 0.7 };
   function perfTick(dtMs, now) {
     Perf.ft += (Math.min(100, dtMs) - Perf.ft) * 0.05;
     if (now < Perf.checkAt) return;
     Perf.checkAt = now + 2000;
     if (Perf.ft > 22 && Perf.scale > 0.5) Perf.scale = Math.max(0.5, Perf.scale - 0.15);
     else if (Perf.ft < 14 && Perf.scale < 1) Perf.scale = Math.min(1, Perf.scale + 0.1);
+    if (Perf.ft > 22 && Perf.scale <= 0.65) Perf.crowd = Math.max(0.35, Perf.crowd - 0.1);
+    else if (Perf.ft < 15 && Perf.scale >= 1) Perf.crowd = Math.min(1, Perf.crowd + 0.05);
   }
+  const crowdK = () => (HIGH ? Perf.crowd : Math.min(0.55, Perf.crowd));
   let W = 0, H = 0, F = 0, cam = null;
 
   function toCam(x, y, z) {
@@ -7473,7 +7574,7 @@
     Fight.head = eye;
     // look slightly up at the skyline; in a fight, tilt so the opponent sits a third of the way
     // down, or down at them when they are on the ground
-    let pitch = -0.12;
+    let pitch = -0.12 + (Sticks.on && !Fight.active ? Sticks.pitch : 0);
     if (Fight.active) {
       const foe = Fight.active.foe;
       const d = Math.max(0.8, Math.hypot(foe.x - eye.x, foe.z - eye.z));
@@ -7680,14 +7781,14 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-19 PM \u00b7 output in body units, records, facts-only summary';
+  const BUILD = '2026-10-19 late \u00b7 fight talk, dual sticks, busier streets, combo damage';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
-  for (const id of ['playDemo', 'playCamera']) $(id).disabled = true;
+  for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
   const playLabel = $('playDemo').textContent;
   $('playDemo').textContent = 'Loading Manhattan';
   loadWorld().then(() => {
-    for (const id of ['playDemo', 'playCamera']) $(id).disabled = false;
+    for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = false;
     $('playDemo').textContent = playLabel;
   }).catch((err) => { World.error = err; $('playDemo').textContent = 'Could not load the map: ' + err.message; });
   $('realNames').checked = realNames;
@@ -7712,6 +7813,7 @@
     engine.disable_demo();
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS[mode] });
     engine.set_facing(facing);
+    if (Sticks.on) requestAnimationFrame(layoutSticks);
   }
 
   function startWalk() {
@@ -7744,6 +7846,7 @@
 
   function endWalk() {
     const now = performance.now();
+    if (Sticks.on) { $('sticks').hidden = true; const d = engine.debug().demo; if (d && d.running) d.stopRun(); }
     stopFightClip();
     hum(false);
     if (Fight.active && Fight.active.tutor) endTutor(now);
@@ -7804,8 +7907,80 @@
     if (msg && ms) note.t = setTimeout(() => { el.hidden = true; }, ms);
   }
 
+  // ---------- dual sticks (testing) ----------
+  // Left stick moves where it points (forward, strafe, back; past T.stick.runAt it runs), right
+  // stick turns and tilts the view. It runs on the touch demo, so the engine still gets steps at
+  // a matching cadence: marching presses in a fight, a full push is high knees (and escapes).
+  // Fight buttons stay as they are. Testing only: it is touch play, so records are not kept.
+  const Sticks = { on: false, l: { x: 0, y: 0, id: null }, r: { x: 0, y: 0, id: null }, speed: 0, run: false, dir: 0, pitch: 0, stepAt: 0 };
+  function stickPad(el, st) {
+    const ring = el.querySelector('.ring'), knob = el.querySelector('.knob');
+    const R = 55;
+    const place = (x, y) => { const b = el.getBoundingClientRect(); ring.style.left = `${x - b.left}px`; ring.style.top = `${y - b.top}px`; };
+    const reset = () => { st.x = 0; st.y = 0; st.id = null; knob.style.transform = ''; const b = el.getBoundingClientRect(); place(b.left + b.width / 2, b.top + b.height / 2); };
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); if (st.id !== null) return; st.id = e.pointerId; st.ox = e.clientX; st.oy = e.clientY; place(e.clientX, e.clientY); try { el.setPointerCapture(e.pointerId); } catch (_) {} });
+    el.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== st.id) return;
+      let dx = e.clientX - st.ox, dy = e.clientY - st.oy;
+      const d = Math.hypot(dx, dy);
+      if (d > R) { dx *= R / d; dy *= R / d; }
+      st.x = dx / R; st.y = -dy / R;
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+    for (const ev of ['pointerup', 'pointercancel']) el.addEventListener(ev, (e) => { if (e.pointerId === st.id) reset(); });
+    st.reset = reset;
+  }
+  stickPad($('stickL'), Sticks.l);
+  stickPad($('stickR'), Sticks.r);
+  // the pads sit where the engine's two touch zones are (above the buttons)
+  function layoutSticks() {
+    if (!Sticks.on) return;
+    const zones = document.querySelectorAll('#demo .re-demo-zone');
+    [$('stickL'), $('stickR')].forEach((el, i) => {
+      const z = zones[i];
+      if (!z) return;
+      const b = z.getBoundingClientRect();
+      Object.assign(el.style, { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` });
+    });
+    Sticks.l.reset(); Sticks.r.reset();
+  }
+  addEventListener('resize', () => setTimeout(layoutSticks, 50));
+  function setSticks(on) {
+    Sticks.on = on;
+    document.body.classList.toggle('sticks', on);
+    $('sticks').hidden = !on;
+    Object.assign(Sticks, { speed: 0, run: false, dir: 0, pitch: 0 });
+    if (on) requestAnimationFrame(layoutSticks);
+  }
+  function sticksTick(dt, now) {
+    const S = T.stick, l = Sticks.l, r = Sticks.r, demo = engine.debug().demo;
+    const mag = Math.min(1, Math.hypot(l.x, l.y));
+    const go = mag > S.dead;
+    Sticks.dir = go ? Math.atan2(l.x, l.y) : 0;
+    const run = go && mag >= S.runAt;
+    Sticks.speed = !go ? 0 : run ? T.runMps * T.speedScale : S.walk[0] + (S.walk[1] - S.walk[0]) * Math.min(1, (mag - S.dead) / (S.runAt - S.dead));
+    // the engine hears matching steps: high knees past runAt, a march below it
+    if (demo) {
+      if (run && !demo.running) demo.startRun();
+      else if (!run && demo.running) demo.stopRun();
+      if (go && !run && now >= Sticks.stepAt) { demo.step(now); Sticks.stepAt = now + 60000 / (90 + 50 * mag); }
+    }
+    Sticks.run = run;
+    if (Fight.active || Phone.open) return;
+    if (Math.abs(r.x) > 0.05) engine.set_facing(engine.locomotion().facing + r.x * Math.abs(r.x) * S.turnDps * dt);
+    if (Math.abs(r.y) > 0.05) Sticks.pitch = Math.max(S.pitch[0], Math.min(S.pitch[1], Sticks.pitch + r.y * S.pitchRate * dt));
+  }
+  $('playSticks').addEventListener('click', () => {
+    primeVoice();
+    enableTouch();
+    setSticks(true);
+    startWalk();
+    note('Left stick moves (push all the way to run), right stick looks. Buttons work as in touch play.', 7000);
+  });
+
   $('playDemo').addEventListener('click', () => {
     primeVoice();
+    setSticks(false);
     enableTouch();
     startWalk();
     note('Tap the left zone to walk, double-tap and hold to run. Hold a drag on the right zone to steer. Point for a quick turn onto the cross street.', 7000);
@@ -8215,7 +8390,7 @@
     x.restore();
   }
 
-  $('playCamera').addEventListener('click', () => { primeVoice(); runCamera((preset) => engine.start(preset)); });
+  $('playCamera').addEventListener('click', () => { primeVoice(); setSticks(false); runCamera((preset) => engine.start(preset)); });
   $('setupCancel').addEventListener('click', () => {
     engine.cancel_calibration();
     if (engine.is_recording()) Warm.clip = engine.stop_recording();
