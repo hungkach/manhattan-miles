@@ -12,11 +12,24 @@
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
   body.fighting #demo .re-demo { height: 34%; }
-  /* dual sticks (testing): the engine's tap and drag zones give way to two floating sticks */
-  body.sticks #demo .re-demo-zone { visibility: hidden; pointer-events: none; }
+  /* dual sticks (testing): no tap zones; a floating move stick on the left half, drag to look
+     on the right half, the buttons along the bottom; in a fight only the buttons */
+  body.sticks #demo .re-demo-zone { display: none; }
+  body.sticks #demo .re-demo { top: auto; height: auto; grid-template-rows: auto; }
+  body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(4, 1fr) !important; }
+  /* sideways, a fight shows every move: no tap zones, the buttons in two rows of six */
+  @media (orientation: landscape) {
+    body.fighting #demo .re-demo-zone { display: none; }
+    body.fighting #demo .re-demo { top: auto; height: auto; grid-template-rows: auto; }
+    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(6, 1fr) !important; }
+    body.fighting #demo .re-demo-buttons button { min-height: 38px; }
+    body.fighting #endBtn, body.fighting #phoneBtn { display: none; }
+  }
   #sticks { position: fixed; inset: 0; z-index: 3; pointer-events: none; }
-  #sticks .pad { position: absolute; pointer-events: auto; touch-action: none; border-radius: 14px; border: 1.5px dashed rgba(255,255,255,.35); background: rgba(0,0,0,.12); }
-  #sticks .pad span { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; font: 600 12px system-ui, sans-serif; color: rgba(255,255,255,.75); pointer-events: none; }
+  body.fighting #sticks { display: none; }
+  #sticks .pad { position: absolute; top: 18%; bottom: 0; pointer-events: auto; touch-action: none; }
+  #stickL { left: 0; width: 50%; }
+  #lookPad { right: 0; width: 50%; }
   #sticks .ring { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; border: 2px solid rgba(255,255,255,.55); background: rgba(255,255,255,.08); pointer-events: none; }
   #sticks .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(255,255,255,.6); }
   #pip { position: fixed; right: 10px; bottom: 10px; width: 26vw; max-width: 160px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.6); transform: scaleX(-1); z-index: 3; display: none; background: #000; }
@@ -3811,7 +3824,7 @@
 <body>
 <canvas id="game"></canvas>
 <div id="demo"></div>
-<div id="sticks" hidden><div class="pad" id="stickL"><span>Move</span><div class="ring"><div class="knob"></div></div></div><div class="pad" id="stickR"><span>Look</span><div class="ring"><div class="knob"></div></div></div></div>
+<div id="sticks" hidden><div class="pad" id="stickL"><div class="ring"><div class="knob"></div></div></div><div class="pad" id="lookPad"></div></div>
 <video id="pip" playsinline muted></video>
 <div id="note" hidden></div>
 <button id="endBtn" hidden>End walk</button>
@@ -3895,9 +3908,9 @@
     runMps: 3.5,           // high knees pace
     speedScale: 3,         // game moves 3x real pace so blocks pass at a fun clip
     runCadence: 150,
-    // dual sticks (testing): left stick moves (game m/s at the edge of walk, past runAt it runs),
-    // right stick turns (degrees a second) and tilts the view (radians a second, within pitch)
-    stick: { dead: 0.12, walk: [1.5, 5], runAt: 0.9, turnDps: 120, pitchRate: 1.1, pitch: [-0.55, 0.6] },
+    // dual sticks (testing): the stick moves (game m/s at the edge of walk, past runAt it runs);
+    // dragging on the right half looks (degrees of turn and radians of tilt per pixel, tilt within pitch)
+    stick: { dead: 0.12, walk: [1.5, 5], runAt: 0.9, turnPerPx: 0.3, pitchPerPx: 0.004, pitch: [-0.55, 0.6] },
     centerWithin: 12,      // degrees: not steering and this close to a street's direction, you settle onto it
     centerRate: 1.5,       // how fast that self-centering pulls (per second)
     eyeHeight: 1.7,
@@ -4845,7 +4858,7 @@
     // degrees of a street's direction, you settle onto it and go straight down the block
     // (the street's own direction, either way along it: the grid runs 29 degrees off north)
     let facing = m.facing;
-    const here = Math.abs(s.turn || 0) < 0.05 && !(Sticks.on && Math.abs(Sticks.r.x) > 0.05) && P.speed > 0.5 ? streetHere(P.x, P.z, 25) : null;
+    const here = Math.abs(s.turn || 0) < 0.05 && !(Sticks.on && Sticks.look.id !== null) && P.speed > 0.5 ? streetHere(P.x, P.z, 25) : null;
     if (here) {
       const a = (angleOf(here.dir) * 180) / Math.PI;
       let diff = Infinity;
@@ -6414,9 +6427,10 @@
     for (const wd of words) { const t = cur ? cur + ' ' + wd : wd; if (ctx.measureText(t).width > max && cur) { lines.push(cur); cur = wd; } else cur = t; }
     if (cur) lines.push(cur);
     const lh = 17 * U, w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 18 * U, h = lines.length * lh + 10 * U;
-    const bx = Math.max(4, Math.min(W - w - 4, x - w / 2)), by = Math.max(4, y - h - 10 * U);
+    // in a fight, keep it below the health bars at the top
+    const bx = Math.max(4, Math.min(W - w - 4, x - w / 2)), by = Math.max(Fight.active ? 104 * U : 4, y - h - 10 * U);
     ctx.fillStyle = 'rgba(255,255,255,.94)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, w, h, 10 * U) : ctx.rect(bx, by, w, h); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(x - 6 * U, by + h); ctx.lineTo(x + 6 * U, by + h); ctx.lineTo(x, by + h + 9 * U); ctx.closePath(); ctx.fill();
+    if (by + h < y) { ctx.beginPath(); ctx.moveTo(x - 6 * U, by + h); ctx.lineTo(x + 6 * U, by + h); ctx.lineTo(x, by + h + 9 * U); ctx.closePath(); ctx.fill(); }
     ctx.fillStyle = '#111'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     lines.forEach((l, i) => ctx.fillText(l, bx + w / 2, by + 5 * U + i * lh));
   }
@@ -7781,7 +7795,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-19 late \u00b7 fight talk, dual sticks, busier streets, combo damage';
+  const BUILD = '2026-10-19 night \u00b7 sticks: one move stick, drag to look, fight buttons fit sideways';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -7908,16 +7922,18 @@
   }
 
   // ---------- dual sticks (testing) ----------
-  // Left stick moves where it points (forward, strafe, back; past T.stick.runAt it runs), right
-  // stick turns and tilts the view. It runs on the touch demo, so the engine still gets steps at
-  // a matching cadence: marching presses in a fight, a full push is high knees (and escapes).
-  // Fight buttons stay as they are. Testing only: it is touch play, so records are not kept.
-  const Sticks = { on: false, l: { x: 0, y: 0, id: null }, r: { x: 0, y: 0, id: null }, speed: 0, run: false, dir: 0, pitch: 0, stepAt: 0 };
-  function stickPad(el, st) {
-    const ring = el.querySelector('.ring'), knob = el.querySelector('.knob');
+  // A floating stick on the left half moves where it points (forward, strafe, back; past
+  // T.stick.runAt it runs); dragging on the right half looks (drag right to turn right, up to look
+  // up). It runs on the touch demo, so the engine still gets steps at a matching cadence. In a
+  // fight the stick hides and the fight buttons take the bottom. Testing only: it is touch play,
+  // so records are not kept.
+  const Sticks = { on: false, l: { x: 0, y: 0, id: null }, look: { id: null, x: 0, y: 0 }, speed: 0, run: false, dir: 0, pitch: 0, stepAt: 0 };
+  (function stickPad() {
+    const el = $('stickL'), st = Sticks.l, ring = el.querySelector('.ring'), knob = el.querySelector('.knob');
     const R = 55;
     const place = (x, y) => { const b = el.getBoundingClientRect(); ring.style.left = `${x - b.left}px`; ring.style.top = `${y - b.top}px`; };
-    const reset = () => { st.x = 0; st.y = 0; st.id = null; knob.style.transform = ''; const b = el.getBoundingClientRect(); place(b.left + b.width / 2, b.top + b.height / 2); };
+    // at rest the stick waits low on the left, above the buttons
+    const reset = () => { st.x = 0; st.y = 0; st.id = null; knob.style.transform = ''; const b = el.getBoundingClientRect(); place(b.left + Math.min(110, b.width / 2), b.bottom - 90); };
     el.addEventListener('pointerdown', (e) => { e.preventDefault(); if (st.id !== null) return; st.id = e.pointerId; st.ox = e.clientX; st.oy = e.clientY; place(e.clientX, e.clientY); try { el.setPointerCapture(e.pointerId); } catch (_) {} });
     el.addEventListener('pointermove', (e) => {
       if (e.pointerId !== st.id) return;
@@ -7927,22 +7943,30 @@
       st.x = dx / R; st.y = -dy / R;
       knob.style.transform = `translate(${dx}px, ${dy}px)`;
     });
-    for (const ev of ['pointerup', 'pointercancel']) el.addEventListener(ev, (e) => { if (e.pointerId === st.id) reset(); });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, (e) => { if (e.pointerId === st.id) reset(); });
     st.reset = reset;
-  }
-  stickPad($('stickL'), Sticks.l);
-  stickPad($('stickR'), Sticks.r);
-  // the pads sit where the engine's two touch zones are (above the buttons)
+  })();
+  (function lookPad() {
+    const el = $('lookPad'), lk = Sticks.look;
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); if (lk.id !== null) return; lk.id = e.pointerId; lk.x = e.clientX; lk.y = e.clientY; try { el.setPointerCapture(e.pointerId); } catch (_) {} });
+    el.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== lk.id) return;
+      const dx = e.clientX - lk.x, dy = e.clientY - lk.y;
+      lk.x = e.clientX; lk.y = e.clientY;
+      if (Fight.active || Phone.open || G.state !== 'walk') return;
+      const S = T.stick;
+      if (dx) engine.set_facing(engine.locomotion().facing + dx * S.turnPerPx);
+      if (dy) Sticks.pitch = Math.max(S.pitch[0], Math.min(S.pitch[1], Sticks.pitch + dy * S.pitchPerPx)); // drag up looks up
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, (e) => { if (e.pointerId === lk.id) lk.id = null; });
+  })();
+  // the pads stop where the buttons start
   function layoutSticks() {
     if (!Sticks.on) return;
-    const zones = document.querySelectorAll('#demo .re-demo-zone');
-    [$('stickL'), $('stickR')].forEach((el, i) => {
-      const z = zones[i];
-      if (!z) return;
-      const b = z.getBoundingClientRect();
-      Object.assign(el.style, { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` });
-    });
-    Sticks.l.reset(); Sticks.r.reset();
+    const bar = document.querySelector('#demo .re-demo-buttons');
+    const bottom = bar && !bar.hidden ? Math.max(0, innerHeight - bar.getBoundingClientRect().top + 6) : 0;
+    for (const el of [$('stickL'), $('lookPad')]) el.style.bottom = `${bottom}px`;
+    Sticks.l.reset();
   }
   addEventListener('resize', () => setTimeout(layoutSticks, 50));
   function setSticks(on) {
@@ -7950,10 +7974,12 @@
     document.body.classList.toggle('sticks', on);
     $('sticks').hidden = !on;
     Object.assign(Sticks, { speed: 0, run: false, dir: 0, pitch: 0 });
+    Sticks.look.id = null;
     if (on) requestAnimationFrame(layoutSticks);
   }
   function sticksTick(dt, now) {
-    const S = T.stick, l = Sticks.l, r = Sticks.r, demo = engine.debug().demo;
+    const S = T.stick, l = Sticks.l, demo = engine.debug().demo;
+    if (Fight.active && l.id !== null) l.reset(); // the stick hides in a fight
     const mag = Math.min(1, Math.hypot(l.x, l.y));
     const go = mag > S.dead;
     Sticks.dir = go ? Math.atan2(l.x, l.y) : 0;
@@ -7966,16 +7992,13 @@
       if (go && !run && now >= Sticks.stepAt) { demo.step(now); Sticks.stepAt = now + 60000 / (90 + 50 * mag); }
     }
     Sticks.run = run;
-    if (Fight.active || Phone.open) return;
-    if (Math.abs(r.x) > 0.05) engine.set_facing(engine.locomotion().facing + r.x * Math.abs(r.x) * S.turnDps * dt);
-    if (Math.abs(r.y) > 0.05) Sticks.pitch = Math.max(S.pitch[0], Math.min(S.pitch[1], Sticks.pitch + r.y * S.pitchRate * dt));
   }
   $('playSticks').addEventListener('click', () => {
     primeVoice();
     enableTouch();
     setSticks(true);
     startWalk();
-    note('Left stick moves (push all the way to run), right stick looks. Buttons work as in touch play.', 7000);
+    note('Left thumb: move (push all the way to run). Right thumb: drag to look.', 6000);
   });
 
   $('playDemo').addEventListener('click', () => {
