@@ -4173,7 +4173,7 @@
       G.idleSaid++;
       say(G.idleSaid >= 3 ? 'Taking a breather? March to keep going, or end the session from the phone.' : pick(IDLE_LINES), 'confirm');
     }
-    if (Fight.active) return;
+    if (Fight.active || Stage.on) return;
     const iv = G.interval;
     if (!iv) {
       if (P.speed > 0.5) G.intervalIn -= dt;
@@ -4371,6 +4371,7 @@
     return null;
   }
   function pedTick(dt, now) {
+    if (Stage.on) { Peds.list.length = 0; Traffic.cars.length = 0; Vendors.list.length = 0; return; } // a crime center is cleared of street life
     Peds.list = Peds.list.filter((p) => Math.hypot(p.x - P.x, p.z - P.z) < PED.drop);
     // fill up fast at first, then keep it topped up
     // how many: PED.max scaled by what the device keeps up with (Perf.crowd); over the cap, the
@@ -4730,7 +4731,7 @@
   // and give a title. Saved in localStorage with lifetime totals.
   // (honest reps: XP comes from outcomes (stops, calls, wins, takedowns, guard breaks, runners
   // caught) and from beating your own records in body units; nothing per minute or for showing up)
-  const XP = { stop: 50, win: 60, takedown: 25, guardBreak: 10, call: 80, caught: 40, record: 40 };
+  const XP = { stop: 50, win: 60, takedown: 25, guardBreak: 10, call: 80, caught: 40, record: 40, stage: 150 };
   const TITLES = ['Tourist', 'Commuter', 'Bodega Regular', 'Block Captain', 'Neighborhood Watch', 'Express Train', 'Borough Hero', 'Midtown Myth', 'The Mayor (unofficially)', 'King of New York'];
   const levelFor = (xp) => Math.floor(Math.sqrt(xp / 250)) + 1; // 250, 1000, 2250, 4000 ...
   const xpFor = (lvl) => 250 * (lvl - 1) * (lvl - 1);
@@ -4764,7 +4765,7 @@
       { id: 'radio', label: 'Police radio' },
       { id: 'breather', label: 'Take a breather' },
       { id: 'repeat', label: 'Repeat directions' },
-      { id: 'skip', label: 'Skip this stop' },
+      Stage.on ? { id: 'leave', label: 'Leave this crime center' } : { id: 'skip', label: 'Skip this stop' },
       { id: 'tutor', label: 'Combat tutorial' },
       { id: 'look', label: `Time of day: ${L.name}` },
       { id: 'teleport', label: 'Teleport (test)' },
@@ -4830,6 +4831,7 @@
     if (it.id === 'ride') { startRide(it.from, it.to, performance.now()); return; }
     if (it.id === 'repeat') say(`${G.nav || 'Keep going'}. ${target().name}: ${destWords()}.`, 'prompt');
     else if (it.id === 'radio') radio(performance.now());
+    else if (it.id === 'leave') { closePhone(); leaveStage(performance.now()); }
     else if (it.id === 'skip') { say(`Skipping ${G.dest.name}.`, 'feedback'); nextStop(performance.now()); sayRoute(false); }
     else if (it.id === 'end') endWalk();
     else if (it.id === 'tp') teleport(it.place, performance.now());
@@ -4875,6 +4877,7 @@
     if (Sticks.on) sticksTick(dt, now);
     if (Fight.active) { updateFight(dt, now); easeView(dt); return; }
     if (Fight.chase && Fight.chase.mode === 'run') { chaseRun(dt, now); easeView(dt); return; }
+    if (Stage.on) { stageRun(dt, now); easeView(dt); return; }
     const m = engine.locomotion();
     const s = engine.signals();
     P.cadence = s.cadence_spm || 0;
@@ -4951,6 +4954,8 @@
     award(XP.stop, G.dest.name);
     banner(`Arrived at ${G.dest.name}`, 3500, now);
     say(`You made it to ${G.dest.name}.`, 'feedback');
+    // every stop is a crime center (10/20); a police call in progress comes first
+    if (!Calls.active && !Fight.active && !Fight.chase) { startStage(now); return; }
     nextStop(now);
     sayRoute(false);
   }
@@ -5349,7 +5354,7 @@
     Fight.active = { start: now, foe, range: 'close' };
     // the fight is the work: a running interval stops, and the next one waits a full gap
     G.interval = null; G.intervalIn = SESSION.intervalEveryS;
-    gatherCrowd(now);
+    if (!Stage.on) gatherCrowd(now);
     Fight.hp = FT.playerHp;
     Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity; Fight.shift = null; Fight.shiftCd = 0;
     Q.fight = { start: now, thrown: 0, landed: 0, clean: 0, hits: 0, power: [], takedowns: [] };
@@ -5453,12 +5458,13 @@
     const a = Fight.active;
     if (!a || a.tutor || Math.random() > chance) return;
     if (now - Talk.at < TALK.gapMs || (who === 'foe' && now - Talk.foeAt < TALK.foeGapMs)) return;
-    const lines = (who === 'foe' ? FOE_TALK : CROWD_TALK)[ev];
+    let lines = (who === 'foe' ? FOE_TALK : CROWD_TALK)[ev];
+    if (who === 'foe' && a.foe.lines && Math.random() < 0.5) lines = a.foe.lines; // the gang's own lines
     let by = null;
     if (who === 'foe') by = a.foe;
     else {
       const free = (p) => !p.officer && now > (p.joinAt || 0) && now > (p.sayUntil || 0);
-      const crowd = Fight.people.filter((p) => p.kind === 'crowd' && free(p));
+      const crowd = Fight.people.concat(Stage.on ? Stage.people.filter((p) => foeDist(p) < 25) : []).filter((p) => p.kind === 'crowd' && free(p));
       const victim = Fight.people.filter((p) => p.kind === 'victim' && free(p));
       if (crowd.length || victim.length) by = pick(crowd.length ? crowd : victim);
     }
@@ -5537,6 +5543,7 @@
     engine.set_facing((P.yaw * 180) / Math.PI);
     if (isDemo()) setTouchButtons('walk');
     document.body.classList.remove('fighting');
+    if (a.foe.stage && Stage.on) { stageFightOver(how, now); return; }
     const fled = how === 'won' && a.foe.state === 'flee';
     if (fled) Fight.stats.fled++;
     const line = fled ? 'They ran off. March on.' : { won: 'Knockout! March on.', lost: 'You got dropped. Shake it off and march on.', escaped: 'You got away.' }[how];
@@ -5792,7 +5799,7 @@
         Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
-      else { hurtPlayer(now, 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: 'Duck the hook!', uppercut: 'Stand tall for the uppercut!' }[foe.kind] || 'Hit', 1100); }
+      else { hurtPlayer(now, foe.boss ? STAGE.boss.hit : 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: 'Duck the hook!', uppercut: 'Stand tall for the uppercut!' }[foe.kind] || 'Hit', 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -5848,7 +5855,7 @@
   // slips, ducks, stuffed shots and knockouts top up your guard bar
   // (honest reps: a bigger slip or a deeper duck tops it up more, from 60% to 140% of the bonus)
   function guardBonus(why, k = 1) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0) * k); }
-  function windupMs() { return Math.max(450, FT.windupMs - 20 * (level() - 1)); }
+  function windupMs() { const a = Fight.active; return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a && a.foe.boss ? STAGE.boss.windup : 1); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
     Fight.combo.n = 0;
@@ -6079,6 +6086,210 @@
   engine.on('jump', () => chaseMove('jump'));
   engine.on('squat', () => chaseMove('squat'));
   function thud() { burst(160, 0.8, 0.25, 0.5, 'lowpass'); }
+
+
+  // ---------- crime centers (10/20, Mark: every stop is a crime center, a linear stage like a SNES
+  // beat 'em up: groups of opponents with a short march between them, a boss at the end) ----------
+  // Arriving at a stop starts its stage on the street there, cleared of passers-by and traffic:
+  // a title card, then groups of opponents along the street ahead. You march between groups along
+  // the stage's path with no steering (the march is the rest between rounds), each group is one
+  // fight (they tag in one at a time), and the boss waits at the end. Lose a fight or escape and
+  // the gang keeps the corner; either way the next stop is set.
+  //   foes      opponents before the boss: 10 at level 1, one more every level and a third, up to 19
+  //   groupMax  the most in one group (3 groups, 4 above 12)
+  //   startM    the first group this far ahead; marchM between groups (about 20 s of marching)
+  //   boss      health, guard and size against a regular opponent; hits land for hit
+  const STAGE = { introMs: 4200, startM: 18, marchM: 80, pathM: 520, seeM: 16, crowdPer: 5,
+    boss: { hp: 2.6, guard: 1.6, scale: 1.18, windup: 1.15, hit: 2 } };
+  const THEMES = [
+    { id: 'brunch', name: 'The Brunch Mob', intro: 'Bottomless mimosas since ten a.m. They have taken the whole sidewalk.', cols: [[236, 170, 196], [246, 226, 150], [170, 214, 236]], boss: 'The Maitre D', bossCol: [34, 34, 38], bossLine: 'Do you have a reservation?',
+      talk: ['Where is my avocado toast?', 'This table has a two hour minimum.', 'I am not drunk, I am brunching.', 'Can I get the check? And a hit?'] },
+    { id: 'stairs', name: 'Rally Against Stairs', intro: 'A protest against stairs, blocking the subway entrance. Bold.', cols: [[230, 120, 40], [240, 200, 60], [110, 160, 210]], boss: 'The Megaphone', bossCol: [200, 40, 40], bossLine: 'What do we want? Escalators! When do we want them? Whenever!',
+      signs: ['Stairs are a scam', 'Escalators now', 'Ramps not steps', 'My calves said no'], talk: ['Down with stairs!', 'Also up with stairs! No stairs!', 'Have you seen the stairs at Union Square?'] },
+    { id: 'pigeon', name: 'The Pigeon Liberation Front', intro: 'They want bread rights for pigeons. They have brought a lot of bread.', cols: [[130, 136, 150], [96, 110, 130], [150, 160, 170]], boss: 'Big Pigeon', bossCol: [110, 116, 130], bossLine: 'Coo. That is a threat.',
+      signs: ['Bread for all', 'Coo coo', 'Birds first'], talk: ['The birds were here first!', 'Have you seen their little faces?', 'Crumbs are a human right. A bird right.'] },
+    { id: 'scooter', name: 'The Scooter Gang', intro: 'A sidewalk scooter crew. Bells, no brakes.', cols: [[40, 200, 120], [250, 120, 40], [60, 60, 66]], boss: 'Captain Kickstand', bossCol: [250, 220, 40], bossLine: 'Ring ring. That is the sound of the end.',
+      talk: ['Ring ring!', 'Bike lanes are for bikes. Sidewalks are for us.', 'I charge this thing at the library.'] },
+    { id: 'knockoff', name: 'The Knockoff Market', intro: 'Bootleg handbags and very real attitude.', cols: [[150, 60, 120], [200, 170, 90], [60, 60, 70]], boss: 'The Knockoff King', bossCol: [220, 190, 60], bossLine: 'Genuine leather. Genuine-ish beating.',
+      talk: ['Ten dollars. Final offer. Fifteen.', 'Genuine leather. Genuine-ish.', 'You want a watch? It tells time. Sometimes.'] },
+    { id: 'landlord', name: 'The Landlord Convention', intro: 'A rent hike summit on the sidewalk. They brought a podium.', cols: [[60, 70, 90], [90, 70, 50], [120, 120, 130]], boss: 'The Landlord', bossCol: [20, 24, 30], bossLine: 'Your rent just went up.',
+      signs: ['Rent goes up', 'Heat is optional', 'Broker fee forever'], talk: ['Heat? In this economy?', 'The broker fee is a feeling.', 'Late fee!', 'That window is a view. That is extra.'] },
+    { id: 'crypto', name: 'The Crypto Pop-up', intro: 'Coins for sale on folding tables. They are so early.', cols: [[240, 160, 30], [40, 40, 50], [90, 200, 220]], boss: 'The Whale', bossCol: [40, 90, 170], bossLine: 'Have you heard about my coin?',
+      talk: ['We are so early.', 'This punch is non-fungible.', 'Hold on, let me explain the blockchain.'] },
+    { id: 'influencer', name: 'The Content House', intro: 'An influencer shoot has closed the block for the perfect angle.', cols: [[250, 200, 220], [240, 240, 240], [200, 160, 230]], boss: 'Ring Light', bossCol: [250, 250, 250], bossLine: 'You are in my shot.',
+      talk: ['You are in my shot!', 'Link in bio.', 'Again, but with more energy.', 'Hold on, the light is wrong.'] },
+    { id: 'catnap', name: 'The Bodega Catnappers', intro: 'Somebody took the bodega cat. The whole block is furious.', cols: [[90, 80, 70], [60, 60, 60], [140, 100, 70]], boss: 'The Catnapper', bossCol: [70, 50, 40], bossLine: 'The cat wanted to leave. Probably.',
+      signs: ['Free Mittens', 'Bring back the cat'], talk: ['The cat wanted to leave!', 'Meow. That is code for nothing.', 'He has a better life now. In Jersey.'] },
+    { id: 'rats', name: 'The Rat Appreciation Society', intro: 'A parade for the rats. With rats.', cols: [[110, 100, 90], [80, 70, 60], [150, 140, 120]], boss: 'The Rat King', bossCol: [90, 70, 60], bossLine: 'Pizza rat was our founder.',
+      signs: ['Rats are people too', 'Pizza rat forever'], talk: ['They were here first!', 'Pizza rat was our founder.', 'Rats run this city. We just help.'] },
+  ];
+  const THEME_KEY = 'manhattan-miles-theme';
+  const Stage = { on: false, cleared: 0, started: 0 };
+  // a path along the street from (x, z) heading dir, about len meters, as a trail (see trailAt)
+  function streetPath(x, z, dir, len) {
+    const pts = [{ x, z, s: 0 }];
+    let d = { x: dir.x, z: dir.z }, px = x, pz = z;
+    for (let i = 0; i < len; i++) {
+      const st = streetHere(px, pz, 30);
+      if (st) {
+        let sd = st.dir; if (sd.x * d.x + sd.z * d.z < 0) sd = { x: -sd.x, z: -sd.z };
+        if (sd.x * d.x + sd.z * d.z > 0.6) { const nx = d.x * 0.7 + sd.x * 0.3, nz = d.z * 0.7 + sd.z * 0.3, l = Math.hypot(nx, nz) || 1; d = { x: nx / l, z: nz / l }; }
+      }
+      let nx = px + d.x, nz = pz + d.z;
+      if (blocked(nx, nz) || blocked(px + d.x * 4, pz + d.z * 4)) {
+        let best = null;
+        for (let k = 0; k < 16; k++) {
+          const t = (k / 16) * Math.PI * 2, ux = Math.sin(t), uz = Math.cos(t);
+          if (blocked(px + ux * 4, pz + uz * 4)) continue;
+          const score = ux * d.x + uz * d.z;
+          if (score > -0.2 && (!best || score > best.score)) best = { score, ux, uz };
+        }
+        if (!best) break;
+        d = { x: best.ux, z: best.uz }; nx = px + d.x; nz = pz + d.z;
+      }
+      px = nx; pz = nz;
+      pts.push({ x: px, z: pz, s: pts[pts.length - 1].s + 1 });
+    }
+    return pts;
+  }
+  function stageFoeCount() { return Math.min(19, 10 + Math.floor((level() - 1) * 0.75)); }
+  function startStage(now) {
+    let ti = 0;
+    try { ti = (Number(localStorage.getItem(THEME_KEY)) || 0) % THEMES.length; localStorage.setItem(THEME_KEY, String(ti + 1)); } catch (_) { ti = Math.floor(Math.random() * THEMES.length); }
+    const theme = THEMES[ti];
+    const st = streetHere(P.x, P.z, 30), hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
+    let dir = st ? st.dir : { x: hx, z: hz };
+    if (dir.x * hx + dir.z * hz < 0) dir = { x: -dir.x, z: -dir.z };
+    const trail = streetPath(P.x, P.z, dir, STAGE.pathM);
+    const n = stageFoeCount(), groups = n > 12 ? 4 : 3, sizes = [];
+    for (let i = 0; i < groups; i++) sizes.push(Math.floor(n / groups) + (i < n % groups ? 1 : 0));
+    Object.assign(Stage, { on: true, theme, trail, sizes, group: 0, sp: 0, phase: 'intro', introUntil: now + STAGE.introMs, people: [], spot: 0, boss: null, foes: 0 });
+    Stage.started++;
+    Fight.foes = []; Fight.people = []; Fight.chase = null; Fight.scene = null;
+    Peds.list = []; Traffic.cars = []; Vendors.list = [];
+    G.interval = null; G.bannerUntil = 0;
+    placeGroup(STAGE.startM, now);
+    say(`Crime center: ${theme.name}. ${theme.intro}`, 'instruction');
+  }
+  // the next group (or the boss) at s meters along the stage path, with people watching
+  function placeGroup(s, now) {
+    const T0 = Stage.theme, lvl = level(), boss = Stage.group >= Stage.sizes.length;
+    const len = trailLen(Stage);
+    s = Math.min(s, len - 4);
+    Stage.spot = s;
+    const p = trailAt(Stage, s), q = trailAt(Stage, s + 1), dl = Math.hypot(q.x - p.x, q.z - p.z) || 1, dx = (q.x - p.x) / dl, dz = (q.z - p.z) / dl, rx = dz, rz = -dx;
+    const at = (along, side) => { let x = p.x + dx * along + rx * side, z = p.z + dz * along + rz * side; if (blocked(x, z)) { x = p.x + dx * along; z = p.z + dz * along; } return { x, z }; };
+    Fight.foes = [];
+    const count = boss ? 1 : Stage.sizes[Stage.group];
+    for (let i = 0; i < count; i++) {
+      const w = at(i * 1.4, (i % 2 ? -1 : 1) * (0.6 + 0.4 * i));
+      const f = makeFoe(w.x, w.z, i, lvl);
+      Object.assign(f, { col: boss ? T0.bossCol : T0.cols[i % T0.cols.length], lines: T0.talk, fleeChecked: true, stage: true });
+      if (boss) {
+        const B = STAGE.boss;
+        Object.assign(f, { boss: true, name: T0.boss, scale: B.scale, hp: Math.round(f.maxHp * B.hp), guardHp: f.guardMax * B.guard, guardMax: f.guardMax * B.guard, turtle: 0.2 });
+        f.maxHp = f.hp;
+        Stage.boss = f;
+      }
+      Fight.foes.push(f);
+    }
+    // a few people watching on both sides (protesters hold signs)
+    for (let i = 0; i < STAGE.crowdPer + (boss ? 3 : 0); i++) {
+      const side = i % 2 ? -1 : 1, w = at(rand(-4, 6), side * rand(3.2, 4.6));
+      if (blocked(w.x, w.z)) continue;
+      const sign = T0.signs && Math.random() < 0.5 ? pick(T0.signs) : null;
+      Stage.people.push({ kind: 'crowd', x: w.x, z: w.z, tx: w.x, tz: w.z, sx: w.x, sz: w.z, joinAt: now, look: P, phone: !sign && Math.random() < 0.6, sign, col: sign ? pick(T0.cols) : pick(CROWD_COLS), seed: Math.random() });
+    }
+    Stage.people = Stage.people.filter((q) => Math.hypot(q.x - p.x, q.z - p.z) < 160);
+  }
+  // marching the stage (from update, instead of walking): along the path to the next group
+  function stageRun(dt, now) {
+    const m = engine.locomotion();
+    P.cadence = engine.signals().cadence_spm || 0;
+    P.running = m.state === 'run';
+    let v = Sticks.on ? Sticks.speed : m.speed * T.speedScale;
+    if (Stage.phase === 'intro') { v = 0; if (now >= Stage.introUntil) { Stage.phase = 'march'; say(Stage.group >= Stage.sizes.length ? `Boss: ${Stage.theme.boss}.` : 'March to them.', 'confirm'); } }
+    const lead = current();
+    const gap = lead ? Stage.spot - Stage.sp : Infinity;
+    // stop at the group; they come to you
+    const ox = P.x, oz = P.z;
+    Stage.sp = Math.min(Stage.sp + v * dt, Math.max(Stage.sp, Stage.spot - FT.engage + 1));
+    const here = trailAt(Stage, Stage.sp), ahead = trailAt(Stage, Stage.sp + 7);
+    P.x = here.x; P.z = here.z;
+    if (Math.hypot(ahead.x - here.x, ahead.z - here.z) > 0.5) {
+      const want = Math.atan2(ahead.x - here.x, ahead.z - here.z);
+      let dy = want - P.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI;
+      P.yaw += dy * Math.min(1, dt * 4);
+      engine.set_facing((P.yaw * 180) / Math.PI);
+    }
+    P.speed = v;
+    if (P.running && v > 1) G.runMs += dt * 1000;
+    G.meters += Math.hypot(P.x - ox, P.z - oz);
+    if (!lead || Stage.phase !== 'march') return;
+    // the lead walks in once they see you; within range the fight is on
+    const d = foeDist(lead);
+    if (d < STAGE.seeM && d > FT.engage) {
+      lead.walk = (lead.walk || 0) + dt * 6;
+      const k = Math.min(1, dt * 1.2 / d);
+      lead.x += (P.x - lead.x) * k; lead.z += (P.z - lead.z) * k;
+    }
+    if (d <= FT.engage + 0.5 || gap <= FT.engage) {
+      if (lead.boss) { lead.say = Stage.theme.bossLine; lead.sayUntil = now + 3000; }
+      startFight(now);
+    }
+  }
+  // a fight in the stage is over (from endFight)
+  function stageFightOver(how, now) {
+    const T0 = Stage.theme;
+    if (how !== 'won') {
+      Stage.on = false; Fight.foes = [];
+      say(how === 'lost' ? `${T0.name} keeps the corner. Next stop.` : `You left ${T0.name} to it. Next stop.`, 'confirm');
+      banner(`${T0.name} keeps the corner`, 3000, now);
+      nextStop(now); sayRoute(false);
+      return;
+    }
+    Stage.group++;
+    if (Stage.group > Stage.sizes.length) {
+      // the boss is down: stage cleared
+      Stage.on = false; Stage.cleared++; Fight.foes = [];
+      award(XP.stage, `cleared ${T0.name}`);
+      bell(3);
+      say(`${T0.boss} is down. ${T0.name} is cleared. Next stop.`, 'confirm');
+      banner(`${T0.name} cleared`, 3500, now);
+      for (const p of Stage.people) p.cheerUntil = now + 3000;
+      nextStop(now); sayRoute(false);
+      return;
+    }
+    const boss = Stage.group >= Stage.sizes.length;
+    placeGroup(Stage.sp + STAGE.marchM, now);
+    Stage.phase = 'march';
+    say(boss ? `Group cleared. The boss is up the street: ${T0.boss}. March.` : `Group ${Stage.group} of ${Stage.sizes.length} cleared. March to the next one.`, 'confirm');
+    banner(boss ? `Boss ahead: ${T0.boss}` : `Group ${Stage.group} of ${Stage.sizes.length} cleared`, 2500, now);
+  }
+  function leaveStage(now) {
+    if (!Stage.on) return;
+    if (Fight.active) { endFight('escaped', now); return; }
+    stageFightOver('escaped', now);
+  }
+  // a sign on a pole, held up by a protester
+  function drawSign(p, fr, list) {
+    const pole = toWorld(p, fr, [0.22, 1.15, 0.22]), top = toWorld(p, fr, [0.22, 2.25, 0.22]);
+    capsule(list, toCam(pole.x, pole.y, pole.z), toCam(top.x, top.y, top.z), 0.025, [120, 90, 60], F);
+    const c = toWorld(p, fr, [0.22, 2.3, 0.25]);
+    boxPrims(list, c.x, c.y, c.z, 0.03, 0.5, 0.3, fr.fx, fr.fz, [244, 240, 228]);
+    return c;
+  }
+  function signText(text, c) {
+    const q = toCam(c.x, c.y, c.z + 0);
+    if (q.z < NEAR3 || q.z > 45) return;
+    const pp = projC(q, F), size = Math.max(6, 0.13 * pp.s);
+    ctx.font = `800 ${Math.round(size)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#1b1b1b';
+    const words = text.split(' '), lines = [];
+    let cur = '';
+    for (const w of words) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > 0.9 * pp.s && cur) { lines.push(cur); cur = w; } else cur = t; }
+    if (cur) lines.push(cur);
+    lines.forEach((l, i) => ctx.fillText(l, pp.x, pp.y + (i - (lines.length - 1) / 2) * size * 1.05));
+  }
 
   // ---------- street crime (10/18, Mark: a crime-ridden New York, a modern Death Wish) ----------
   // Every 40 to 70 s of walking something is going down ahead. Each scene sets up its people busy
@@ -6637,6 +6848,7 @@
   }
   function drawFoe(f, now) {
     let j = poseFoe(f, now);
+    if (f.scale) { const k = f.scale, o = {}; for (const n in j) o[n] = [j[n][0] * k, j[n][1] * k, j[n][2] * k]; j = o; } // a boss stands bigger
     // a landed punch snaps the head (or folds the body) back for a moment
     if (f.recoil && now - f.recoil.t < 300) {
       const k = Math.sin((Math.PI * (now - f.recoil.t)) / 300) * 0.09 * f.recoil.k;
@@ -6672,6 +6884,11 @@
     const st = hurt ? Object.assign({}, f.style, { top: shirt }) : f.style;
     bodyPrims(list, c, st, extraJoints(f, fr, j), 0);
     drawPrims(list);
+    if (f.name && c.head.z > NEAR3 && !(now < (f.sayUntil || 0))) {
+      const q = projC({ x: c.head.x, y: c.head.y + 0.3, z: c.head.z }, F);
+      ctx.font = `800 ${Math.round(14 * Ui.u)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = '#ffcf3f';
+      ctx.strokeText(f.name, q.x, q.y); ctx.fillText(f.name, q.x, q.y);
+    }
     if (now < (f.sayUntil || 0) && c.head.z > NEAR3) { const q = projC({ x: c.head.x, y: c.head.y + 0.25, z: c.head.z }, F); bubble(f.say, q.x, q.y); }
     // the telegraph: a pulsing ring on the hand that is coming, or around the hips on a shot
     if (f.state === 'windup' || f.state === 'shoot') {
@@ -6758,7 +6975,9 @@
       ball(list, toCam(w.x, w.y, w.z), 0.04, [190, 225, 255], F);
     }
     if (p.kind === 'vendor') drawCart(p);
+    const sc = p.sign ? drawSign(p, fr, list) : null;
     drawPrims(list);
+    if (sc) signText(p.sign, sc);
     if (now < (p.sayUntil || 0) && c.head.z > NEAR3 && Math.hypot(p.x - P.x, p.z - P.z) < 30) { const q = projC({ x: c.head.x, y: c.head.y + 0.25, z: c.head.z }, F); bubble(p.say, q.x, q.y); }
   }
 
@@ -6924,7 +7143,7 @@
     const w = Math.min(W - 28, 360);
     if (a.tutor) tutorHud(now);
     else {
-      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', 'Opponent');
+      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', a.foe.boss ? `Boss: ${a.foe.name}` : Stage.on ? `${Stage.theme.name} \u00b7 ${others(a).length + 1} left` : 'Opponent');
       bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     }
     const s = engine.signals();
@@ -7826,7 +8045,7 @@
       // everyone and everything out on the street, far to near; the passers-by, cars and street
       // furniture hide behind any building in the way
       const street = gym ? [] : Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f })).concat(Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })), World.ready && GX.props ? nearProps().map((f) => ({ f, prop: true })) : []);
-      const obs = Fight.chase && Fight.chase.obs ? Fight.chase.obs.map((f) => ({ f, obstacle: true })) : [];
+      const obs = (Fight.chase && Fight.chase.obs ? Fight.chase.obs.map((f) => ({ f, obstacle: true })) : []).concat(Stage.on ? Stage.people.filter((p) => foeDist(p) < 90).map((f) => ({ f })) : []);
       const all = Fight.foes.map((f) => ({ f, foe: true })).concat(obs, gym ? [] : Fight.people.map((f) => ({ f })), street.filter((it) => Math.hypot(it.f.x - cam.x, it.f.z - cam.z) < 12 || !occluded(it.f.x, it.prop ? 2 : 1.2, it.f.z, null)));
       for (const it of all.sort((a, b) => Math.hypot(b.f.x - cam.x, b.f.z - cam.z) - Math.hypot(a.f.x - cam.x, a.f.z - cam.z))) { if (it.obstacle) drawObstacle(it.f, now); else if (it.prop) drawProp(it.f); else if (it.car) drawCar(it.f); else if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
@@ -7864,8 +8083,27 @@
     if (w.next) line(`${w.next} in ${Math.round(w.dist)} m`, 14, top + 42, 'left', '600 15px system-ui, sans-serif');
     else if (w.on === 'Off the street') line('Back to a street to keep going', 14, top + 42, 'left', '600 15px system-ui, sans-serif', '#ffcf3f');
 
-    // the stop, how far, and what to do at the next corner
-    if (Calls.active) {
+    // the stop, how far, and what to do at the next corner (or the crime center you are in)
+    if (Stage.on) {
+      const boss = Stage.group >= Stage.sizes.length, d = Math.max(0, Math.round(Stage.spot - Stage.sp - FT.engage));
+      line(Stage.theme.name, 14, top + 86, 'left', '800 15px system-ui, sans-serif', '#ff7a6e');
+      line(boss ? `Boss: ${Stage.theme.boss}${d > 2 ? ` \u00b7 ${d} m` : ''}` : `Group ${Stage.group + 1} of ${Stage.sizes.length}${d > 2 ? ` \u00b7 ${d} m` : ''}`, 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
+      if (d > 2 && Stage.phase === 'march') line('March to them', 14, top + 126, 'left', '700 14px system-ui, sans-serif', '#ffcf3f');
+      // the title card
+      if (Stage.phase === 'intro') {
+        const k = Math.min(1, (Stage.introUntil - now) / 600);
+        ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, k));
+        ctx.fillStyle = 'rgba(8,10,16,.72)'; ctx.fillRect(0, H * 0.36, W, 128);
+        line('Crime center', W / 2, H * 0.36 + 12, 'center', '700 15px system-ui, sans-serif', '#ff7a6e');
+        line(Stage.theme.name, W / 2, H * 0.36 + 34, 'center', `900 ${W < 420 ? 26 : 34}px system-ui, sans-serif`, '#ffcf3f');
+        ctx.font = '600 14px system-ui, sans-serif';
+        const words = Stage.theme.intro.split(' '), lines = []; let cur = '';
+        for (const wd of words) { const t = cur ? cur + ' ' + wd : wd; if (ctx.measureText(t).width > W - 48 && cur) { lines.push(cur); cur = wd; } else cur = t; }
+        if (cur) lines.push(cur);
+        lines.slice(0, 2).forEach((l, i) => line(l, W / 2, H * 0.36 + 76 + i * 19, 'center', '600 14px system-ui, sans-serif', '#e6ebf2'));
+        ctx.restore();
+      }
+    } else if (Calls.active) {
       const c = Calls.active, secs = Math.max(0, Math.ceil((c.until - now) / 1000));
       line(`Call: ${c.what} \u00b7 ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, 14, top + 86, 'left', '800 15px system-ui, sans-serif', '#ff7a6e');
       line(destWords(), 14, top + 106, 'left', '600 14px system-ui, sans-serif', '#c9d1dd');
@@ -7997,7 +8235,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-20 \u00b7 engine 0.8.4, strike gate, gym round first, chases you choose';
+  const BUILD = '2026-10-20 PM \u00b7 crime centers at every stop, chases you choose';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -8046,6 +8284,7 @@
     Object.assign(Rec, { walk: {}, win: { t: 0, spm: 0 } });
     Object.assign(G, { restMs: 0, cabs: 0, intervalLog: [] });
     Traffic.cars = []; Vendors.list = [];
+    Object.assign(Stage, { on: false, cleared: 0, started: 0 });
     Object.assign(Subway, { ride: null, rides: 0, restMs: 0 }); $('subway').hidden = true;
     Prog.walkXp = 0;
     Object.assign(Fight, { people: [], foes: [], active: null, chase: null, tutorDone: false, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
@@ -8069,6 +8308,7 @@
     hum(false);
     if (Fight.active && Fight.active.tutor) endTutor(now);
     Fight.chase = null;
+    Stage.on = false;
     if (Fight.active) { Fight.stats.ms += now - Fight.active.start; Fight.active = null; Fight.foes = []; engine.exit_combat(); if (isDemo()) setTouchButtons('walk'); document.body.classList.remove('fighting'); }
     G.state = 'summary';
     Subway.ride = null; $('subway').hidden = true;
@@ -8092,7 +8332,7 @@
     $('progLine').textContent = progLine();
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi (${G.blocks} blocks)`], ['Moving or fighting', fmt(G.activeMs)], ['Rest (subway, cab, breathers)', fmt(restMs)], ['Running', fmt(G.runMs)],
-      ['Stops reached', G.arrived], ['High knees intervals', `${G.intervals} of ${G.intervalLog.length}${G.intervalLog.length ? ` (${G.intervalLog.join(', ')} s run of ${SESSION.intervalS})` : ''}`],
+      ['Stops reached', G.arrived], ...(Stage.started ? [['Crime centers cleared', `${Stage.cleared} of ${Stage.started}`]] : []), ['High knees intervals', `${G.intervals} of ${G.intervalLog.length}${G.intervalLog.length ? ` (${G.intervalLog.join(', ')} s run of ${SESSION.intervalS})` : ''}`],
       ...(G.fightsDone || fq.length ? [['Fights won', `${Fight.stats.won} of ${G.fightsDone}`], ['Punches landed', `${landed} of ${thrown}${clean < landed ? `, ${clean} clean` : ''}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
       ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []),
       ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`],
@@ -8650,7 +8890,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

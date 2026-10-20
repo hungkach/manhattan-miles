@@ -2,6 +2,18 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-19 PM session (30:10, 360 kcal; built 10/20)
+
+Mark: felt really good, great sweat. Notes and what was done:
+- No combat tutorial at the start, was surprised: "Gym round first" on the title, on by default.
+- Hooks and uppercuts registering at the fight's start, on slips and level changes: they no longer count while the body itself moves, in the first second, or from a hand that was not up by the guard.
+- Takedowns with no jump: engine 0.8.4, a jump needs 0.2 T (a hard drive up onto the toes reached the old 0.12).
+- Summary showed high knees intervals 0 of 3 with 1 to 2 s run each: engine 0.8.4 runs from 120 spm (tired high knees run 130 to 150) and a missed step does not end a run.
+- Fastest punch 22.9 S/s looked like a tracker spike: records use the median frame speed now.
+- Crime centers at every stop (done): themed, instanced, linear like a SNES beat 'em up, groups with a march break between them, a boss at the end.
+- Chases (done): optional (wave right within 4.5 s), auto-pathed along the runner's trail, obstacles as quick moves (bystander: bound, dog: jump, scaffold pipe: squat), a miss widens the gap.
+- Should chases end in a fight? Yes: catching them starts a short fight with the runner gassed (a snatch win returns the bag).
+
 ## 2026-10-19 late: quick additions (done)
 
 - Opponent and crowd comments during fights (bubbles, spoken when the voice is free).
