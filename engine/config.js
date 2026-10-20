@@ -68,9 +68,11 @@
       run: {
         lift: 0.35,     // peak knee lift (T) of a high-knee step
         pitch: 65,      // or peak thigh angle (degrees) of a high-knee step
-        cadence: 150,   // steps per minute between high-knee steps
+        // 0.8.4 (Mark 10/19: high knees intervals read as 1 or 2 s of running): tired high knees
+        // run 130 to 150 steps a minute, under the old 150; knee height is what makes it a run
+        cadence: 120,   // steps per minute between high-knee steps
         startSteps: 2,  // consecutive high-knee steps that start a run
-        exitMs: 600,    // run ends after this long with no high-knee step
+        exitMs: 800,    // run ends after this long with no high-knee step (was 600)
       },
       // Torso turn steering: yaw from (shoulder width / torso length) against
       // the calibrated ratio, direction from shoulder depth and the nose.
@@ -191,7 +193,7 @@
           rise: 0.2,       // T the level comes back up for a drive up
           driveMs: 400,    // within this long (spec: 0.35 T in 400 ms), however long the squat was held; a slow stand is not a drive
           holdFrac: 0.8,   // a squat counts as held while the level stays past this share of squat
-          jump: 0.12,      // T above standing that is a jump (hops off the floor)
+          jump: 0.2,       // T above standing that is a jump (a hop off the floor); 0.8.4: was 0.12, which a fast drive up onto the toes reached (Mark: takedowns with no jump)
         },
         fight: {
           jumpWaitMs: 300,   // after a drive up, how long a jump can still add to the shot

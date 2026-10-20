@@ -5,7 +5,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.8.3';
+  RE.version = '0.8.4';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.

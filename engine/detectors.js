@@ -163,6 +163,7 @@
         leg.peakPitch = 0;
         leg.peakLift = 0;
         leg.interval = t - this.lastStepAt;
+        leg.sameLeg = this.lastLeg === name;
         leg.lastStep = t;
         this.lastLeg = name;
         this.lastStepAt = t;
@@ -183,7 +184,9 @@
       this.heights.push(Math.max(leg.peakPitch / sc.refPitch, leg.peakLift / sc.refLift));
       if (this.heights.length > sc.steps) this.heights.shift();
       const high = leg.peakLift >= this.r.lift || leg.peakPitch >= this.r.pitch;
-      const fast = leg.interval <= 60000 / this.r.cadence;
+      // the same leg twice in a row means the camera missed the other leg's step in between
+      // (0.8.4): judge the pace from half the gap
+      const fast = (leg.sameLeg ? leg.interval / 2 : leg.interval) <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }
       this.highCount++;
       if (this.running) {
