@@ -648,7 +648,8 @@
     return null;
   }
   function pedTick(dt, now) {
-    if (Stage.on) { Peds.list.length = 0; Traffic.cars.length = 0; Vendors.list.length = 0; return; } // a crime center is cleared of street life
+    // a crime center is cleared of street life, and the gym has none
+    if (Stage.on || (Fight.active && Fight.active.tutor)) { Peds.list.length = 0; Traffic.cars.length = 0; Vendors.list.length = 0; return; }
     Peds.list = Peds.list.filter((p) => Math.hypot(p.x - P.x, p.z - P.z) < PED.drop);
     // fill up fast at first, then keep it topped up
     // how many: PED.max scaled by what the device keeps up with (Perf.crowd); over the cap, the
@@ -958,8 +959,8 @@
   // a hook, uppercut or overhand that should not count (camera play only)
   function gated(kind, hand, now) {
     if (isDemo() || !['hook', 'uppercut', 'overhand'].includes(kind)) return false;
-    const a = Fight.active, h = Fight.hand[hand];
-    return now < BM.until || (a && now - a.start < FT.gate.startQuietMs) || !h || now - (h.upAt || -Infinity) > FT.gate.fromGuardMs;
+    const a = Fight.active;
+    return now < BM.until || (a && now - a.start < FT.gate.startQuietMs);
   }
   // records in body units, kept across sessions (camera play only; touch buttons have no output)
   const REC = {
@@ -1251,8 +1252,8 @@
   const FT = {
     firstAhead: 32, // m: the first opponent waits about 10 marching steps ahead of the start (they walk to meet you)
     everyS: [40, 70], spawnAhead: 40, sees: 30, engage: 9,
-    // ranges (m): they drift between close and mid; a step back is out. Straights reach mid range,
-    // hooks and uppercuts only land close (`reach`, against the real distance)
+    // ranges (m): they drift between close and mid; a step back is out. Straights reach mid range;
+    // a hook or uppercut thrown past its `reach` steps you in to close range (10/21)
     rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
     reach: { jab: 2.6, cross: 2.6, hook: 1.85, overhand: 1.95, uppercut: 1.85 },
     hp: [12, 16], playerHp: 10,
@@ -1265,17 +1266,17 @@
     shift: { ms: [1000, 4000], bonus: 1.4, cooldownMs: 2500, angleDeg: 45 },
     upperLowHit: 2, // an uppercut that catches you level changing counts double
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
-    // the glove hitbox: a glove moving at least `speed` (shoulder widths a second), at least `reach`
-    // in front of your shoulders, that ends over their head or body on screen lands. One hit per
-    // punch: the hand re-arms once it comes back `rearm` from its furthest point. An engine strike
-    // from the same hand within pairMs is the same punch.
+    // punches: standing ones are the engine's strike events (engine 0.9.0 reads them from a set
+    // guard; 10/21 the glove hitbox stopped landing standing punches: waving read as hooks).
+    // Power from the fist's speed (shoulder widths a second, floor `speed`, cap `capSpeed`, the
+    // fastest over the last speedMs). On top, any fast extending punch is a down strike (gnp*).
+    // One hit per punch: a second report from the same hand within pairMs is the same punch.
     // 10/19 (Mark: hooks and uppercuts read at the fight's start, on slips and on level changes):
     // hooks, uppercuts and overhands do not count while the body itself is moving (slip faster
-    // than bodySlip a second, squat depth faster than bodyLevel a second, and bodyQuietMs after),
-    // in the first startQuietMs of a fight, or from a hand that was not up by the guard (wrist
-    // within guardBelow S under its shoulder) in the last fromGuardMs
-    gate: { bodySlip: 2, bodyLevel: 1, bodyQuietMs: 220, startQuietMs: 1000, guardBelow: 0.35, fromGuardMs: 700 },
-    hit: { capSpeed: 10, speed: 2.5, reach: 0.85, rearm: 0.35, pairMs: 450, body: 0.8, slop: 1.3, gnpSpeed: 2.0, gnpRearm: 1.0, gnpExtend: 1.2, upperFrom: 0.45, straightAngle: 150 },
+    // than bodySlip a second, squat depth faster than bodyLevel a second, and bodyQuietMs after)
+    // or in the first startQuietMs of a fight
+    gate: { bodySlip: 2, bodyLevel: 1, bodyQuietMs: 220, startQuietMs: 1000 },
+    hit: { capSpeed: 10, speed: 2.5, speedMs: 450, pairMs: 450, body: 0.8, gnpSpeed: 2.0, gnpRearm: 1.0, gnpExtend: 1.2 },
     // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
     // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
@@ -1307,7 +1308,10 @@
     // A miss is a stumble: stumbleK of your speed for stumbleMs. Within catchM you have them and
     // it is a fight (they are gassed: at most gassed of their health); past loseM or after ms they
     // are gone.
-    run: { offerMs: 4500, v: [8.4, 6.4], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.7, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
+    // 10/21 (Mark: runners too fast, the moves need time and should not cost your speed): while a
+    // prompt is up the chase runs in slow motion (slowK), your speed holds through the move, and a
+    // clean move keeps it boostK faster for boostMs after.
+    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: 1.15, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
     // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
     // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
     // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
@@ -1489,7 +1493,7 @@
   const rearOf = (h) => (h === 'left' ? 'right' : 'left');
   const tutorName = (kind, hand) => `${hand === Tutor.lead ? 'Lead' : 'Rear'} ${kind === 'jab' || kind === 'cross' ? 'straight' : kind}`;
   function startTutor(now) {
-    if (G.state !== 'walk' || Fight.active || Fight.chase || Phone.open || Subway.ride) return;
+    if (G.state !== 'walk' || Fight.active || Fight.chase || Phone.open || Subway.ride) return false;
     Tutor.saved = { foes: Fight.foes, people: Fight.people };
     const hx = Math.sin(P.yaw), hz = Math.cos(P.yaw);
     const foe = { x: P.x + hx * FT.rangeClose, z: P.z + hz * FT.rangeClose, hp: 1, maxHp: 1, state: 'pads', until: Infinity, kind: '', hurtUntil: 0, col: [70, 74, 86], turtle: 0, guardHp: FT.guard.hp };
@@ -1512,8 +1516,10 @@
     if (isDemo()) setTouchButtons('fight');
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', tutorial: true, camera: engine.camera() }); Tutor.recording = true; }
     document.body.classList.add('fighting');
+    Voice.q.length = 0; // nothing from the street follows you into the gym
     say('Welcome to the gym. Your partner holds pads. Every move twice, and watch your stick figure on the side.', 'instruction');
     tutorNext(now);
+    return true;
   }
   function tutorNext(now) {
     const cur = Tutor.steps[Tutor.i];
@@ -1539,13 +1545,6 @@
     Tutor.log.push({ step: st.id, ok, read: Tutor.lastRead, t: now, hand });
     if (ok) tutorCount(now);
     else fightMsg(`Read as ${Tutor.lastRead.toLowerCase()}`, 1000);
-  }
-  // the engine relabeled a glove hit: if that turns a miss into the move asked for, count it
-  function tutorFix(type, hand) {
-    const now = performance.now(), last = [...Tutor.log].reverse().find((l) => l.hand === hand);
-    if (!last || last.ok || now - last.t > FT.hit.pairMs) return;
-    Tutor.log.pop();
-    tutorHit(type, hand, now);
   }
   function tutorTick(now) {
     const st = Tutor.steps[Tutor.i];
@@ -1599,6 +1598,7 @@
     Fight.active = null;
     Fight.foes = Tutor.saved ? Tutor.saved.foes : []; Fight.people = Tutor.saved ? Tutor.saved.people : [];
     engine.set_facing((P.yaw * 180) / Math.PI);
+    if (G.afterGym) { G.afterGym = false; setTimeout(() => { if (G.state === 'walk') { sayRoute(true); if (!Fight.active && !Fight.foes.length) spawnFoes(FT.firstAhead); } }, 4500); } // out of the gym, onto the street
     if (isDemo()) setTouchButtons('walk');
     document.body.classList.remove('fighting', 'gym');
     if (Warm.overlay && Warm.overlay.visible) Warm.overlay.toggle();
@@ -1849,7 +1849,9 @@
     if (Q.fight) Q.fight.thrown++;
     if (kind !== 'down_strike' && a.range === 'out') { fightMsg('Out of range'); return; }
     // reach: hooks and uppercuts only land close; straights reach mid range
-    if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) { fightMsg({ hook: 'Too far for a hook', overhand: 'Too far for an overhand', uppercut: 'Too far for an uppercut' }[kind] || 'Out of range'); return; }
+    // 10/21 (Mark: hit detection felt way off): a hook or uppercut thrown from mid range steps you
+    // in behind it and lands, the way aiming is automatic; you cannot step in yourself in a fight
+    if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) a.range = 'close';
     if (kind === 'uppercut') where = 'body'; // uppercuts dig into the body
     if (kind === 'down_strike' && foe.state !== 'down') return;
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
@@ -1912,8 +1914,7 @@
       if (Math.random() < FT.fleeChance) { startChase(foe, now); return; }
     }
   }
-  // the engine's own punch classifier and the glove hitbox (gloveHits) both land punches; the
-  // first one to see a punch counts it and the other skips the same hand for FT.hit.pairMs
+  // one hit per punch: the same hand again within FT.hit.pairMs is the same punch
   const claim = (hand, now) => {
     const h = Fight.hand[hand];
     if (!h || now - h.last < FT.hit.pairMs) return false;
@@ -1926,16 +1927,12 @@
     Fight.fistFlash[e.hand] = now + 180;
     if (engine.combat().phase === 'top') return; // it comes back as a down_strike
     if (gated(e.type, e.hand, now)) return;
-    if (claim(e.hand, now)) {
-      const v = handSpeed(e.hand);
-      recNote('punch', v);
-      // the fist's own speed when the arm is tracked; touch buttons fall back to the engine's power
-      landed(e.type, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, (e.power - 0.5) / 1.0)), now, e.hand, null);
-      return;
-    }
-    // the glove hitbox got this punch first: the engine's classifier is stricter, so its kind wins
-    const h = Fight.hand[e.hand], pop = h && h.pop;
-    if (pop && now - pop.t < FT.hit.pairMs && h.lastKind !== e.type) { pop.text = pop.text.replace(/^\S+( strike)?/, KIND_NAME[e.type] || e.type); h.lastKind = e.type; if (Fight.active && Fight.active.tutor) tutorFix(e.type, e.hand); }
+    if (!claim(e.hand, now)) return;
+    // the fist's own top speed through the punch when the arm is tracked (the engine reports it as
+    // the fist slows); touch buttons fall back to the engine's power
+    const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
+    recNote('punch', v);
+    landed(e.type, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, (e.power - 0.5) / 1.0)), now, e.hand, null);
   });
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
   engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
@@ -2290,7 +2287,15 @@
     P.running = m.state === 'run';
     let v = Sticks.on ? Sticks.speed : m.speed * T.speedScale;
     if (P.running && v > 1) G.runMs += dt * 1000;
+    // a prompt is up: slow motion, and your speed holds while you make the move; a clean move
+    // carries you on faster for a moment
+    const po = c.prompt && !c.prompt.passed ? c.prompt : null;
+    if (po) v = Math.max(v, po.v0 || 0);
+    if (now < c.boostUntil) v = Math.max(v, c.boostV);
     if (now < c.stumbleUntil) v *= R.stumbleK;
+    c.slow = po && !po.done ? R.slowK : 1;
+    dt *= c.slow;
+    c.gameMs = (c.gameMs || 0) + dt * 1000;
     // the runner, and the trail they leave
     c.v = Math.max(R.v[1], c.v - R.tire * dt);
     fleeStep(c, f, dt);
@@ -2322,7 +2327,7 @@
     const o = c.obs.find((q) => !q.passed);
     if (o) {
       const d = o.s - c.sp, pace = Math.max(v, 4);
-      if (!o.promptAt && d <= pace * R.promptS) { o.promptAt = now; c.prompt = o; say(OBSTACLES[o.kind].big, 'confirm'); }
+      if (!o.promptAt && d <= pace * R.promptS) { o.promptAt = now; o.v0 = v; c.prompt = o; say(OBSTACLES[o.kind].big, 'confirm'); }
       if (d <= -pace * R.graceS || (o.done && d <= 0)) {
         o.passed = true; c.prompt = null;
         if (o.done) c.dodged++;
@@ -2344,7 +2349,7 @@
       startFight(now);
       return;
     }
-    if (gap > R.loseM || now - c.start > R.ms) {
+    if (gap > R.loseM || c.gameMs > R.ms) {
       chaseEnd(c, now, 'lost');
       Fight.stats.got_away++; Fight.stats.fled++; Fight.foes = [];
       say('He got away. Into the subway, probably.', 'feedback'); banner('Got away', 2000, now);
@@ -2357,6 +2362,7 @@
     if (!c || c.mode !== 'run' || !c.prompt || c.prompt.done) return;
     if (OBSTACLES[c.prompt.kind].ev !== ev) return;
     c.prompt.done = true;
+    c.boostUntil = performance.now() + FT.run.boostMs; c.boostV = (c.prompt.v0 || 0) * FT.run.boostK;
     clack(); // the prompt turns green and says so
   }
   engine.on('bound', () => chaseMove('bound'));
@@ -2542,6 +2548,13 @@
     Stage.phase = 'march';
     say(boss ? `Group cleared. The boss is up the street: ${T0.boss}. March.` : `Group ${Stage.group} of ${Stage.sizes.length} cleared. March to the next one.`, 'confirm');
     banner(boss ? `Boss ahead: ${T0.boss}` : `Group ${Stage.group} of ${Stage.sizes.length} cleared`, 2500, now);
+  }
+  // the waypoint (Mark 10/20): the stage path from you to the next group, for the route ribbon
+  function stagePoints() {
+    const pts = [];
+    for (let s = Stage.sp; s < Stage.spot; s += 2) pts.push(trailAt(Stage, s));
+    pts.push(trailAt(Stage, Stage.spot));
+    return pts;
   }
   function leaveStage(now) {
     if (!Stage.on) return;
@@ -3161,6 +3174,12 @@
     const st = hurt ? Object.assign({}, f.style, { top: shirt }) : f.style;
     bodyPrims(list, c, st, extraJoints(f, fr, j), 0);
     drawPrims(list);
+    // the next group's lead, while you march to them: a marker over their head
+    if (Stage.on && !Fight.active && f === current() && c.head.z > NEAR3) {
+      const q = projC({ x: c.head.x, y: c.head.y + 0.55 + Math.sin(now / 220) * 0.06, z: c.head.z }, F), r = Math.max(9, Math.min(22, 0.18 * q.s));
+      ctx.fillStyle = '#ff6046'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(q.x - r, q.y - r * 1.2); ctx.lineTo(q.x + r, q.y - r * 1.2); ctx.lineTo(q.x, q.y); ctx.closePath(); ctx.stroke(); ctx.fill();
+    }
     if (f.name && c.head.z > NEAR3 && !(now < (f.sayUntil || 0))) {
       const q = projC({ x: c.head.x, y: c.head.y + 0.3, z: c.head.z }, F);
       ctx.font = `800 ${Math.round(14 * Ui.u)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.fillStyle = '#ffcf3f';
@@ -3329,20 +3348,16 @@
     if (!a) return;
     const foe = a.foe, c = FT.hit;
     const top = engine.combat().phase === 'top';
-    if (!top && !foe.hit) return;
     for (const side of ['left', 'right']) {
       const h = Fight.hand[side], q = arms[side] && arms[side].wrist;
       if (!q) { h.hist = []; continue; }
       const sh = arms[side].shoulder;
       h.hist.push({ t: now, x: q.x, y: q.y, z: q.z, r: Math.hypot(q.x - sh.x, q.y - sh.y, q.z - sh.z) });
       while (h.hist.length > 2 && now - h.hist[0].t > 120) h.hist.shift();
-      // where the fist has been over the last 400 ms, against its shoulder (an uppercut starts low)
-      h.low = (h.low || []).filter((p) => now - p.t < 400);
-      h.low.push({ t: now, dy: q.y - sh.y });
-      if (q.y - sh.y >= -FT.gate.guardBelow) h.upAt = now; // up by the guard (FT.gate)
-      // re-arm once the fist comes back from its furthest point
-      if (h.armed) h.peak = q.z;
-      else { h.peak = Math.max(h.peak, q.z); if (h.peak - q.z >= c.rearm && now - h.last >= 200) { h.armed = true; h.peak = q.z; } }
+      // the fist's speed (median of frames, see handSpeed), kept for speedMs: a punch's power is
+      // its fastest point, and the engine reports the punch as it slows
+      h.sp = (h.sp || []).filter((p) => now - p.t <= FT.hit.speedMs);
+      h.sp.push({ t: now, v: handSpeed(side) });
       const f0 = h.hist[0], dt = (now - f0.t) / 1000;
       if (dt < 0.04) continue;
       const vx = (q.x - f0.x) / dt, vy = (q.y - f0.y) / dt, vz = (q.z - f0.z) / dt;
@@ -3361,32 +3376,8 @@
         }
         continue;
       }
-      if (!h.armed || !h.scr || q.z < c.reach) continue;
-      if (speed < c.speed || vz < -0.5) continue;
-      const g = h.scr, slop = c.slop;
-      const onHead = !top && Math.hypot(g.x - foe.hit.head.x, g.y - foe.hit.head.y) <= foe.hit.head.r * slop + g.r * 0.6;
-      const onBody = foe.hit.torso.some((t) => segDist(g, t.a, t.b) <= t.r * slop + g.r * 0.6);
-      if (!onHead && !onBody) continue;
-      // the punch's kind from how it moved. 10/16: jabs and crosses read as uppercuts (a straight
-      // thrown from the face rises a little, and its depth is squashed), so an uppercut now has to
-      // come up from below the shoulder with a bent elbow; anything else that is not a sideways
-      // swing is a straight
-      const el = arms[side].elbow, ang = el ? angleAt(sh, el, q) : 180;
-      const fromLow = Math.min(...h.low.map((p) => p.dy)) <= -c.upperFrom;
-      let kind;
-      if (top) kind = 'down_strike';
-      else if (Math.abs(vx) > Math.max(vz, Math.abs(vy)) * 0.9 && ang < c.straightAngle) kind = 'hook';
-      else if (vy > Math.max(vz, 0) * 1.2 && fromLow && ang < c.straightAngle) kind = 'uppercut';
-      else kind = side === (engine.signals().stance === 'southpaw' ? 'right' : 'left') ? 'jab' : 'cross';
-      if (kind === 'hook' && side !== (engine.signals().stance === 'southpaw' ? 'right' : 'left')) kind = 'overhand'; // the rear hook
-      if (gated(kind, side, now)) { h.armed = false; continue; } // the body moved, not the fist (FT.gate)
-      if (!claim(side, now)) continue;
-      Fight.stats.glove++;
-      Fight.fistFlash[side] = now + 180;
-      const power = punchPower(speed);
-      recNote('punch', handSpeed(side));
-      h.lastKind = kind;
-      landed(kind, power, now, side, onHead ? 'head' : 'body');
+      // standing punches come from the engine's strike events only (10/21, Mark 10/20: waving the
+      // arms read as hooks through this glove hitbox; engine 0.9.0 reads punches from a set guard)
     }
   }
 
@@ -3426,7 +3417,7 @@
     const s = engine.signals();
     const phase = engine.combat().phase;
     const close = foeDist(a.foe) <= FT.reach.hook;
-    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'Out of range' : close ? 'Close: hooks land' : 'Mid range: straights';
+    const tag = phase === 'top' ? 'Ground and pound: strike down' : a.range === 'out' ? 'They stepped back' : close ? 'Close' : 'Mid range';
     // their guard, while it is worn down
     const gh = a.foe.guardHp ?? FT.guard.hp, gmax = a.foe.guardMax || FT.guard.hp;
     if (!a.tutor) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / gmax), a.foe.state === 'broken' ? '#ff5a4f' : '#9fb4c8', a.foe.state === 'broken' ? 'Open!' : 'Their guard');
@@ -3889,8 +3880,7 @@
     Nav.poly = { r, pts };
     return pts;
   }
-  function drawRoute() {
-    const pts = routePoints();
+  function drawRoute(pts = routePoints(), rgb = '47, 155, 255') {
     if (!pts || pts.length < 2) return;
     // start from the nearest point on the path
     let bi = 0, bd = Infinity, bp = pts[0];
@@ -3909,7 +3899,7 @@
       const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L, nx = uz, nz = -ux;
       const fade = Math.max(0.15, 1 - run / ROUTE_M);
       const pr = project([toCam(a.x + nx * hw, y, a.z + nz * hw), toCam(b.x + nx * hw, y, b.z + nz * hw), toCam(b.x - nx * hw, y, b.z - nz * hw), toCam(a.x - nx * hw, y, a.z - nz * hw)]);
-      if (pr) fillPoly(pr, `rgba(47, 155, 255, ${0.6 * fade})`);
+      if (pr) fillPoly(pr, `rgba(${rgb}, ${0.6 * fade})`);
       // chevrons every 9 m
       while (nextChev < run + L) {
         const t = nextChev - run, cx = a.x + ux * t, cz = a.z + uz * t;
@@ -4300,7 +4290,7 @@
       const D = T.drawDistance;
       drawGround(D);
       drawStreets(Math.min(D, 380));
-      if (G.state === 'walk' && !Fight.active && !Fight.chase) drawRoute();
+      if (G.state === 'walk' && !Fight.active && !Fight.chase) { if (Stage.on) drawRoute(stagePoints(), '255, 96, 70'); else drawRoute(); }
       const faces = [];
       Facade.budget = HIGH ? 1400 : 500;
       buildingFaces(faces, D);
@@ -4419,7 +4409,8 @@
         big(c.why === 'snatch' ? 'Stop that thief?' : 'He is running', H * 0.3, 28, '#ff7a3d');
         big(`Wave right to chase \u00b7 ${Math.max(0, Math.ceil((c.until - now) / 1000))}`, H * 0.3 + 32, 18, '#fff');
       } else {
-        const gap = trailLen(c) - c.sp, left = Math.max(0, Math.ceil((FT.run.ms - (now - c.start)) / 1000));
+        const gap = trailLen(c) - c.sp, left = Math.max(0, Math.ceil((FT.run.ms - (c.gameMs || 0)) / 1000));
+        if (c.slow < 1) { ctx.fillStyle = 'rgba(40, 70, 140, .22)'; ctx.fillRect(0, 0, W, H); }
         big(`${Math.round(gap)} m`, H * 0.24, 30, '#ff7a3d');
         big(P.running ? `${left} s` : `${left} s \u00b7 high knees`, H * 0.24 + 28, 16, '#fff');
         const o = c.prompt;
@@ -4512,7 +4503,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-20 PM \u00b7 crime centers at every stop, chases you choose';
+  const BUILD = '2026-10-21 \u00b7 engine 0.9.0 punch reading, gym on its own, waypoints, slow-motion chases';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -4567,12 +4558,14 @@
     Object.assign(Fight, { people: [], foes: [], active: null, chase: null, tutorDone: false, waitS: FT.everyS[0], stats: freshStats(), hp: FT.playerHp, pov: { lat: 0, dy: 0, fwd: 0, roll: 0 } });
     if (engine.mode() === 'combat') engine.exit_combat();
     planRoute();
-    sayRoute(true);
-    spawnFoes(FT.firstAhead);
-    hum(true);
     // camera walks start with the gym round (the combat tutorial) after the warm-up, unless
-    // "Gym round first" is off (Mark 10/19: expected his sparring partner at the start)
-    if (!isDemo() && ($('gymFirst').checked || !tutorDoneBefore())) setTimeout(() => startTutor(performance.now()), 300);
+    // "Gym round first" is off (Mark 10/19: expected his sparring partner at the start). The gym
+    // is its own place (Mark 10/20: the first stop's directions played over it): the route and
+    // the first encounter wait until it is over (endTutor)
+    G.afterGym = !isDemo() && ($('gymFirst').checked || !tutorDoneBefore());
+    if (G.afterGym) setTimeout(() => { if (!startTutor(performance.now()) && G.afterGym) { G.afterGym = false; sayRoute(true); spawnFoes(FT.firstAhead); } }, 300);
+    else { sayRoute(true); spawnFoes(FT.firstAhead); }
+    hum(true);
     show(null);
     $('endBtn').hidden = false;
     $('phoneBtn').hidden = false;

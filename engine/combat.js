@@ -118,102 +118,136 @@
     }
   }
 
-  // Strikes, per hand, from the arm pose over the last few hundred ms:
-  //   straight  the elbow snaps from bent to straight with the fist going
-  //             toward the camera: jab with the lead hand, cross with the rear
-  //   hook      bent elbow, fist sweeping inward at shoulder height
-  //   uppercut  bent elbow, fist driving up from below the shoulder
-  //   down      from a crouch, the elbow straightens with the fist going down
-  // A hand must have been at the guard just before (fighters punch from the
-  // guard), so marching arm swing or pumping arms on high knees never strike.
+  // Strikes, per hand (0.9.0, Mark 10/20: the warm-up missed hooks and uppercuts, and waving
+  // the arms back and forth threw hooks; "just guess from the movement"). A punch is a fast move
+  // out from a set hand toward the camera (where the opponent is), judged where it ends:
+  //   set       the hand was up in front (wrist no lower than setBelow under its shoulder,
+  //             within setWide of the body's middle, elbow bent under setAngle) and still
+  //             (under stillSpeed) for setMs, and the move began within setWithinMs of that.
+  //             Waving or flailing never holds still, so it never starts a punch.
+  //   the move  fist speed past minSpeed and setTravel from where it was set; it is judged at
+  //             its far end (the fist stops getting farther, or slows under stopSpeed), which
+  //             has to be frontMin in front of its shoulder.
+  //   straight  the elbow ends straight (straightOn) with the fist fwdGain nearer the camera:
+  //             jab with the lead hand, cross with the rear
+  //   uppercut  from its lowest point the fist rose upperRise, mostly upward (upperShare),
+  //             ending no lower than upperTo under the shoulder
+  //   hook      the fist swept inward hookTravel (torso frame) from its outermost point, the
+  //             elbow still bent (hookAngle); from the rear hand it is the overhand (0.8.0)
+  //   guess     anything else that went toward the camera (fwdGuess) is a straight
+  //   down      from a crouch, the fist driving down (downBelow, downSpeed)
   // Power is peak fist speed over refSpeed, clamped 0.5 to 1.5 (spec).
   class StrikeDetector {
     constructor(cfg) {
       this.c = cfg.combat.strike;
-      this.hands = { left: { hist: [], last: -Infinity, lastStraight: -Infinity, armed: true }, right: { hist: [], last: -Infinity, lastStraight: -Infinity, armed: true } };
+      const hand = () => ({ hist: [], last: -Infinity, setAt: -Infinity, stillSince: null, prev: null, live: false });
+      this.hands = { left: hand(), right: hand() };
     }
     update(ctx, out) {
       const t = ctx.t;
       const arms = out.arms;
       if (!arms) return;
       const sw = arms.unitM;
+      const c = scaled(this.c, out.armScale || 1);
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand];
         const a = arms[hand];
         const p = a.wrist;
         const q = arms.torso[hand];
-        // camera frame (x, y, z) for straights; torso frame (tx) for hooks
-        h.hist.push({ t, near: out.handNearAt[hand] === t, angle: a.angle, x: p.x * sw, y: (p.y - a.shoulder.y) * sw, z: (p.z - a.shoulder.z) * sw, tx: q.wrist.x * sw, tz: (q.wrist.z - q.shoulder.z) * sw });
-        while (h.hist.length && t - h.hist[0].t > this.c.windowMs) h.hist.shift();
-        if (a.angle < this.c.rearm) h.armed = true;
-        if (h.hist.length < 3 || t - h.last < this.c.refractoryMs) continue;
-        if (ctx.upperLow) continue;
-        let type = this.classify(ctx, hand, a, h.hist, out);
-        if (!type) continue;
-        // 0.8.0 (Mark): a hook from the rear hand is the overhand
-        if (type === 'hook' && this.c.overhand && hand === (out.stance === 'southpaw' ? 'left' : 'right')) type = 'overhand';
-        h.last = t;
-        if (type === 'jab' || type === 'cross' || type === 'down') { h.armed = false; h.lastStraight = t; }
-        const speed = this.peakSpeed(h.hist);
-        out.events.push(['strike', { hand, type, power: RE.clamp(speed / this.c.refSpeed, 0.5, 1.5), speed }]);
-      }
-    }
-
-    peakSpeed(hist) {
-      let best = 0;
-      for (let i = 1; i < hist.length; i++) {
-        const a = hist[i - 1], b = hist[i];
-        const dt = (b.t - a.t) / 1000;
-        if (dt > 0) best = Math.max(best, Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) / dt);
-      }
-      return best;
-    }
-
-    classify(ctx, hand, a, hist, out) {
-      // distances and speeds in meters scale with the player's arm length (0.6.1:
-      // a smaller player's hook travels less and slower in meters)
-      const c = scaled(this.c, out.armScale || 1);
-      const now = hist[hist.length - 1];
-      const first = hist[0];
-      const minAngle = Math.min(...hist.map((s) => s.angle));
-      const inward = hand === 'left' ? 1 : -1; // inward is toward the player's right for the left hand
-      // thrown from the guard: the hand was at the guard when this motion began
-      // (raising the hands into a guard ends there, it does not start there)
-      const fromGuard = hist.some((s) => s.near && now.t - s.t >= c.guardLeadMs);
-      // velocity over the last ~100 ms
-      let back = hist.length - 1;
-      while (back > 0 && now.t - hist[back].t < c.velMs) back--;
-      const v0 = hist[back];
-      const dt = (now.t - v0.t) / 1000 || 1;
-      const vx = (now.tx - v0.tx) / dt, vy = (now.y - v0.y) / dt;
-      const vArc = Math.hypot(now.tx - v0.tx, now.tz - v0.tz) / dt; // a hook travels an arc in the horizontal plane
-      const lowStance = (ctx.sig.levelDrop != null ? ctx.sig.levelDrop : ctx.sig.hipDrop) >= c.downDrop;
-
-      if (a.angle >= c.straightOn && minAngle <= c.bentMax && this.hands[hand].armed) {
-        const fwdGain = now.z - Math.min(...hist.map((s) => s.z));
-        if (lowStance && now.y <= -c.downBelow && vy <= -c.downSpeed) return 'down';
-        if (!fromGuard) return null;
-        if (now.z >= c.reach * armLen(a, out.arms.unitM) && fwdGain >= c.fwdGain && now.z > Math.abs(now.x - first.x) && now.y > -c.downBelow) {
-          const lead = out.stance === 'southpaw' ? 'right' : 'left';
-          return hand === lead ? 'jab' : 'cross';
+        // camera frame (x from the body's middle, y and z from its own shoulder) and torso frame (tx, tz)
+        const s = { t, angle: a.angle, x: p.x * sw, y: (p.y - a.shoulder.y) * sw, z: (p.z - a.shoulder.z) * sw, tx: q.wrist.x * sw, tz: (q.wrist.z - q.shoulder.z) * sw, ey: (a.elbow.y - a.shoulder.y) * sw };
+        s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
+        h.prev = s;
+        h.hist.push(s);
+        while (h.hist.length && t - h.hist[0].t > c.windowMs) h.hist.shift();
+        if (ctx.upperLow) { h.stillSince = null; h.live = false; continue; }
+        // a set hand: a guard (fist up in front, elbow down and bent) held still; after a punch,
+        // coming back to where it was set is enough (combos: a double jab rests about 50 ms)
+        const set = s.y >= -c.setBelow && Math.abs(s.x) <= c.setWide && s.angle <= c.setAngle && s.ey <= -c.elbowDown;
+        const back = h.after && !h.live && t - h.last >= c.refractoryMs && Math.hypot(s.x - h.after.x, s.y - h.after.y, s.z - h.after.z) <= c.setReturn && s.v < 2 * c.stillSpeed;
+        if (set && back) { h.setAt = t; h.set = s; h.after = null; h.stillSince = null; continue; }
+        if (set && s.v < c.stillSpeed) {
+          if (h.stillSince === null) h.stillSince = t;
+          if (t - h.stillSince >= c.setMs) {
+            // back at the guard: a move that never qualified can still be a straight (the guess)
+            if (h.live) this.finish(ctx, hand, h, out, c, true);
+            h.setAt = t; h.set = s; h.live = false;
+          }
+          continue;
         }
-        return null;
+        h.stillSince = null;
+        if (t - h.last < c.refractoryMs) continue;
+        if (!h.live) {
+          // a move begins: out from where the hand was set, soon after
+          if (t - h.setAt > c.setWithinMs) continue;
+          if (Math.hypot(s.x - h.set.x, s.y - h.set.y, s.z - h.set.z) < c.setTravel) continue;
+          h.live = true; h.from = h.setAt;
+        }
+        // the hands dropped (to the sides, or to start waving): not a punch
+        if (s.y < -c.upperLowest) { h.live = false; h.setAt = -Infinity; continue; }
+        // judge each kind as its shape completes and the fist slows down; give up after windowMs
+        if (t - h.from > c.windowMs) { this.finish(ctx, hand, h, out, c, true); continue; }
+        const path = h.hist.filter((x) => x.t >= h.from);
+        const peakV = Math.max(...path.map((x) => x.v));
+        if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false);
       }
-      if (!fromGuard || a.angle > c.bentMax2 || ctx.t - this.hands[hand].lastStraight < c.afterStraightMs) return null;
-      // a hook swings with the elbow up and out to the side; raising the guard
-      // or pulling a punch back keeps the elbow down or in front
-      const elbowUp = (a.elbow.y - a.shoulder.y) * out.arms.unitM >= -c.hookElbow;
-      const ta = out.arms.torso[hand];
-      const elbowOut = inward * (ta.shoulder.x - ta.elbow.x) * out.arms.unitM >= c.hookElbowOut;
-      if (elbowUp && elbowOut && Math.abs(now.y) <= c.hookHeight && now.tz >= c.hookFront && inward * vx > 0 && vArc >= c.hookSpeed && inward * now.tx - Math.min(...hist.map((q) => inward * q.tx)) >= c.hookTravel) return 'hook';
-      const lowest = Math.min(...hist.map((s) => s.y));
-      if (vy >= c.upperSpeed && lowest <= -c.upperFrom && now.y >= -c.upperTo && now.z >= c.hookFront) return 'uppercut';
+    }
+    // judge the move so far; guess: also call anything else thrown at the camera a straight
+    finish(ctx, hand, h, out, c, guess) {
+      const path = h.hist.filter((x) => x.t >= h.from);
+      const peakV = Math.max(0, ...path.map((x) => x.v));
+      let type = peakV >= c.minSpeed ? this.classify(ctx, hand, [h.set, ...path], out, c, guess) : null;
+      if (!type) { if (guess) h.live = false; return; }
+      h.live = false;
+      h.last = ctx.t;
+      h.after = h.set; // where it was set: coming back there re-arms it
+      h.setAt = -Infinity;
+      // 0.8.0 (Mark): a hook from the rear hand is the overhand
+      if (type === 'hook' && this.c.overhand && hand === (out.stance === 'southpaw' ? 'left' : 'right')) type = 'overhand';
+      out.events.push(['strike', { hand, type, power: RE.clamp(peakV / this.c.refSpeed, 0.5, 1.5), speed: peakV }]);
+    }
+
+    classify(ctx, hand, path, out, c, guess) {
+      const s0 = path[0], end = path[path.length - 1];
+      const lowStance = (ctx.sig.levelDrop != null ? ctx.sig.levelDrop : ctx.sig.hipDrop) >= c.downDrop;
+      const maxZ = Math.max(...path.map((x) => x.z));
+      if (lowStance && end.y <= -c.downBelow && s0.y - end.y >= c.downTravel) return 'down';
+      // it has to go toward the opponent: waving and raising the hands stay beside the body
+      if (maxZ < c.frontMin) return null;
+      const lead = out.stance === 'southpaw' ? 'right' : 'left';
+      const straight = hand === lead ? 'jab' : 'cross';
+      // an uppercut dips, then rises from its lowest point, mostly upward, ending up by the chin
+      let bestRise = 0, upEnd = null;
+      for (let i = 1; i < path.length; i++) {
+        let low = path[0];
+        for (let k = 0; k < i; k++) if (path[k].y < low.y) low = path[k];
+        const x = path[i], rise = x.y - low.y, across = Math.hypot(x.x - low.x, x.z - low.z);
+        const dip = path[0].y - low.y >= c.upperDip && low.y >= -c.upperLowest && low.angle <= c.straightOn + 10; // a bent-arm dip, not a hanging arm
+        if (rise > bestRise && rise >= c.upperShare * across && x.y >= -c.upperTo && dip) { bestRise = rise; upEnd = x; }
+      }
+      if (bestRise >= c.upperRise && upEnd.angle <= c.hookAngle) return 'uppercut';
+      // a straight: the elbow opened up with the fist going at the camera
+      const ext = path.reduce((m, x) => (x.angle > m.angle ? x : m), s0);
+      if (ext.angle >= c.straightOn && ext.z - s0.z >= c.fwdGain && (ext.y >= -c.straightBelow || guess)) return straight; // a low one waits: it may be an uppercut's dip
+      // a hook sweeps inward (the player's right for the left hand) from its outermost point
+      const inward = hand === 'left' ? 1 : -1;
+      let sweep = 0, outmost = path[0];
+      // (wound out at hook height with the elbow bent: a dropped arm swinging back up is not a hook)
+      const atHeight = (x) => Math.abs(x.y) <= c.hookHeight && x.angle <= c.hookAngle;
+      for (const x of path) {
+        if (atHeight(x) && inward * x.tx < inward * outmost.tx) outmost = x;
+        const d = inward * (x.tx - outmost.tx);
+        if (d > sweep && atHeight(x) && x.tz >= c.hookFront) sweep = d;
+      }
+      if (sweep >= c.hookTravel) return 'hook';
+      // anything else thrown at the camera: call it a straight, once the hand is back
+      if (guess && maxZ - s0.z >= c.fwdGuess) return straight;
       return null;
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
   // smaller thresholds); angles and times stay as they are
-  const METERS = ['reach', 'fwdGain', 'hookHeight', 'hookFront', 'hookSpeed', 'hookTravel', 'hookElbow', 'hookElbowOut', 'upperSpeed', 'upperFrom', 'upperTo', 'downBelow', 'downSpeed'];
+  const METERS = ['setBelow', 'setWide', 'setReturn', 'elbowDown', 'stillSpeed', 'setTravel', 'minSpeed', 'frontMin', 'fwdGain', 'straightBelow', 'fwdGuess', 'upperRise', 'upperDip', 'upperLowest', 'upperTo', 'hookTravel', 'hookHeight', 'hookFront', 'downBelow', 'downTravel', 'downSpeed'];
   const scaledCache = new Map();
   function scaled(c, k) {
     if (k === 1) return c;

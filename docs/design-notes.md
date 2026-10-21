@@ -2,6 +2,15 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-20 PM session (30:01, 386 kcal; built 10/21)
+
+Mark: fun workout like yesterday, a fan of the increased fighting. Loves the level change bar. Main ask: improve the combat.
+- Gym sequence bugged, the first stop's instructions played over it; it should be instanced: done (the route and first encounter wait for the gym to end, nothing from the street follows you in).
+- Crime dens need a waypoint to the next group: done (route ribbon and a marker over the group's lead).
+- Hit detection way off: the warm-up missed hooks and uppercuts, and waving the arms back and forth counted as hooks and overhands. "Perhaps it doesn't need to read the situation perfectly? Just guess based on the movement?" Done in engine 0.9.0: a punch is a fast move out from a set guard toward the camera, judged where it ends, with a guess (a straight) for anything else thrown at the camera; waving never sets the hand, so it never punches. The game stopped landing standing punches through the glove hitbox. Hooks and uppercuts thrown from mid range step you in instead of whiffing.
+- Chases highly difficult, runners fast; QTEs should be slow motion with time to act, keep your speed for about 1.5 s after, maybe a speed bonus: done (slow motion about 3 s per prompt, speed held through the move, 15% faster for 1.5 s after a clean one, slower runners).
+- Next: a real camera clip of the gym round (saved from the summary) would let the punch reading be tuned on real data instead of synthetic clips.
+
 ## 2026-10-19 PM session (30:10, 360 kcal; built 10/20)
 
 Mark: felt really good, great sweat. Notes and what was done:

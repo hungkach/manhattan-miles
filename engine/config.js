@@ -138,28 +138,38 @@
           holdMs: 500,
         },
         strike: {
-          windowMs: 350,     // history a strike is judged over
-          velMs: 100,        // velocity over this long
+          // 0.9.0: a fast move out from a set hand toward the camera, judged where it ends
+          // (StrikeDetector in combat.js). Meters and m/s scale with arm length (armScale).
+          windowMs: 600,     // a move is given up (or guessed) after this long
           refractoryMs: 200, // per hand (spec: 200 ms jab/cross)
-          guardLeadMs: 120,  // the hand was at the guard at least this long before the strike fires (within the window)
-          rearm: 130,        // degrees: after a straight the elbow must bend below this again
-          straightOn: 150,   // degrees: straight punch ends with the elbow this straight
-          bentMax: 115,      // degrees: having been this bent inside the window
-          reach: 0.5,        // fist in front of its shoulder by this share of arm length
-          fwdGain: 0.15,     // m the fist travelled toward the camera inside the window
-          bentMax2: 135,     // degrees: hooks and uppercuts keep the elbow bent
-          hookHeight: 0.3,   // m from shoulder height
-          hookFront: 0.1,    // m in front of the shoulder
-          hookSpeed: 1.8,    // m/s along the arc, sweeping inward
-          hookTravel: 0.15,  // m inward inside the window
-          hookElbow: 0.15,   // m: the elbow no lower than this under the shoulder
-          hookElbowOut: 0.05, // m: and out to the side of it
-          afterStraightMs: 400, // no hook or uppercut from a hand pulling a straight back
-          upperSpeed: 2.0,   // m/s upward
-          upperFrom: 0.25,   // m below the shoulder at the start
-          upperTo: 0.15,     // m below the shoulder or higher at the end
+          setBelow: 0.3,     // m: a set hand's wrist no lower than this under its shoulder
+          setWide: 0.4,      // m: and within this of the body's middle (not out to the side)
+          setAngle: 130,     // degrees: and the elbow bent at least this much
+          elbowDown: 0.12,   // m: with the elbow this far under its shoulder (a guard, not an arm swing)
+          stillSpeed: 0.6,   // m/s: and still
+          setMs: 70,         // for this long
+          setWithinMs: 400,  // the punch starts within this long of the hand being set
+          setReturn: 0.08,   // m: after a punch, back within this of where it was set (and slowing, under 2x stillSpeed) is set again
+          setTravel: 0.15,   // m the fist moves from where it was set
+          minSpeed: 1.6,     // m/s peak fist speed
+          stopFrac: 0.35,    // a kind is judged when the fist slows under this share of its peak speed
+          frontMin: 0.12,    // m: the far end is at least this far in front of its shoulder
+          straightOn: 145,   // degrees: a straight ends with the elbow this straight
+          fwdGain: 0.12,     // m nearer the camera than where it was set
+          straightBelow: 0.15, // m: a straight lower than this under the shoulder is judged when the hand comes back
+          upperRise: 0.12,   // m an uppercut rises from its lowest point
+          upperShare: 0.75,  // mostly upward
+          upperDip: 0.06,    // m: after dipping at least this far under where it was set, elbow bent
+          upperLowest: 0.45, // m: but no lower than this under the shoulder (a hanging arm raised is not an uppercut)
+          upperTo: 0.2,      // m: ending no lower than this under the shoulder
+          hookTravel: 0.1,   // m a hook sweeps inward from its outermost point
+          hookAngle: 150,    // degrees: hooks and uppercuts keep the elbow bent under this
+          hookFront: 0.05,   // m in front of the shoulder (torso frame)
+          hookHeight: 0.3,   // m: a hook stays within this of shoulder height
+          fwdGuess: 0.1,     // m toward the camera: anything else thrown this far is a straight
           downDrop: 0.15,    // T hip drop: crouched, for down strikes
           downBelow: 0.3,    // m below the shoulder
+          downTravel: 0.15,  // m down from where it was set
           downSpeed: 1.2,    // m/s downward
           refSpeed: 5,       // m/s of fist speed that is power 1
           overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
