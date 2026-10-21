@@ -2,6 +2,19 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-21 PM session (30:25, 339 kcal; built 10/22)
+
+Mark: combat unplayable this session, rotational punches not registering. "We should mocap players during the gym tutorial, then that becomes their move: the coach teaches you how to throw a strike, the system captures it, and that's how it reads it." The combat needs to be perfected, not fine tuned.
+- Done (engine 0.10.0): the gym teaches the engine your guard and three reps of each punch; your punches are read against your own samples from then on; the rules only read what was never taught. Synthetic tests: a low, tired guard reads nothing by the rules and everything once taught; a wide hook the rules call a straight reads as a hook once taught; waving still throws nothing.
+- Sidestep a takedown (a bound during their shot): done; the shot misses and a hook from that side lands double.
+- The AI reads head movement and level so the player can bait them: done for skilled types (slip twice and a boxer throws the hook; drop your level and readers throw the uppercut, stand back up and it misses for a counter; wrestlers shoot when you stand tall up close).
+- Opponent types: done (thugs most of the time; boxers, wrestlers, tweakers, roidheads, turtles; bosses their own).
+- Knees and kicks, the plan (engine first, then the game; knees-up framing means the feet are often out of view, so each reads from the knee and hips):
+  - Knee (first): in a fight, one fast knee drive (a single high knee, not a march rhythm) is 'knee'. Counters a shot the way an uppercut does, and lands to the body.
+  - Rear low kick (second): the rear knee swings across with the hips turning. Slows them (longer wind-ups) and stops a beaten opponent from running.
+  - Lead teep (third): the lead knee lifts then thrusts toward the camera. Pushes them out of range, drops one mid wind-up (a tag switch in pairs), tops up your guard bar.
+  - Each gets a synthetic leg move and tests in body-arcade, and joins the gym so it is taught like the punches.
+
 ## 2026-10-20 PM session (30:01, 386 kcal; built 10/21)
 
 Mark: fun workout like yesterday, a fan of the increased fighting. Loves the level change bar. Main ask: improve the combat.

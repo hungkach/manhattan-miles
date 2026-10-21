@@ -63,6 +63,8 @@
       if (st.mode === 'combat') for (const [n, p] of st.combat.onEvent(name, payload, clock())) emitter.emit(n, p);
     });
 
+    const strikeDet = () => st.detectors && st.detectors.list && st.detectors.list.find((d) => d.isStrike);
+
     // fight state machine tick: shot timeouts, scrambles, escape
     function combatTick(t) {
       if (st.mode !== 'combat') return;
@@ -135,7 +137,7 @@
       if (st.source !== 'demo') {
         // gesture detectors, then the state machine reads their events
         st.det = st.cal && points
-          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold })
+          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold, teach: st.teach })
           : null;
         if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
@@ -195,6 +197,9 @@
         // keep thresholds tuned in an earlier warm-up for this setup
         const prev = RE.profiles.load(st.presetId, cal.orientation);
         if (prev && prev.cues && !cal.cues) cal.cues = prev.cues;
+        // and the punches and guard taught in an earlier gym session (0.10.0)
+        if (prev && prev.strikes && !cal.strikes) cal.strikes = prev.strikes;
+        if (prev && prev.guardPos && !cal.guardPos) cal.guardPos = prev.guardPos;
         RE.profiles.save(cal);
         st.calibrator = null;
         if (st.cal !== cal) setCal(cal);
@@ -369,6 +374,42 @@
           RE.profiles.save(st.cal);
         }
         return { seen: { step: seen }, cues };
+      },
+      // Taught strikes (0.10.0): the gym teaches each punch and the engine reads that player's
+      // punches from their own samples (see StrikeDetector in combat.js).
+      //   engine.teach_guard()               while the guard is held: learn where the hands rest
+      //   engine.teach_strike(role, hand)    role 'straight' | 'hook' | 'uppercut'; every move
+      //                                      that hand makes out from rest is a sample of it
+      //                                      ('strike_taught' { hand, role, n, speed })
+      //   engine.teach_stop()                saves what was taught with the profile
+      //   engine.strike_samples()            { left: { straight: n, ... }, right: {...}, guard }
+      //   engine.forget_strikes()            back to the rules alone
+      teach_guard() { st.teach = { guard: true }; const d = strikeDet(); if (d) d.guardAcc = { left: null, right: null }; },
+      teach_strike(role, hand) {
+        if (!['straight', 'hook', 'uppercut'].includes(role) || !['left', 'right'].includes(hand)) throw new Error('teach_strike(role, hand): ' + role + ', ' + hand);
+        st.teach = { role, hand };
+      },
+      teach_stop() {
+        const was = st.teach;
+        st.teach = null;
+        if (!st.cal || !was) return;
+        if (was.guard) {
+          const d = strikeDet();
+          const pos = {};
+          for (const hand of ['left', 'right']) { const g = d && d.guardAcc[hand]; if (g && g.n >= cfg.combat.teach.guardFrames) pos[hand] = { x: g.x / g.n, y: g.y / g.n, z: g.z / g.n }; }
+          if (Object.keys(pos).length) st.cal.guardPos = Object.assign({}, st.cal.guardPos, pos);
+        }
+        RE.profiles.save(st.cal);
+      },
+      strike_samples() {
+        const lib = (st.cal && st.cal.strikes) || {}, out = { guard: !!(st.cal && st.cal.guardPos) };
+        for (const hand of ['left', 'right']) { out[hand] = {}; for (const role of ['straight', 'hook', 'uppercut']) out[hand][role] = (lib[hand] && lib[hand][role] || []).length; }
+        return out;
+      },
+      forget_strikes() {
+        if (!st.cal) return;
+        delete st.cal.strikes; delete st.cal.guardPos;
+        RE.profiles.save(st.cal);
       },
       // Back to the default step thresholds for this profile.
       clear_tuning() {

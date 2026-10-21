@@ -137,11 +137,126 @@
   //   guess     anything else that went toward the camera (fwdGuess) is a straight
   //   down      from a crouch, the fist driving down (downBelow, downSpeed)
   // Power is peak fist speed over refSpeed, clamped 0.5 to 1.5 (spec).
+  // Taught strikes (0.10.0, Mark 10/21: "the coach teaches you how to throw a strike, the system
+  // captures it, and that's how it reads it"). In the gym the game asks for each punch; while
+  // teaching (engine.teach_strike), every move the asked-for hand makes out from rest is kept as
+  // that player's sample of that punch, whatever the rules make of it, and while the guard is held
+  // (engine.teach_guard) the engine learns where that player's hands rest. From then on a hand
+  // near its learned guard counts as set, and a move is read by the nearest of the player's own
+  // samples (the shape of the fist's path from where it was set to its far end, in arm lengths,
+  // with the elbow angle), the other hand's samples mirrored when a hand has none. The rules
+  // below still read any punch that was never taught.
+  const ROLE = { jab: 'straight', cross: 'straight', hook: 'hook', overhand: 'hook', uppercut: 'uppercut' };
+  // where a punch is over: the fist has come back to backFrac of its farthest distance from where
+  // it was set (its index in path), or -1 while it is still out
+  function backAt(path, backFrac, minFar = 0) {
+    const s0 = path[0];
+    let far = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = Math.hypot(path[i].x - s0.x, path[i].y - s0.y, path[i].z - s0.z);
+      if (d > far) far = d;
+      else if (far >= minFar && d <= backFrac * far) return i;
+    }
+    return -1;
+  }
+  // the fist's path from where it was set until it is on its way back, resampled to n points by
+  // arc length, in arm lengths (L, m), each point [dx, dy, dz, elbow angle / 180 * angleW]
+  // (backFrac 0: only out to its farthest point, for an early read)
+  function strikeShape(path, L, n, angleW, backFrac) {
+    const s0 = path[0];
+    let seg;
+    if (backFrac > 0) { const bi = backAt(path, backFrac, 0.05); seg = bi > 0 ? path.slice(0, bi + 1) : path; }
+    else {
+      let fi = 0, fd = 0;
+      path.forEach((x, i) => { const d = Math.hypot(x.x - s0.x, x.y - s0.y, x.z - s0.z); if (d > fd) { fd = d; fi = i; } });
+      seg = path.slice(0, fi + 1);
+    }
+    let far = 0;
+    for (const x of seg) far = Math.max(far, Math.hypot(x.x - s0.x, x.y - s0.y, x.z - s0.z));
+    if (seg.length < 2) return null;
+    const cum = [0];
+    for (let i = 1; i < seg.length; i++) cum.push(cum[i - 1] + Math.hypot(seg[i].x - seg[i - 1].x, seg[i].y - seg[i - 1].y, seg[i].z - seg[i - 1].z));
+    const total = cum[cum.length - 1];
+    if (!(total > 0)) return null;
+    const pts = [];
+    let j = 1;
+    for (let k = 0; k < n; k++) {
+      const at = (total * k) / (n - 1);
+      while (j < seg.length - 1 && cum[j] < at) j++;
+      const a = seg[j - 1], b = seg[j], u = cum[j] > cum[j - 1] ? RE.clamp((at - cum[j - 1]) / (cum[j] - cum[j - 1]), 0, 1) : 1;
+      const lp = (p, q) => p + (q - p) * u;
+      pts.push([(lp(a.x, b.x) - s0.x) / L, (lp(a.y, b.y) - s0.y) / L, (lp(a.z, b.z) - s0.z) / L, (lp(a.angle, b.angle) / 180) * angleW]);
+    }
+    return { pts, len: total / L, far: far / L };
+  }
+  // root mean square distance between two shapes; mirror flips the other hand's sideways axis
+  function shapeDist(a, b, mirror) {
+    let sum = 0;
+    for (let i = 0; i < a.pts.length; i++) {
+      const p = a.pts[i], q = b.pts[i];
+      sum += (p[0] - (mirror ? -q[0] : q[0])) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2 + (p[3] - q[3]) ** 2;
+    }
+    return Math.sqrt(sum / a.pts.length);
+  }
+  RE.strikeShape = strikeShape;
+
   class StrikeDetector {
     constructor(cfg) {
       this.c = cfg.combat.strike;
-      const hand = () => ({ hist: [], last: -Infinity, setAt: -Infinity, stillSince: null, prev: null, live: false });
+      this.T = cfg.combat.teach;
+      this.isStrike = true;
+      const hand = () => ({ hist: [], last: -Infinity, setAt: -Infinity, stillSince: null, prev: null, live: false, calm: null, calmAt: -Infinity });
       this.hands = { left: hand(), right: hand() };
+      this.guardAcc = { left: null, right: null };
+    }
+    // arm length (m) for shapes: the reference 0.6 m arm times armScale
+    armL(out) { return 0.6 * (out.armScale || 1); }
+    // the player's samples: the nearest one per role for this hand (own, or the other hand mirrored)
+    match(ctx, hand, path, out, early) {
+      const lib = ctx.cal && ctx.cal.strikes;
+      if (!lib) return null;
+      const T = this.T, live = strikeShape(path, this.armL(out), T.points, T.angleW, early ? 0 : T.backFrac);
+      if (!live) return null;
+      const other = hand === 'left' ? 'right' : 'left';
+      const best = { role: null, d: Infinity, roleD: {} };
+      for (const role of ['straight', 'hook', 'uppercut']) {
+        const own = (lib[hand] && lib[hand][role]) || [], mir = (lib[other] && lib[other][role]) || [];
+        const cands = (own.length ? own.map((tp) => [tp, false, 1]) : mir.map((tp) => [tp, true, T.mirrorK])).map(([tp, mirror, k]) => [early ? tp.out : tp, mirror, k]).filter(([tp]) => tp);
+        for (const [tp, mirror, k] of cands) {
+          const ratio = live.len / tp.len;
+          if (ratio < T.lenRatio[0] || ratio > T.lenRatio[1]) continue;
+          const d = shapeDist(live, tp, mirror) * k;
+          if (d < (best.roleD[role] ?? Infinity)) best.roleD[role] = d;
+          if (d < best.d) { best.d = d; best.role = role; }
+        }
+      }
+      return best;
+    }
+    taught(ctx, role) {
+      const lib = ctx.cal && ctx.cal.strikes;
+      return !!lib && ['left', 'right'].some((hd) => lib[hd] && lib[hd][role] && lib[hd][role].length);
+    }
+    // teaching: any move out from rest by the asked-for hand is a sample of the asked-for punch
+    teachTick(ctx, hand, h, s, c, out) {
+      const T = this.T, t = ctx.t;
+      if (!h.live) {
+        if (h.calm && t - h.calmAt <= T.calmMs && s.v >= T.startSpeed && t - h.last >= c.refractoryMs) { h.live = true; h.from = h.calm.t; h.set = h.calm; }
+        return;
+      }
+      const back = t - h.from > T.minMs && s.v < c.stillSpeed && Math.hypot(s.x - h.set.x, s.y - h.set.y, s.z - h.set.z) <= T.backM;
+      if (!back && t - h.from <= T.maxMs) return;
+      h.live = false;
+      const path = h.hist.filter((x) => x.t >= h.from);
+      const peakV = Math.max(0, ...path.map((x) => x.v));
+      const shape = peakV >= T.minSpeed ? strikeShape(path, this.armL(out), T.points, T.angleW, T.backFrac) : null;
+      if (!shape || shape.far * this.armL(out) < c.setTravel) return;
+      const role = ctx.teach.role;
+      const lib = (ctx.cal.strikes = ctx.cal.strikes || {});
+      const list = ((lib[hand] = lib[hand] || {})[role] = lib[hand][role] || []);
+      list.push(Object.assign(shape, { speed: peakV, out: strikeShape(path, this.armL(out), T.points, T.angleW, 0) }));
+      while (list.length > T.keep) list.shift();
+      h.last = t;
+      out.events.push(['strike_taught', { hand, role, n: list.length, speed: peakV }]);
     }
     update(ctx, out) {
       const t = ctx.t;
@@ -161,9 +276,18 @@
         h.hist.push(s);
         while (h.hist.length && t - h.hist[0].t > c.windowMs) h.hist.shift();
         if (ctx.upperLow) { h.stillSince = null; h.live = false; continue; }
-        // a set hand: a guard (fist up in front, elbow down and bent) held still; after a punch,
-        // coming back to where it was set is enough (combos: a double jab rests about 50 ms)
-        const set = s.y >= -c.setBelow && Math.abs(s.x) <= c.setWide && s.angle <= c.setAngle && s.ey <= -c.elbowDown;
+        if (s.v < c.stillSpeed) { h.calm = s; h.calmAt = t; }
+        // teaching (0.10.0): the guard's resting place, or this hand's sample of a punch
+        if (ctx.teach && ctx.teach.guard && s.v < c.stillSpeed) {
+          const g = (this.guardAcc[hand] = this.guardAcc[hand] || { x: 0, y: 0, z: 0, n: 0 });
+          g.x += s.x; g.y += s.y; g.z += s.z; g.n++;
+        }
+        if (ctx.teach && ctx.teach.role && ctx.teach.hand === hand) { this.teachTick(ctx, hand, h, s, c, out); continue; }
+        // a set hand: a guard (fist up in front, elbow down and bent) held still, or the player's
+        // own guard (learned in the gym, 0.10.0); after a punch, coming back to where it was set
+        // is enough (combos: a double jab rests about 50 ms)
+        const gp = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+        const set = (s.y >= -c.setBelow && Math.abs(s.x) <= c.setWide && s.angle <= c.setAngle && s.ey <= -c.elbowDown) || (!!gp && Math.hypot(s.x - gp.x, s.y - gp.y, s.z - gp.z) <= this.T.guardTol);
         const back = h.after && !h.live && t - h.last >= c.refractoryMs && Math.hypot(s.x - h.after.x, s.y - h.after.y, s.z - h.after.z) <= c.setReturn && s.v < 2 * c.stillSpeed;
         if (set && back) { h.setAt = t; h.set = s; h.after = null; h.stillSince = null; continue; }
         if (set && s.v < c.stillSpeed) {
@@ -189,14 +313,32 @@
         if (t - h.from > c.windowMs) { this.finish(ctx, hand, h, out, c, true); continue; }
         const path = h.hist.filter((x) => x.t >= h.from);
         const peakV = Math.max(...path.map((x) => x.v));
-        if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false);
+        // with taught samples a punch is judged whole, once the fist is on its way back (0.10.0);
+        // the rules alone judge each kind as its shape completes and the fist slows
+        if (ctx.cal && ctx.cal.strikes) {
+          if (backAt([h.set, ...path], this.T.backFrac, c.setTravel) > 0) this.finish(ctx, hand, h, out, c, false);
+          else if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false, true); // early, if it is plainly one punch
+        }
+        else if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false);
       }
     }
     // judge the move so far; guess: also call anything else thrown at the camera a straight
-    finish(ctx, hand, h, out, c, guess) {
+    finish(ctx, hand, h, out, c, guess, early) {
       const path = h.hist.filter((x) => x.t >= h.from);
       const peakV = Math.max(0, ...path.map((x) => x.v));
       let type = peakV >= c.minSpeed ? this.classify(ctx, hand, [h.set, ...path], out, c, guess) : null;
+      // the player's own samples come first; the rules read what was never taught, and a taught
+      // punch the rules see still counts when it is not far from the player's samples
+      const T = this.T, m = peakV >= Math.min(c.minSpeed, T.minSpeed) ? this.match(ctx, hand, [h.set, ...path], out, early) : null;
+      // early (the fist has slowed at full reach): only a plain match, well clear of every other punch
+      if (early) {
+        const others = m ? Object.entries(m.roleD).filter(([r]) => r !== m.role).map(([, d]) => d) : [];
+        if (!(m && m.d <= T.earlyTol && others.every((d) => d >= T.earlyGap * m.d))) return;
+      }
+      if (m && m.d <= T.tol) {
+        const lead = out.stance === 'southpaw' ? 'right' : 'left';
+        type = m.role === 'straight' ? (hand === lead ? 'jab' : 'cross') : m.role;
+      } else if (type && ROLE[type] && this.taught(ctx, ROLE[type]) && !((m && m.roleD[ROLE[type]]) <= T.tol * T.fallbackK)) type = null;
       if (!type) { if (guess) h.live = false; return; }
       h.live = false;
       h.last = ctx.t;

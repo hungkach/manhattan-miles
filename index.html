@@ -101,7 +101,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.9.0 from hungkach/body-arcade@e09e70f, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.10.0 from hungkach/body-arcade@37ac02f, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -110,7 +110,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.9.0';
+  RE.version = '0.10.0';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -385,6 +385,27 @@
           downSpeed: 1.2,    // m/s downward
           refSpeed: 5,       // m/s of fist speed that is power 1
           overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
+        },
+        // taught strikes (0.10.0, StrikeDetector in combat.js): samples of the player's own punches
+        teach: {
+          keep: 6,           // samples kept per punch and hand (the newest)
+          points: 8,         // a sample's path resampled to this many points
+          backFrac: 0.7,     // a punch is over once the fist is back to this share of its farthest reach
+          earlyTol: 0.12,    // or, as the fist slows at full reach, a match this close
+          earlyGap: 2.5,     // with every other punch at least this many times farther
+          angleW: 0.3,       // weight of the elbow angle in a sample (arm lengths per 180 degrees)
+          tol: 0.3,          // a move within this of a sample (rms, arm lengths) is that punch
+          fallbackK: 1.2,    // the rules' read of a taught punch counts within this times tol
+          mirrorK: 1.15,     // the other hand's samples, mirrored, count a bit farther away
+          lenRatio: [0.5, 2], // a sample only matches a path between these times its length
+          startSpeed: 1.2,   // m/s: while teaching, a move starts here from rest (no guard needed)
+          calmMs: 300,       // from a rest within this long
+          minSpeed: 1.0,     // m/s peak, for a sample to count
+          minMs: 150,        // a sample ends back at rest (backM, m) after at least this long
+          backM: 0.12,
+          maxMs: 800,        // or after this long
+          guardTol: 0.15,    // m: a hand this near its learned guard is set
+          guardFrames: 10,   // still frames needed to learn a hand's guard
         },
         // arm depth from foreshortening (ArmDepth in combat.js)
         depth: {
@@ -1549,11 +1570,126 @@
   //   guess     anything else that went toward the camera (fwdGuess) is a straight
   //   down      from a crouch, the fist driving down (downBelow, downSpeed)
   // Power is peak fist speed over refSpeed, clamped 0.5 to 1.5 (spec).
+  // Taught strikes (0.10.0, Mark 10/21: "the coach teaches you how to throw a strike, the system
+  // captures it, and that's how it reads it"). In the gym the game asks for each punch; while
+  // teaching (engine.teach_strike), every move the asked-for hand makes out from rest is kept as
+  // that player's sample of that punch, whatever the rules make of it, and while the guard is held
+  // (engine.teach_guard) the engine learns where that player's hands rest. From then on a hand
+  // near its learned guard counts as set, and a move is read by the nearest of the player's own
+  // samples (the shape of the fist's path from where it was set to its far end, in arm lengths,
+  // with the elbow angle), the other hand's samples mirrored when a hand has none. The rules
+  // below still read any punch that was never taught.
+  const ROLE = { jab: 'straight', cross: 'straight', hook: 'hook', overhand: 'hook', uppercut: 'uppercut' };
+  // where a punch is over: the fist has come back to backFrac of its farthest distance from where
+  // it was set (its index in path), or -1 while it is still out
+  function backAt(path, backFrac, minFar = 0) {
+    const s0 = path[0];
+    let far = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = Math.hypot(path[i].x - s0.x, path[i].y - s0.y, path[i].z - s0.z);
+      if (d > far) far = d;
+      else if (far >= minFar && d <= backFrac * far) return i;
+    }
+    return -1;
+  }
+  // the fist's path from where it was set until it is on its way back, resampled to n points by
+  // arc length, in arm lengths (L, m), each point [dx, dy, dz, elbow angle / 180 * angleW]
+  // (backFrac 0: only out to its farthest point, for an early read)
+  function strikeShape(path, L, n, angleW, backFrac) {
+    const s0 = path[0];
+    let seg;
+    if (backFrac > 0) { const bi = backAt(path, backFrac, 0.05); seg = bi > 0 ? path.slice(0, bi + 1) : path; }
+    else {
+      let fi = 0, fd = 0;
+      path.forEach((x, i) => { const d = Math.hypot(x.x - s0.x, x.y - s0.y, x.z - s0.z); if (d > fd) { fd = d; fi = i; } });
+      seg = path.slice(0, fi + 1);
+    }
+    let far = 0;
+    for (const x of seg) far = Math.max(far, Math.hypot(x.x - s0.x, x.y - s0.y, x.z - s0.z));
+    if (seg.length < 2) return null;
+    const cum = [0];
+    for (let i = 1; i < seg.length; i++) cum.push(cum[i - 1] + Math.hypot(seg[i].x - seg[i - 1].x, seg[i].y - seg[i - 1].y, seg[i].z - seg[i - 1].z));
+    const total = cum[cum.length - 1];
+    if (!(total > 0)) return null;
+    const pts = [];
+    let j = 1;
+    for (let k = 0; k < n; k++) {
+      const at = (total * k) / (n - 1);
+      while (j < seg.length - 1 && cum[j] < at) j++;
+      const a = seg[j - 1], b = seg[j], u = cum[j] > cum[j - 1] ? RE.clamp((at - cum[j - 1]) / (cum[j] - cum[j - 1]), 0, 1) : 1;
+      const lp = (p, q) => p + (q - p) * u;
+      pts.push([(lp(a.x, b.x) - s0.x) / L, (lp(a.y, b.y) - s0.y) / L, (lp(a.z, b.z) - s0.z) / L, (lp(a.angle, b.angle) / 180) * angleW]);
+    }
+    return { pts, len: total / L, far: far / L };
+  }
+  // root mean square distance between two shapes; mirror flips the other hand's sideways axis
+  function shapeDist(a, b, mirror) {
+    let sum = 0;
+    for (let i = 0; i < a.pts.length; i++) {
+      const p = a.pts[i], q = b.pts[i];
+      sum += (p[0] - (mirror ? -q[0] : q[0])) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2 + (p[3] - q[3]) ** 2;
+    }
+    return Math.sqrt(sum / a.pts.length);
+  }
+  RE.strikeShape = strikeShape;
+
   class StrikeDetector {
     constructor(cfg) {
       this.c = cfg.combat.strike;
-      const hand = () => ({ hist: [], last: -Infinity, setAt: -Infinity, stillSince: null, prev: null, live: false });
+      this.T = cfg.combat.teach;
+      this.isStrike = true;
+      const hand = () => ({ hist: [], last: -Infinity, setAt: -Infinity, stillSince: null, prev: null, live: false, calm: null, calmAt: -Infinity });
       this.hands = { left: hand(), right: hand() };
+      this.guardAcc = { left: null, right: null };
+    }
+    // arm length (m) for shapes: the reference 0.6 m arm times armScale
+    armL(out) { return 0.6 * (out.armScale || 1); }
+    // the player's samples: the nearest one per role for this hand (own, or the other hand mirrored)
+    match(ctx, hand, path, out, early) {
+      const lib = ctx.cal && ctx.cal.strikes;
+      if (!lib) return null;
+      const T = this.T, live = strikeShape(path, this.armL(out), T.points, T.angleW, early ? 0 : T.backFrac);
+      if (!live) return null;
+      const other = hand === 'left' ? 'right' : 'left';
+      const best = { role: null, d: Infinity, roleD: {} };
+      for (const role of ['straight', 'hook', 'uppercut']) {
+        const own = (lib[hand] && lib[hand][role]) || [], mir = (lib[other] && lib[other][role]) || [];
+        const cands = (own.length ? own.map((tp) => [tp, false, 1]) : mir.map((tp) => [tp, true, T.mirrorK])).map(([tp, mirror, k]) => [early ? tp.out : tp, mirror, k]).filter(([tp]) => tp);
+        for (const [tp, mirror, k] of cands) {
+          const ratio = live.len / tp.len;
+          if (ratio < T.lenRatio[0] || ratio > T.lenRatio[1]) continue;
+          const d = shapeDist(live, tp, mirror) * k;
+          if (d < (best.roleD[role] ?? Infinity)) best.roleD[role] = d;
+          if (d < best.d) { best.d = d; best.role = role; }
+        }
+      }
+      return best;
+    }
+    taught(ctx, role) {
+      const lib = ctx.cal && ctx.cal.strikes;
+      return !!lib && ['left', 'right'].some((hd) => lib[hd] && lib[hd][role] && lib[hd][role].length);
+    }
+    // teaching: any move out from rest by the asked-for hand is a sample of the asked-for punch
+    teachTick(ctx, hand, h, s, c, out) {
+      const T = this.T, t = ctx.t;
+      if (!h.live) {
+        if (h.calm && t - h.calmAt <= T.calmMs && s.v >= T.startSpeed && t - h.last >= c.refractoryMs) { h.live = true; h.from = h.calm.t; h.set = h.calm; }
+        return;
+      }
+      const back = t - h.from > T.minMs && s.v < c.stillSpeed && Math.hypot(s.x - h.set.x, s.y - h.set.y, s.z - h.set.z) <= T.backM;
+      if (!back && t - h.from <= T.maxMs) return;
+      h.live = false;
+      const path = h.hist.filter((x) => x.t >= h.from);
+      const peakV = Math.max(0, ...path.map((x) => x.v));
+      const shape = peakV >= T.minSpeed ? strikeShape(path, this.armL(out), T.points, T.angleW, T.backFrac) : null;
+      if (!shape || shape.far * this.armL(out) < c.setTravel) return;
+      const role = ctx.teach.role;
+      const lib = (ctx.cal.strikes = ctx.cal.strikes || {});
+      const list = ((lib[hand] = lib[hand] || {})[role] = lib[hand][role] || []);
+      list.push(Object.assign(shape, { speed: peakV, out: strikeShape(path, this.armL(out), T.points, T.angleW, 0) }));
+      while (list.length > T.keep) list.shift();
+      h.last = t;
+      out.events.push(['strike_taught', { hand, role, n: list.length, speed: peakV }]);
     }
     update(ctx, out) {
       const t = ctx.t;
@@ -1573,9 +1709,18 @@
         h.hist.push(s);
         while (h.hist.length && t - h.hist[0].t > c.windowMs) h.hist.shift();
         if (ctx.upperLow) { h.stillSince = null; h.live = false; continue; }
-        // a set hand: a guard (fist up in front, elbow down and bent) held still; after a punch,
-        // coming back to where it was set is enough (combos: a double jab rests about 50 ms)
-        const set = s.y >= -c.setBelow && Math.abs(s.x) <= c.setWide && s.angle <= c.setAngle && s.ey <= -c.elbowDown;
+        if (s.v < c.stillSpeed) { h.calm = s; h.calmAt = t; }
+        // teaching (0.10.0): the guard's resting place, or this hand's sample of a punch
+        if (ctx.teach && ctx.teach.guard && s.v < c.stillSpeed) {
+          const g = (this.guardAcc[hand] = this.guardAcc[hand] || { x: 0, y: 0, z: 0, n: 0 });
+          g.x += s.x; g.y += s.y; g.z += s.z; g.n++;
+        }
+        if (ctx.teach && ctx.teach.role && ctx.teach.hand === hand) { this.teachTick(ctx, hand, h, s, c, out); continue; }
+        // a set hand: a guard (fist up in front, elbow down and bent) held still, or the player's
+        // own guard (learned in the gym, 0.10.0); after a punch, coming back to where it was set
+        // is enough (combos: a double jab rests about 50 ms)
+        const gp = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+        const set = (s.y >= -c.setBelow && Math.abs(s.x) <= c.setWide && s.angle <= c.setAngle && s.ey <= -c.elbowDown) || (!!gp && Math.hypot(s.x - gp.x, s.y - gp.y, s.z - gp.z) <= this.T.guardTol);
         const back = h.after && !h.live && t - h.last >= c.refractoryMs && Math.hypot(s.x - h.after.x, s.y - h.after.y, s.z - h.after.z) <= c.setReturn && s.v < 2 * c.stillSpeed;
         if (set && back) { h.setAt = t; h.set = s; h.after = null; h.stillSince = null; continue; }
         if (set && s.v < c.stillSpeed) {
@@ -1601,14 +1746,32 @@
         if (t - h.from > c.windowMs) { this.finish(ctx, hand, h, out, c, true); continue; }
         const path = h.hist.filter((x) => x.t >= h.from);
         const peakV = Math.max(...path.map((x) => x.v));
-        if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false);
+        // with taught samples a punch is judged whole, once the fist is on its way back (0.10.0);
+        // the rules alone judge each kind as its shape completes and the fist slows
+        if (ctx.cal && ctx.cal.strikes) {
+          if (backAt([h.set, ...path], this.T.backFrac, c.setTravel) > 0) this.finish(ctx, hand, h, out, c, false);
+          else if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false, true); // early, if it is plainly one punch
+        }
+        else if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false);
       }
     }
     // judge the move so far; guess: also call anything else thrown at the camera a straight
-    finish(ctx, hand, h, out, c, guess) {
+    finish(ctx, hand, h, out, c, guess, early) {
       const path = h.hist.filter((x) => x.t >= h.from);
       const peakV = Math.max(0, ...path.map((x) => x.v));
       let type = peakV >= c.minSpeed ? this.classify(ctx, hand, [h.set, ...path], out, c, guess) : null;
+      // the player's own samples come first; the rules read what was never taught, and a taught
+      // punch the rules see still counts when it is not far from the player's samples
+      const T = this.T, m = peakV >= Math.min(c.minSpeed, T.minSpeed) ? this.match(ctx, hand, [h.set, ...path], out, early) : null;
+      // early (the fist has slowed at full reach): only a plain match, well clear of every other punch
+      if (early) {
+        const others = m ? Object.entries(m.roleD).filter(([r]) => r !== m.role).map(([, d]) => d) : [];
+        if (!(m && m.d <= T.earlyTol && others.every((d) => d >= T.earlyGap * m.d))) return;
+      }
+      if (m && m.d <= T.tol) {
+        const lead = out.stance === 'southpaw' ? 'right' : 'left';
+        type = m.role === 'straight' ? (hand === lead ? 'jab' : 'cross') : m.role;
+      } else if (type && ROLE[type] && this.taught(ctx, ROLE[type]) && !((m && m.roleD[ROLE[type]]) <= T.tol * T.fallbackK)) type = null;
       if (!type) { if (guess) h.live = false; return; }
       h.live = false;
       h.last = ctx.t;
@@ -3017,6 +3180,8 @@
       if (st.mode === 'combat') for (const [n, p] of st.combat.onEvent(name, payload, clock())) emitter.emit(n, p);
     });
 
+    const strikeDet = () => st.detectors && st.detectors.list && st.detectors.list.find((d) => d.isStrike);
+
     // fight state machine tick: shot timeouts, scrambles, escape
     function combatTick(t) {
       if (st.mode !== 'combat') return;
@@ -3089,7 +3254,7 @@
       if (st.source !== 'demo') {
         // gesture detectors, then the state machine reads their events
         st.det = st.cal && points
-          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold })
+          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold, teach: st.teach })
           : null;
         if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
@@ -3149,6 +3314,9 @@
         // keep thresholds tuned in an earlier warm-up for this setup
         const prev = RE.profiles.load(st.presetId, cal.orientation);
         if (prev && prev.cues && !cal.cues) cal.cues = prev.cues;
+        // and the punches and guard taught in an earlier gym session (0.10.0)
+        if (prev && prev.strikes && !cal.strikes) cal.strikes = prev.strikes;
+        if (prev && prev.guardPos && !cal.guardPos) cal.guardPos = prev.guardPos;
         RE.profiles.save(cal);
         st.calibrator = null;
         if (st.cal !== cal) setCal(cal);
@@ -3323,6 +3491,42 @@
           RE.profiles.save(st.cal);
         }
         return { seen: { step: seen }, cues };
+      },
+      // Taught strikes (0.10.0): the gym teaches each punch and the engine reads that player's
+      // punches from their own samples (see StrikeDetector in combat.js).
+      //   engine.teach_guard()               while the guard is held: learn where the hands rest
+      //   engine.teach_strike(role, hand)    role 'straight' | 'hook' | 'uppercut'; every move
+      //                                      that hand makes out from rest is a sample of it
+      //                                      ('strike_taught' { hand, role, n, speed })
+      //   engine.teach_stop()                saves what was taught with the profile
+      //   engine.strike_samples()            { left: { straight: n, ... }, right: {...}, guard }
+      //   engine.forget_strikes()            back to the rules alone
+      teach_guard() { st.teach = { guard: true }; const d = strikeDet(); if (d) d.guardAcc = { left: null, right: null }; },
+      teach_strike(role, hand) {
+        if (!['straight', 'hook', 'uppercut'].includes(role) || !['left', 'right'].includes(hand)) throw new Error('teach_strike(role, hand): ' + role + ', ' + hand);
+        st.teach = { role, hand };
+      },
+      teach_stop() {
+        const was = st.teach;
+        st.teach = null;
+        if (!st.cal || !was) return;
+        if (was.guard) {
+          const d = strikeDet();
+          const pos = {};
+          for (const hand of ['left', 'right']) { const g = d && d.guardAcc[hand]; if (g && g.n >= cfg.combat.teach.guardFrames) pos[hand] = { x: g.x / g.n, y: g.y / g.n, z: g.z / g.n }; }
+          if (Object.keys(pos).length) st.cal.guardPos = Object.assign({}, st.cal.guardPos, pos);
+        }
+        RE.profiles.save(st.cal);
+      },
+      strike_samples() {
+        const lib = (st.cal && st.cal.strikes) || {}, out = { guard: !!(st.cal && st.cal.guardPos) };
+        for (const hand of ['left', 'right']) { out[hand] = {}; for (const role of ['straight', 'hook', 'uppercut']) out[hand][role] = (lib[hand] && lib[hand][role] || []).length; }
+        return out;
+      },
+      forget_strikes() {
+        if (!st.cal) return;
+        delete st.cal.strikes; delete st.cal.guardPos;
+        RE.profiles.save(st.cal);
       },
       // Back to the default step thresholds for this profile.
       clear_tuning() {
@@ -5031,6 +5235,8 @@
     // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
     // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
     shift: { ms: [1000, 4000], bonus: 1.4, cooldownMs: 2500, angleDeg: 45 },
+    // a bound during their shot (10/21): they stumble past for ms; a hook from that side lands bonus times
+    sidestep: { ms: 1600, bonus: 2 },
     upperLowHit: 2, // an uppercut that catches you level changing counts double
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
     // punches: standing ones are the engine's strike events (engine 0.9.0 reads them from a set
@@ -5218,7 +5424,7 @@
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1))); // tougher as you level
-      Fight.foes.push({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1) });
+      Fight.foes.push(applyArch({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], seed: Math.random() }, G.fightsDone === 0 && i === 0 ? 'thug' : pickArch(lvl)));
     }
     // the person they are hassling, just past them and to the side
     const side = Math.random() < 0.5 ? -1 : 1, rx = Math.cos(P.yaw) * side, rz = -Math.sin(P.yaw) * side;
@@ -5241,9 +5447,15 @@
   const TUTOR_KEY = 'manhattan-miles-tutor-done';
   // 10/18: each move gets up to `tries` attempts of tryMs in a row, then the tutorial moves on
   // (Mark: repeat until it registers, at most three times so it never locks you in)
-  const TUTOR = { reps: 2, tryMs: 9000, tries: 3, holdMs: 2000 };
+  // 10/21 (Mark: "the coach teaches you how to throw a strike, the system captures it, and that's
+  // how it reads it"): with the camera, the stance hold teaches the engine your guard and each
+  // punch step keeps teachReps of your own reps as that punch (engine 0.10.0, teach_strike);
+  // from then on your punches are read against your own samples
+  const TUTOR = { reps: 2, teachReps: 3, tryMs: 9000, tries: 3, holdMs: 2000 };
+  const TEACH_ROLE = { straight: 'straight', hook: 'hook', overhand: 'hook', uppercut: 'uppercut' };
+  const repsOf = (st) => (st && st.kind && !isDemo() ? TUTOR.teachReps : TUTOR.reps);
   const tutorSteps = () => [
-    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, a shoulder toward the screen. Hold it.', say: 'Fighting stance. One foot forward, turn a shoulder toward the screen. Hold it.' },
+    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, a shoulder toward the screen, hands up in your guard. Hold it.', say: 'Fighting stance. One foot forward, a shoulder toward the screen, hands up in your guard. Hold it.' },
     { id: 'jab', big: 'Jab', small: 'Lead hand, straight out and back.', say: 'Jab. Lead hand, straight out and back.', kind: 'straight', hand: 'lead' },
     { id: 'cross', big: 'Cross', small: 'Rear hand, straight out, turn the hip.', say: 'Cross. Rear hand, straight out.', kind: 'straight', hand: 'rear' },
     { id: 'leadHook', big: 'Lead hook', small: 'Lead elbow up, swing across.', say: 'Lead hook. Elbow up, swing it across.', kind: 'hook', hand: 'lead' },
@@ -5284,27 +5496,33 @@
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', tutorial: true, camera: engine.camera() }); Tutor.recording = true; }
     document.body.classList.add('fighting');
     Voice.q.length = 0; // nothing from the street follows you into the gym
-    say('Welcome to the gym. Your partner holds pads. Every move twice, and watch your stick figure on the side.', 'instruction');
+    say(isDemo() ? 'The gym. Every move twice.' : 'The gym. Three of each punch, your way. The game learns them.', 'instruction');
     tutorNext(now);
     return true;
   }
   function tutorNext(now) {
     const cur = Tutor.steps[Tutor.i];
-    if (cur) Tutor.results.push({ id: cur.id, big: cur.big, ok: Tutor.n >= (cur.kind || cur.event ? TUTOR.reps : 1), got: Tutor.n, read: Tutor.log.filter((l) => l.step === cur.id && !l.ok).map((l) => l.read) });
+    if (cur) Tutor.results.push({ id: cur.id, big: cur.big, ok: Tutor.n >= (cur.kind || cur.event ? repsOf(cur) : 1), got: Tutor.n, read: Tutor.log.filter((l) => l.step === cur.id && !l.ok).map((l) => l.read) });
+    if (!isDemo()) engine.teach_stop();
     Tutor.i++; Tutor.n = 0; Tutor.since = now; Tutor.holdSince = now; Tutor.lastRead = ''; Tutor.try = 1;
     const st = Tutor.steps[Tutor.i];
     if (!st) { endTutor(now); return; }
+    // the engine learns: your guard while you hold the stance, then each punch as you throw it
+    if (!isDemo()) {
+      if (st.id === 'stance') engine.teach_guard();
+      else if (st.kind) engine.teach_strike(TEACH_ROLE[st.kind], st.hand === 'lead' ? Tutor.lead : rearOf(Tutor.lead));
+    }
     say(st.say, 'instruction');
   }
   function tutorCount(now) {
     Tutor.n++;
-    const done = Tutor.n >= TUTOR.reps;
-    say(done ? 'Got it.' : 'One.', 'confirm');
+    const done = Tutor.n >= repsOf(Tutor.steps[Tutor.i]);
+    say(done ? 'Got it.' : ['One.', 'Two.', 'Three.', 'Four.'][Tutor.n - 1] || 'Again.', 'confirm');
     if (done) { setTimeout(() => { if (Fight.active && Fight.active.tutor) tutorNext(performance.now()); }, 700); Tutor.since = Infinity; }
   }
   function tutorHit(kind, hand, now) {
     const st = Tutor.steps[Tutor.i];
-    if (!st || !st.kind || Tutor.n >= TUTOR.reps) return;
+    if (!st || !st.kind || Tutor.n >= repsOf(st)) return;
     const want = st.hand === 'lead' ? Tutor.lead : rearOf(Tutor.lead);
     const k = kind === 'jab' || kind === 'cross' ? 'straight' : kind;
     const ok = k === st.kind && (hand === want || isDemo()); // touch buttons cannot pick the hand
@@ -5316,6 +5534,8 @@
   function tutorTick(now) {
     const st = Tutor.steps[Tutor.i];
     if (!st) return;
+    // the clock for a step starts once the coach has finished talking
+    if (voiceBusy()) { if (Tutor.since !== Infinity) Tutor.since = now; Tutor.holdSince = now; return; }
     const s = engine.signals();
     if (st.id === 'stance' && Tutor.since !== Infinity && now - Tutor.holdSince >= TUTOR.holdMs) {
       // which foot leads, from the bladed torso; still square: once more, then orthodox
@@ -5337,6 +5557,18 @@
       else { say('Moving on.', 'confirm'); tutorNext(now); }
     }
   }
+  // a rep the engine kept as your sample of the punch asked for: it lands on the pads and counts
+  engine.on('strike_taught', (e) => {
+    const a = Fight.active, st = a && a.tutor && Tutor.steps[Tutor.i], now = performance.now();
+    if (!st || !st.kind || Tutor.n >= repsOf(st)) return;
+    const name = st.kind === 'overhand' ? 'overhand' : st.kind === 'straight' ? (e.hand === Tutor.lead ? 'jab' : 'cross') : st.kind;
+    impact(a.foe, e.hand, 'head', 1, now, name, 1);
+    const h = Fight.hand[e.hand];
+    if (h && h.pop) h.pop.text = `Learned: ${st.big.toLowerCase()} ${Tutor.n + 1}`;
+    Tutor.log.push({ step: st.id, ok: true, read: st.big, t: now, hand: e.hand });
+    tutorCount(now);
+  });
+  engine.on('slip', () => { if (Fight.active && !Fight.active.tutor) { Fight.slips = (Fight.slips || []).concat(performance.now()).slice(-5); } });
   engine.on('slip', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'slip' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('shot', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'shot' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
@@ -5347,7 +5579,19 @@
     const a = Fight.active, now = performance.now();
     if (!a || a.tutor || engine.combat().phase !== 'standing' || now < (Fight.shiftCd || 0)) return;
     const foe = a.foe;
-    if (['down', 'ko', 'flee', 'shoot'].includes(foe.state) || a.range === 'out') return;
+    // 10/21 (Mark): a bound during their shot is a sidestep: the shot misses, they stumble past,
+    // and a hook from the side you stepped to lands double (like an uppercut into their level change)
+    if (foe.state === 'shoot') {
+      foe.state = 'stuffed'; foe.until = now + FT.sidestep.ms;
+      Fight.openUntil = now + FT.sidestep.ms;
+      Fight.sidestep = { side: e.side, until: now + FT.sidestep.ms };
+      Fight.stats.sidesteps = (Fight.stats.sidesteps || 0) + 1;
+      guardBonus('stuff');
+      fightMsg(`Sidestep! ${e.side === 'left' ? 'Left' : 'Right'} hook`, 1200); say('Sidestep. Hook him.', 'feedback');
+      tone(660, 0.12, 0.15, 'triangle');
+      return;
+    }
+    if (['down', 'ko', 'flee'].includes(foe.state) || a.range === 'out') return;
     // (honest reps: a quicker and a wider bound buys a longer window, 1 to 4 s)
     const q = 0.5 * effort(1300 - (e.ms || 1000), 0, 700, 0, 1) + 0.5 * effort(e.dist || 0.9, 0.9, 1.6, 0, 1);
     const ms = Math.round(FT.shift.ms[0] + (FT.shift.ms[1] - FT.shift.ms[0]) * q);
@@ -5360,6 +5604,7 @@
     fightMsg('Angle! Free shots', 1000); say('Angle!', 'feedback'); tone(660, 0.12, 0.15, 'triangle'); tone(990, 0.18, 0.12, 'triangle', 0.08);
   });
   function endTutor(now) {
+    if (!isDemo()) engine.teach_stop();
     if (Tutor.recording) { Tutor.recording = false; if (engine.is_recording()) Tutor.clip = engine.stop_recording(); }
     if (engine.mode() === 'combat') engine.exit_combat();
     Fight.active = null;
@@ -5374,14 +5619,15 @@
     const ok = Tutor.results.filter((r) => r.ok).length, all = Tutor.results.length;
     const missed = Tutor.results.filter((r) => !r.ok).map((r) => r.big);
     Tutor.report = Tutor.results.map((r) => `${r.big} ${r.ok ? '✓' : '✗'}${r.read.length ? ` (read as ${[...new Set(r.read)].join(', ').toLowerCase()})` : ''}`).join(' · ');
-    say(missed.length ? `Tutorial done. ${ok} of ${all}. Missed: ${missed.join(', ')}. Save the tutorial clip at the end and send it to Claude.` : 'Tutorial done. Everything registered. March on.', 'instruction');
+    const taught = !isDemo() && Tutor.results.some((r) => r.ok && Tutor.steps.find((x) => x.id === r.id && x.kind));
+    say(missed.length ? `Gym done. ${ok} of ${all}. Missed: ${missed.join(', ')}. Save the tutorial clip at the end and send it to Claude.` : taught ? 'Gym done. Your punches are learned: the game reads them the way you threw them.' : 'Gym done. Everything registered. March on.', 'instruction');
     note(Tutor.report, 9000);
   }
   function tutorHud(now) {
     const st = Tutor.steps[Tutor.i];
     if (!st) return;
     const line = (txt, y, font, color) => { ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = color; ctx.strokeText(txt, W / 2, y); ctx.fillText(txt, W / 2, y); };
-    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.kind || st.event ? ` · ${Tutor.n} of ${TUTOR.reps}` : ''}${Tutor.try > 1 ? ` · try ${Tutor.try} of ${TUTOR.tries}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
+    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.kind || st.event ? ` · ${Tutor.n} of ${repsOf(st)}` : ''}${Tutor.try > 1 ? ` · try ${Tutor.try} of ${TUTOR.tries}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
     line(st.big, 30, '900 32px system-ui, sans-serif', '#ffcf3f');
     line(st.small, 70, '700 14px system-ui, sans-serif', '#fff');
     if (Tutor.i > 0) line(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}: ${Tutor.lead} hand leads`, 92, '600 12px system-ui, sans-serif', '#c9d1dd');
@@ -5649,7 +5895,17 @@
       }
       return;
     }
+    // a boxer slips some of your straights into a set guard
+    const A = archOf(foe);
+    if (A.dodge && (kind === 'jab' || kind === 'cross') && !clean && foe.state === 'guard' && Math.random() < A.dodge) {
+      const hd = foe.hit && foe.hit.head;
+      if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: 'Slipped it', big: false });
+      foe.slipUntil = now + 350;
+      return;
+    }
     if (outOf && !shifted) { dmg *= FT.guard.cleanBonus; fightMsg('Clean shot!', 700); }
+    // a hook from the side you sidestepped to
+    if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side hook!', 1000); Fight.sidestep = null; }
     // an uppercut catches them changing levels: shooting at you, or braced for your shot
     const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
@@ -5833,6 +6089,7 @@
       const cost = FT.myGuard[foe.kind] || 1;
       if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; guardBonus('slip', effort(Math.abs(s.slip), 0.5, 1)); fightMsg('Slipped: counter!'); }
       else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; guardBonus('duck', effort(s.squat_depth || 0, LEVEL_SHOT * 0.7, Math.min(1, LEVEL_SHOT * 1.8))); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
+      else if (foe.kind === 'uppercut' && !low && now - Fight.lastLowAt < 1600) { Fight.counterUntil = now + FT.counterMs; guardBonus('duck', 1); fightMsg('Baited it: counter!', 1100); tone(520, 0.1, 0.12, 'triangle'); }
       else if (foe.kind === 'uppercut' && low) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
       else if (Fight.guardHp >= cost * 0.5) {
         Fight.guardHp = Math.max(0, Fight.guardHp - cost);
@@ -5840,7 +6097,7 @@
         Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
-      else { hurtPlayer(now, foe.boss ? STAGE.boss.hit : 1); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: 'Duck the hook!', uppercut: 'Stand tall for the uppercut!' }[foe.kind] || 'Hit', 1100); }
+      else { hurtPlayer(now, foe.boss ? STAGE.boss.hit : archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: 'Duck the hook!', uppercut: 'Stand tall for the uppercut!' }[foe.kind] || 'Hit', 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -5858,23 +6115,37 @@
     if (foe.state === 'broken' && switchFoe(now, 'broken')) return;
     if (a.tagAt && now >= a.tagAt && foe.state === 'guard' && switchFoe(now, 'tag')) return;
     if (!a.tagAt) a.tagAt = now + rand(FT.tag.everyS[0], FT.tag.everyS[1]) * 1000;
-    // choose the next move from guard (or after hurt, stuffed, cover)
-    const elapsed = now - a.start;
+    // choose the next move from guard (or after hurt, stuffed, cover), by their type (ARCH)
+    const elapsed = now - a.start, A = archOf(foe);
     // some opponents just cover up: beat the guard with body shots, hooks and uppercuts, or wear it down
     if (Math.random() < (foe.turtle || 0)) { foe.state = 'cover'; foe.until = now + rand(1600, 2600); return; }
     // between moves they drift between close and mid range
     a.range = Math.random() < FT.midChance ? 'mid' : 'close';
-    const r = Math.random();
-    // they step in to punch: that is when your hooks reach
-    // they read a level change: when you have been dropping your level, they look for the uppercut
-    const readLow = now - Fight.lastLowAt < 2500 && Math.random() < 0.55;
-    if (readLow || r < 0.08) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'uppercut'; foe.until = now + windupMs() + 50; foe.aim = Object.assign({}, Fight.head); }
-    else if (r < 0.38) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'straight'; foe.until = now + windupMs(); foe.aim = Object.assign({}, Fight.head); }
-    else if (r < 0.6) { a.range = 'close'; foe.state = 'windup'; foe.kind = 'hook'; foe.hookSide = Math.random() < 0.5 ? 'L' : 'R'; foe.until = now + windupMs() + 100; foe.aim = Object.assign({}, Fight.head); }
-    else if (r < 0.7 && elapsed > 6000) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
-    else if (r < 0.8 && elapsed > 4000) { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
-    else if (r < 0.9) { foe.state = 'cover'; foe.until = now + 1400; }
-    else { foe.state = 'guard'; foe.until = now + rand(600, 1200); }
+    const punch = (kind) => {
+      a.range = 'close'; foe.state = 'windup'; foe.kind = kind; foe.aim = Object.assign({}, Fight.head);
+      if (kind === 'hook') foe.hookSide = Math.random() < 0.5 ? 'L' : 'R';
+      foe.until = now + windupMs() + (kind === 'hook' ? 100 : kind === 'uppercut' ? 50 : 0);
+    };
+    // 10/21 (Mark: the AI should read your head movement and level, so you can bait them):
+    // a skilled type reads you; a thug does not
+    const reads = foe.boss ? ['slips', 'level'] : A.reads || [];
+    const slipsLately = (Fight.slips || []).filter((t) => now - t < 3000).length;
+    const lowLately = now - Fight.lastLowAt < 2500;
+    if (reads.includes('slips') && slipsLately >= 2 && Math.random() < 0.6) { punch('hook'); foe.read = 'slips'; return; }
+    if (reads.includes('level') && lowLately && Math.random() < 0.6) { punch('uppercut'); foe.read = 'level'; return; }
+    if (reads.includes('level') && !lowLately && a.range === 'close' && elapsed > 3000 && Math.random() < 0.3) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); return; }
+    foe.read = null;
+    // otherwise a weighted pick of their moves (no shots early on, no stepping out at the start)
+    const w = Object.assign({}, A.moves);
+    if (elapsed < (A === ARCH.wrestler ? 3000 : 6000)) w.shoot = 0;
+    if (elapsed < 4000) w.out = 0;
+    let r = Math.random() * Object.values(w).reduce((n, x) => n + x, 0), move = 'wait';
+    for (const [k, x] of Object.entries(w)) { if ((r -= x) <= 0) { move = k; break; } }
+    if (move === 'straight' || move === 'hook' || move === 'uppercut') punch(move);
+    else if (move === 'shoot') { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
+    else if (move === 'out') { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
+    else if (move === 'cover') { foe.state = 'cover'; foe.until = now + 1400; }
+    else { foe.state = 'guard'; foe.until = now + rand(600, 1200) * A.think; }
   }
   // their wind-up shortens as you level (quicker punches), never under 450 ms
   // the other opponents still in it, waiting their turn
@@ -5896,7 +6167,7 @@
   // slips, ducks, stuffed shots and knockouts top up your guard bar
   // (honest reps: a bigger slip or a deeper duck tops it up more, from 60% to 140% of the bonus)
   function guardBonus(why, k = 1) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0) * k); }
-  function windupMs() { const a = Fight.active; return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a && a.foe.boss ? STAGE.boss.windup : 1); }
+  function windupMs() { const a = Fight.active; return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a && a.foe.boss ? STAGE.boss.windup : a ? archOf(a.foe).windup : 1); }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
     Fight.combo.n = 0;
@@ -6237,7 +6508,8 @@
       Object.assign(f, { col: boss ? T0.bossCol : T0.cols[i % T0.cols.length], lines: T0.talk, fleeChecked: true, stage: true });
       if (boss) {
         const B = STAGE.boss;
-        Object.assign(f, { boss: true, name: T0.boss, scale: B.scale, hp: Math.round(f.maxHp * B.hp), guardHp: f.guardMax * B.guard, guardMax: f.guardMax * B.guard, turtle: 0.2 });
+        const base = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
+        Object.assign(f, { boss: true, arch: 'boxer', name: T0.boss, scale: B.scale, hp: Math.round(base * B.hp), guardHp: FT.guard.hp * B.guard, guardMax: FT.guard.hp * B.guard, turtle: 0.2 });
         f.maxHp = f.hp;
         Stage.boss = f;
       }
@@ -6372,9 +6644,43 @@
     while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
     return { x: P.x + Math.sin(P.yaw) * d, z: P.z + Math.cos(P.yaw) * d };
   }
+  // ---------- opponent types (10/21, Mark: most are thugs who cannot fight, like a SNES beat 'em up)
+  //   w        how often they turn up (skilled types a bit more each level, `skillPerLevel`)
+  //   hp       health against a regular opponent; guard: their guard bar; turtle: how often they cover
+  //   windup   how long they telegraph (longer is easier); think: how long they wait between moves
+  //   hit      what a punch that gets through costs you; moves: weights for their next move
+  //   reads    'slips': after you slip twice in a few seconds they throw the hook (duck it);
+  //            'level': after you drop your level they throw the uppercut (stand back up and it
+  //            misses: a counter), and they shoot when you stand tall up close
+  //   dodge    a share of your straights into their guard they slip (boxers)
+  const ARCH = {
+    thug: { name: 'Thug', w: 10, hp: 0.85, guard: 0.6, turtle: 0.05, windup: 1.25, think: 1.2, hit: 1, moves: { straight: 3, hook: 4, uppercut: 0.5, shoot: 0.3, out: 1, cover: 0.5, wait: 1.5 } },
+    boxer: { name: 'Boxer', w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
+    wrestler: { name: 'Wrestler', w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
+    tweaker: { name: 'Tweaker', w: 1.5, hp: 0.55, guard: 0.6, turtle: 0, windup: 0.75, think: 0.55, hit: 1, scale: 0.95, moves: { straight: 3, hook: 4, uppercut: 1, shoot: 0.5, out: 0.5, cover: 0, wait: 0.3 } },
+    roidhead: { name: 'Roidhead', w: 1.2, hp: 1.8, guard: 1.3, turtle: 0.1, windup: 1.4, think: 1.3, hit: 2, scale: 1.12, moves: { straight: 1.5, hook: 4, uppercut: 2, shoot: 0.5, out: 0.3, cover: 0.5, wait: 1.5 } },
+    turtle: { name: 'Turtle', w: 1, hp: 1, guard: 1.4, turtle: 0.55, windup: 1, think: 1, hit: 1, moves: { straight: 3, hook: 2, uppercut: 1, shoot: 0.5, out: 1, cover: 1, wait: 1 } },
+  };
+  const skillPerLevel = 0.15;
+  function pickArch(lvl) {
+    const ws = Object.entries(ARCH).map(([id, A]) => [id, A.w * (id === 'thug' ? 1 : 1 + skillPerLevel * (lvl - 1))]);
+    let r = Math.random() * ws.reduce((n, [, w]) => n + w, 0);
+    for (const [id, w] of ws) { if ((r -= w) <= 0) return id; }
+    return 'thug';
+  }
+  function applyArch(f, id) {
+    const A = ARCH[id];
+    f.arch = id;
+    f.hp = f.maxHp = Math.max(4, Math.round(f.maxHp * A.hp));
+    f.guardHp = f.guardMax = FT.guard.hp * A.guard;
+    f.turtle = A.turtle;
+    if (A.scale && !f.boss) f.scale = A.scale;
+    return f;
+  }
+  const archOf = (f) => ARCH[f && f.arch] || ARCH.thug;
   const makeFoe = (x, z, i, lvl) => {
     const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
-    return { x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() };
+    return applyArch({ x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() }, pickArch(lvl));
   };
   function spawnScene(kind, now) {
     if (kind === 'hassle') { spawnFoes(); Fight.scene = null; return; }
@@ -7178,7 +7484,7 @@
     const w = Math.min(W - 28, 360);
     if (a.tutor) tutorHud(now);
     else {
-      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', a.foe.boss ? `Boss: ${a.foe.name}` : Stage.on ? `${Stage.theme.name} \u00b7 ${others(a).length + 1} left` : 'Opponent');
+      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', a.foe.boss ? `Boss: ${a.foe.name}` : Stage.on ? `${archOf(a.foe).name} \u00b7 ${others(a).length + 1} left` : archOf(a.foe).name);
       bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     }
     const s = engine.signals();
@@ -8270,7 +8576,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-21 \u00b7 engine 0.9.0 punch reading, gym on its own, waypoints, slow-motion chases';
+  const BUILD = '2026-10-22 \u00b7 the gym learns your punches, opponent types, sidestep';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -8927,7 +9233,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

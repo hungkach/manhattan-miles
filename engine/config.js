@@ -174,6 +174,27 @@
           refSpeed: 5,       // m/s of fist speed that is power 1
           overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
         },
+        // taught strikes (0.10.0, StrikeDetector in combat.js): samples of the player's own punches
+        teach: {
+          keep: 6,           // samples kept per punch and hand (the newest)
+          points: 8,         // a sample's path resampled to this many points
+          backFrac: 0.7,     // a punch is over once the fist is back to this share of its farthest reach
+          earlyTol: 0.12,    // or, as the fist slows at full reach, a match this close
+          earlyGap: 2.5,     // with every other punch at least this many times farther
+          angleW: 0.3,       // weight of the elbow angle in a sample (arm lengths per 180 degrees)
+          tol: 0.3,          // a move within this of a sample (rms, arm lengths) is that punch
+          fallbackK: 1.2,    // the rules' read of a taught punch counts within this times tol
+          mirrorK: 1.15,     // the other hand's samples, mirrored, count a bit farther away
+          lenRatio: [0.5, 2], // a sample only matches a path between these times its length
+          startSpeed: 1.2,   // m/s: while teaching, a move starts here from rest (no guard needed)
+          calmMs: 300,       // from a rest within this long
+          minSpeed: 1.0,     // m/s peak, for a sample to count
+          minMs: 150,        // a sample ends back at rest (backM, m) after at least this long
+          backM: 0.12,
+          maxMs: 800,        // or after this long
+          guardTol: 0.15,    // m: a hand this near its learned guard is set
+          guardFrames: 10,   // still frames needed to learn a hand's guard
+        },
         // arm depth from foreshortening (ArmDepth in combat.js)
         depth: {
           decay: 0.02,    // m/s the reference segment length shrinks back
