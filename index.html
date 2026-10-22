@@ -4204,6 +4204,8 @@
       <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
       <label class="check"><input type="checkbox" id="gymFirst" checked> Gym round first (pads with your partner)</label>
       <label class="check"><input type="checkbox" id="realNames" checked> Real business names</label>
+      <label class="check"><input type="checkbox" id="studioOn"> Studio voices (natural voices for everyone in the city: a one-time download of up to about 190 MB, on Wi-Fi)</label>
+      <p id="studioLine" class="hint"></p>
       <label class="pick">Look
         <select id="look"><option value="golden">Golden hour</option><option value="day">Day</option><option value="night">Night</option></select>
       </label>
@@ -4731,7 +4733,7 @@
       if (p.stand) {
         // loiterers stay put, and turn to heckle you as you pass
         p.look = d < 8 ? P : p.group;
-        if (d < 6 && !p.heckled && now > Peds.chatAt) { p.heckled = true; p.say = pick(p.lines); p.sayUntil = now + 3000; Peds.chatAt = now + PED.chatGapS * 1000; if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; say(p.say, 'feedback'); } }
+        if (d < 6 && !p.heckled && now > Peds.chatAt) { p.heckled = true; p.say = pick(p.lines); p.sayUntil = now + 3000; Peds.chatAt = now + PED.chatGapS * 1000; if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; sayAs(p.say, p, 'feedback'); } }
         continue;
       }
       const nx = p.x + p.dx * p.v * dt, nz = p.z + p.dz * p.v * dt;
@@ -4743,7 +4745,7 @@
     if (near && now > Peds.chatAt && !Fight.active) {
       near.chatted = true; near.say = pick(CHATTER); near.sayUntil = now + 3200;
       Peds.chatAt = now + PED.chatGapS * 1000;
-      if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; say(near.say, 'feedback'); }
+      if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; sayAs(near.say, near, 'feedback'); }
     }
     vendorTick(now);
     trafficTick(dt, now);
@@ -4871,7 +4873,7 @@
     Peds.waves++;
     const line = best.lines ? pick(best.lines) : best.kind === 'vendor' ? pick(VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
     best.say = line; best.sayUntil = now + 4000;
-    say(line, 'feedback');
+    sayAs(line, best, 'feedback');
     note(`\u201c${line}\u201d`, 4500);
   }
 
@@ -5850,7 +5852,7 @@
     by.say = line; by.sayUntil = now + TALK.bubbleMs;
     Talk.at = now; if (who === 'foe') Talk.foeAt = now;
     Talk.idleAt = now + rand(TALK.idleS[0], TALK.idleS[1]) * 1000;
-    if (now - Talk.voiceAt > TALK.voiceGapMs && !voiceBusy()) { Talk.voiceAt = now; say(line, 'feedback'); }
+    if (now - Talk.voiceAt > TALK.voiceGapMs && !voiceBusy()) { Talk.voiceAt = now; sayAs(line, by, 'feedback'); }
   }
   function talkTick(now) {
     const a = Fight.active;
@@ -5893,13 +5895,13 @@
         Fight.people.push({ kind: 'crowd', officer: true, x: tx, z: tz, tx, tz, sx: tx + hx * 14, sz: tz + hz * 14, joinAt: now + 1500, look: P, col: [34, 44, 86], seed: Math.random() });
       }
       const ol = pick(OFFICER_LINES);
-      setTimeout(() => { if (G.state === 'walk') { say(ol, 'confirm'); note(`Officer: \u201c${ol}\u201d`, 6000); } }, 6500);
+      setTimeout(() => { if (G.state === 'walk') { sayAs(ol, null, 'confirm'); note(`Officer: \u201c${ol}\u201d`, 6000); } }, 6500);
     }
     if (!victim) return;
-    if (bag) { setTimeout(() => { if (G.state === 'walk') say(victim.say, 'confirm'); }, 1200); return; }
+    if (bag) { setTimeout(() => { if (G.state === 'walk') sayAs(victim.say, victim, 'confirm'); }, 1200); return; }
     const pool = how === 'won' ? (Math.random() < 0.6 ? LINES.thanks : LINES.roast) : LINES[how];
     const line = pick(pool);
-    setTimeout(() => { if (G.state === 'walk') { say(line, 'confirm'); note(`\u201c${line}\u201d`, 6000); } }, 1200);
+    setTimeout(() => { if (G.state === 'walk') { sayAs(line, victim, 'confirm'); note(`\u201c${line}\u201d`, 6000); } }, 1200);
   }
 
   function endFight(how, now) {
@@ -6692,7 +6694,7 @@
       lead.x += (P.x - lead.x) * k; lead.z += (P.z - lead.z) * k;
     }
     if (d <= FT.engage + 0.5 || gap <= FT.engage) {
-      if (lead.boss) { lead.say = Stage.theme.bossLine; lead.sayUntil = now + 3000; }
+      if (lead.boss) { lead.say = Stage.theme.bossLine; lead.sayUntil = now + 3000; sayAs(lead.say, lead, 'confirm'); }
       startFight(now);
     }
   }
@@ -8730,7 +8732,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-22 PM \u00b7 teep, low kick, knee; squat, bound and jump in the warm-up';
+  const BUILD = '2026-10-22 late \u00b7 a cast of voices; studio voices';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -9004,6 +9006,294 @@
     try { if (!Sfx.ctx) Sfx.ctx = new (window.AudioContext || window.webkitAudioContext)(); Sfx.ctx.resume(); } catch (_) {}
     try { speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (_) {}
   }
+  // ---------- voices (10/22): a narrator and a cast ----------
+  // Device voices: the best English voice narrates. People in the city speak in the device's other
+  // English voices, women and men in every accent it has (en-GB, en-AU, en-IE, en-IN, en-ZA), each
+  // with a pitch and pace of their own. A line keeps its voice (picked from the line, so a saved
+  // Studio clip matches it); an opponent keeps his for the fight. Opponents are men.
+  const NOVELTY = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/i;
+  const FEMALE = /female|samantha|karen|moira|tessa|fiona|veena|victoria|allison|ava|susan|zoe|serena|kate|martha|catherine|zira|aria|jenny|libby|sonia|natasha|clara|emma|nicky|isha|lekha|sangeeta|joanna|salli|kimberly|ivy|amy|olivia|siri voice 1|siri voice 4/i;
+  const MALE = /\bmale|alex|daniel|rishi|tom\b|aaron|arthur|gordon|oliver|evan|nathan|david|mark|guy|ryan|william|thomas|james|lee\b|prabhat|ravi|matthew|joey|justin|brian|russell|siri voice 2|siri voice 3/i;
+  const Cast = { voices: [], narrator: null };
+  function voiceScore(v) {
+    let s = 0;
+    if (/premium/i.test(v.name)) s += 40; else if (/enhanced|neural|natural/i.test(v.name)) s += 30; else if (/google/i.test(v.name)) s += 15;
+    if (/^en[-_]US/i.test(v.lang)) s += 6; else if (/^en/i.test(v.lang)) s += 3;
+    if (v.localService) s += 1;
+    return s;
+  }
+  function loadVoices() {
+    try {
+      const vs = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang) && !NOVELTY.test(v.name)).sort((a, b) => voiceScore(b) - voiceScore(a));
+      Cast.narrator = vs[0] || null;
+      // one of each: iOS lists Premium, Enhanced and plain copies of the same voice
+      const base = (v) => v.name.replace(/\(.*?\)|premium|enhanced|compact/gi, '').trim().toLowerCase();
+      const seen = new Set(Cast.narrator ? [base(Cast.narrator)] : []);
+      Cast.voices = vs.filter((v) => { const n = base(v); if (seen.has(n)) return false; seen.add(n); return true; })
+        .map((v) => ({ v, sex: FEMALE.test(v.name) ? 'f' : MALE.test(v.name) ? 'm' : '' }));
+    } catch (_) {}
+  }
+  if (window.speechSynthesis) { loadVoices(); try { speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch (_) {} }
+  const hash01 = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0) / 4294967296; };
+  // a person's voice from a number in 0..1: woman or man first (opponents are men), then a device
+  // voice, a pitch and pace around it, and a Studio voice of the same sex
+  function castVoice(pool, seed) {
+    const sex = pool === 'male' || seed >= 0.5 ? 'm' : 'f', s2 = pool === 'male' ? seed : (seed % 0.5) * 2;
+    const r2 = (seed * 9301 + 0.137) % 1;
+    const list = Cast.voices.filter((c) => c.sex === sex);
+    const c = list.length ? list[Math.floor(s2 * list.length) % list.length] : null;
+    // few voices on the device: a wider spread of pitch keeps people apart
+    const spread = list.length >= 3 ? 0.1 : 0.2;
+    let pitch = 1 + (r2 - 0.5) * 2 * spread;
+    if (!c) pitch = sex === 'm' ? 0.72 + 0.14 * r2 : 1.15 + 0.1 * r2; // none of that sex on the device: the narrator, pitched
+    return { dev: c ? c.v : Cast.narrator, pitch, rate: 0.98 + 0.12 * r2, studio: Studio.cast(pool, sex, s2, r2) };
+  }
+  const narratorCast = () => ({ dev: Cast.narrator, pitch: 1, rate: 1.05, studio: Studio.NARRATOR });
+  // who: the person speaking (an opponent has `arch`), or null for anyone in the crowd
+  function castOf(who, line) {
+    if (who && who.arch) return castVoice('male', who.voiceSeed ?? (who.voiceSeed = Math.random()));
+    return castVoice('mixed', hash01(line));
+  }
+  function sayAs(line, who, kind = 'feedback') { if (line) say(line, kind, castOf(who, line)); }
+
+  // ---------- Studio voices (10/22, as in Homecoming Hero) ----------
+  // Piper, open-source neural voices (MIT), in a background worker so it never stalls the game or the
+  // body tracker. Each voice is about 63 MB from the Hugging Face CDN, downloaded once and kept on the
+  // device in the same cache as Homecoming Hero (same site), so a voice it has is not fetched again:
+  //   ryan      the narrator, and some men in the city (played a little lower)
+  //   lessac    some women in the city
+  //   l2arctic  24 speakers of English as a second language (Arabic, Mandarin, Hindi, Korean, Spanish,
+  //             Vietnamese; 12 women, 12 men): most of the city, and opponents from its men
+  // The phonemizer and ONNX Runtime come from jsdelivr. Lines are made in the gaps, never in a fight, a
+  // chase, the gym or the warm-up rounds; each is saved on the device. Anything not ready yet uses the
+  // device voice, and is made for next time.
+  const L2 = [['ABA', 'm'], ['SKA', 'f'], ['YBAA', 'm'], ['ZHAA', 'f'], ['BWC', 'm'], ['LXC', 'f'], ['NCC', 'f'], ['TXHC', 'm'], ['ASI', 'm'], ['RRBI', 'm'], ['SVBI', 'f'], ['TNI', 'f'],
+    ['HJK', 'f'], ['HKK', 'm'], ['YDCK', 'f'], ['YKWK', 'm'], ['EBVS', 'm'], ['ERMS', 'm'], ['MBMPS', 'f'], ['NJS', 'f'], ['HQTV', 'm'], ['PNV', 'f'], ['THV', 'f'], ['TLV', 'm']];
+  //   keep  lines saved on the device at most (about 90 KB each); mem: kept in memory
+  //   foes  the l2arctic men opponents speak with (few, so their lines can be made ahead)
+  const STUDIO = { keep: 1200, mem: 40, speed: { ryan: 1.05, lessac: 1.05, l2arctic: 1.0 }, foes: ['ABA', 'BWC', 'ASI', 'HKK', 'EBVS'], stallMs: 120000 };
+  const Studio = (() => {
+    const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
+    const PHON = 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize';
+    const HF = 'https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/';
+    const MODEL = { ryan: 'ryan/medium/en_US-ryan-medium.onnx', lessac: 'lessac/medium/en_US-lessac-medium.onnx', l2arctic: 'l2arctic/medium/en_US-l2arctic-medium.onnx' };
+    const CACHE = 'mm-studio-v1', MODELS = 'hh-piper-v1';
+    const NARRATOR = { model: 'ryan', pr: 1 };
+    const saved = new Set(), mem = new Map(), wanted = new Map();
+    let worker = null, state = 'off', progress = 0, loadingWho = '', err = '', busyKey = null, genAt = 0, made = 0, fails = 0, lastErr = '', bus = null;
+    const genMs = [];
+    // the speaker names in the model's own table; if they are missing, men's voices cannot be told apart
+    let named = true; try { named = localStorage.getItem('manhattan-miles-l2-named') !== '0'; } catch (_) {}
+    const enabled = () => { try { return $('studioOn').checked; } catch (_) { return false; } };
+    const key = (s, text) => s.model + (s.spk ? ':' + s.spk : '') + '|' + text;
+    const url = (k) => 'https://studio.local/manhattan-miles/' + encodeURIComponent(k);
+    // a person's Studio voice from the same numbers as their device voice
+    //   women: a quarter lessac, the rest l2arctic's women; men: a fifth ryan (a little lower), the rest
+    //   l2arctic's men; opponents: a third ryan (lower), the rest the few in STUDIO.foes
+    //   (without the speaker names, l2arctic's women and men cannot be told apart: lessac and ryan only)
+    function cast(pool, sex, s2, r2) {
+      const pickOf = (arr, u) => arr[Math.floor(u * arr.length) % arr.length];
+      if (sex === 'f') {
+        if (s2 < 0.25 || !named) return { model: 'lessac', pr: 0.97 + 0.06 * r2 };
+        return { model: 'l2arctic', spk: pickOf(L2.filter((x) => x[1] === 'f'), (s2 - 0.25) / 0.75)[0], pr: 0.96 + 0.08 * r2 };
+      }
+      if (pool === 'male') {
+        if (s2 < 0.34 || !named) return { model: 'ryan', pr: 0.84 + 0.08 * r2 };
+        return { model: 'l2arctic', spk: pickOf(STUDIO.foes, (s2 - 0.34) / 0.66), pr: 0.94 + 0.06 * r2 };
+      }
+      if (s2 < 0.2 || !named) return { model: 'ryan', pr: 0.9 + 0.05 * r2 };
+      return { model: 'l2arctic', spk: pickOf(L2.filter((x) => x[1] === 'm'), (s2 - 0.2) / 0.8)[0], pr: 0.96 + 0.08 * r2 };
+    }
+    // WAV in and out of the device cache, 16-bit mono
+    function toWav(pcm, sr) {
+      const b = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(b), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+      new Int16Array(b, 44).set(pcm);
+      return b;
+    }
+    const fromWav = (b) => ({ sr: new DataView(b).getUint32(24, true), pcm: new Int16Array(b.slice(44)) });
+    function remember(k, clip) { mem.delete(k); mem.set(k, clip); while (mem.size > STUDIO.mem) mem.delete(mem.keys().next().value); }
+    async function loadSaved() { try { const c = await caches.open(CACHE); for (const r of await c.keys()) saved.add(decodeURIComponent(r.url.split('/').pop())); } catch (_) {} }
+    async function save(k, clip) { try { const c = await caches.open(CACHE); await c.put(url(k), new Response(toWav(clip.pcm, clip.sr), { headers: { 'Content-Type': 'audio/wav' } })); saved.add(k); } catch (_) {} }
+    // the worker: a classic one, so it can load the two CDN scripts with importScripts
+    const WORKER = `
+      let phon = null, out = null, M = null, uses = 0, wasm = null, data = null;
+      // the espeak phonemizer gives out after about 70 lines in one instance, so a fresh one (about 30 ms) every 30
+      const freshPhon = async () => { phon = await createPiperPhonemize({ print: (d) => { out = d; }, printErr: () => {}, wasmBinary: wasm, getPreloadedPackage: () => data, noInitialRun: true }); uses = 0; };
+      async function phonemes(text, voice) {
+        for (let tries = 0; ; tries++) {
+          if (!phon || uses >= 30) await freshPhon();
+          uses++; out = null;
+          try { phon.callMain(['-l', voice, '--input', JSON.stringify([{ text }]), '--espeak_data', '/espeak-ng-data']); if (out) return JSON.parse(out).phoneme_ids; } catch (e) { if (tries) throw e; }
+          phon = null;
+        }
+      }
+      const sessions = {}, cfgs = {};
+      async function grab(cache, u, who, big) {
+        let r = await cache.match(u);
+        if (!r) {
+          const res = await fetch(u); if (!res.ok) throw new Error('download failed (' + res.status + ')');
+          const total = +(res.headers.get('Content-Length') || 0), reader = res.body.getReader(), parts = []; let got = 0;
+          for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; if (big) self.postMessage({ type: 'progress', who, loaded: got, total }); }
+          await cache.put(u, new Response(new Blob(parts)));
+          r = await cache.match(u);
+        }
+        return r.arrayBuffer();
+      }
+      async function load(who) {
+        const cache = await caches.open(M.models);
+        cfgs[who] = JSON.parse(new TextDecoder().decode(await grab(cache, M.hf + M.voice[who] + '.json', who, false)));
+        sessions[who] = await ort.InferenceSession.create(new Uint8Array(await grab(cache, M.hf + M.voice[who], who, true)), { executionProviders: ['wasm'] });
+        self.postMessage({ type: 'speakers', who, names: Object.keys(cfgs[who].speaker_id_map || {}) });
+      }
+      self.onmessage = async (e) => {
+        const m = e.data;
+        if (m.type === 'init') {
+          try {
+            M = m;
+            importScripts(m.ort + 'ort.wasm.min.js', m.phon + '.js');
+            ort.env.wasm.wasmPaths = m.ort; ort.env.wasm.numThreads = 1;
+            const cache = await caches.open(m.models);
+            wasm = await grab(cache, m.phon + '.wasm', 'engine', false); data = await grab(cache, m.phon + '.data', 'engine', false);
+            await freshPhon();
+            await load('ryan');
+            self.postMessage({ type: 'ready' });
+          } catch (err) { self.postMessage({ type: 'error', msg: String((err && err.message) || err) }); }
+        } else if (m.type === 'gen') {
+          try {
+            if (!sessions[m.who]) { self.postMessage({ type: 'loading', who: m.who }); await load(m.who); self.postMessage({ type: 'loaded', who: m.who }); }
+            const cfg = cfgs[m.who], ids = await phonemes(m.text, cfg.espeak.voice), inf = cfg.inference;
+            const feeds = { input: new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]), input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
+              scales: new ort.Tensor('float32', Float32Array.from([inf.noise_scale, inf.length_scale / m.speed, inf.noise_w]), [3]) };
+            const map = cfg.speaker_id_map || {};
+            if (Object.keys(map).length) {
+              let sid = m.spk ? (map[m.spk] ?? map[m.spk.toLowerCase()]) : 0;
+              if (sid == null) sid = m.idx || 0;
+              feeds.sid = new ort.Tensor('int64', BigInt64Array.from([BigInt(sid)]), [1]);
+            }
+            const f = (await sessions[m.who].run(feeds)).output.data;
+            let peak = 0; for (let i = 0; i < f.length; i++) peak = Math.max(peak, Math.abs(f[i]));
+            const k = peak > 0 ? 0.9 / peak : 1, pcm = new Int16Array(f.length);
+            for (let i = 0; i < f.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(f[i] * k * 32767)));
+            self.postMessage({ type: 'clip', key: m.key, sr: cfg.audio.sample_rate, pcm }, [pcm.buffer]);
+          } catch (err) { self.postMessage({ type: 'genError', key: m.key, msg: String((err && err.message) || err) }); }
+        }
+      };`;
+    async function start() {
+      if (!enabled() || state === 'loading' || state === 'ready') return;
+      if (!window.Worker || !window.caches || !window.isSecureContext) { state = 'failed'; err = 'This browser cannot run studio voices.'; return; }
+      state = 'loading'; progress = 0; loadingWho = 'ryan'; err = '';
+      await loadSaved();
+      try {
+        worker = new Worker(URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' })));
+        worker.onmessage = onMsg;
+        worker.onerror = () => { state = 'failed'; err = 'The voice engine did not start. Using device voices.'; };
+        worker.postMessage({ type: 'init', ort: ORT, phon: PHON, hf: HF, voice: MODEL, models: MODELS });
+      } catch (_) { state = 'failed'; err = 'The voice engine did not start. Using device voices.'; }
+    }
+    function onMsg(e) {
+      const m = e.data, now = performance.now();
+      if (m.type === 'progress') { progress = m.total ? m.loaded / m.total : 0; loadingWho = m.who; genAt = now; } // a download is not a stall
+      else if (m.type === 'loading') { loadingWho = m.who; progress = 0; }
+      else if (m.type === 'loaded') loadingWho = '';
+      else if (m.type === 'speakers') {
+        if (m.who === 'l2arctic' && m.names.length) { named = L2.every(([n]) => m.names.includes(n) || m.names.includes(n.toLowerCase())); try { localStorage.setItem('manhattan-miles-l2-named', named ? '1' : '0'); } catch (_) {} }
+      } else if (m.type === 'ready') { state = 'ready'; loadingWho = ''; prewarm(); }
+      else if (m.type === 'error') { state = 'failed'; err = `Studio voices did not load (${m.msg.replace(/\s*'?https?:\/\/\S+/g, '').slice(0, 80)}). Using device voices.`; }
+      else if (m.type === 'clip') {
+        const c = { sr: m.sr, pcm: m.pcm };
+        remember(m.key, c); save(m.key, c); wanted.delete(m.key); busyKey = null; made++;
+        genMs.push(now - genAt); if (genMs.length > 10) genMs.shift();
+      } else if (m.type === 'genError') { wanted.delete(m.key); busyKey = null; fails++; lastErr = m.msg.slice(0, 60); }
+    }
+    // lines are made in the gaps, never while timing matters
+    const quiet = () => !Fight.active && !Fight.chase && !(G.state === 'setup' && Warm.i >= 0);
+    function tick(now) {
+      // a watchdog: one line taking over 2 minutes means this device cannot run the engine
+      if (state === 'ready' && busyKey && now - genAt > STUDIO.stallMs) { try { worker.terminate(); } catch (_) {} state = 'failed'; busyKey = null; err = 'Studio voices stalled on this device. Using device voices.'; return; }
+      if (state !== 'ready' || busyKey || !wanted.size || !quiet()) return;
+      let best = null;
+      for (const w of wanted.values()) if (!best || w.pri < best.pri) best = w;
+      if (saved.has(best.key)) { wanted.delete(best.key); return; }
+      busyKey = best.key; genAt = now;
+      const s = best.s;
+      worker.postMessage({ type: 'gen', key: best.key, text: best.text, who: s.model, spk: s.spk || '', idx: s.spk ? L2.findIndex(([n]) => n === s.spk) : 0, speed: STUDIO.speed[s.model] || 1 });
+    }
+    function want(s, text, pri = 1) {
+      if (!enabled() || state === 'failed' || !text || !s || saved.size >= STUDIO.keep) return;
+      const k = key(s, text);
+      if (saved.has(k) || mem.has(k)) return;
+      const w = wanted.get(k);
+      if (w) { w.pri = Math.min(w.pri, pri); return; }
+      wanted.set(k, { key: k, text, s, pri });
+    }
+    // made ahead: the narrator's fight and walk calls, then what people in the city say, then opponents
+    function prewarm() {
+      for (const t of NARRATOR_LINES) want(NARRATOR, t, 0);
+      for (const m of Object.values(MOVES)) want(NARRATOR, m.say, 1);
+      const people = [CHATTER, PED_LINES, PED_FIGHT_LINES, VENDOR_LINES, OFFICER_LINES, LOITER_LINES, Object.values(LINES), Object.values(CROWD_TALK)].flat(2);
+      for (const t of people) want(castOf(null, t).studio, t, 2);
+      const men = [{ model: 'ryan' }].concat(named ? STUDIO.foes.map((spk) => ({ model: 'l2arctic', spk })) : []);
+      for (const t of Object.values(FOE_TALK).flat()) for (const s of men) want(s, t, 3);
+    }
+    // a numbered line (a count, a time) is not made for next time; street numbers are
+    const reusable = (text) => !/\d(?!\d*(st|nd|rd|th)\b)/.test(text);
+    // speak a line in its Studio voice if it is ready: true when it is handled
+    function speak(text, c, now) {
+      if (!enabled() || !c.studio) return false;
+      const ctx = Sfx.ctx;
+      const k = key(c.studio, text), pr = c.studio.pr || 1;
+      if (!ctx || ctx.state !== 'running') return false;
+      const clip = mem.get(k);
+      if (clip) { remember(k, clip); play(clip, pr, now); return true; }
+      if (saved.has(k)) {
+        // on the device: a few ms to read it back, and the voice stays held meanwhile
+        caches.open(CACHE).then((ch) => ch.match(url(k))).then((r) => (r ? r.arrayBuffer() : null)).then((b) => {
+          if (!b) { saved.delete(k); deviceSpeak(text, c); return; }
+          const cl = fromWav(b);
+          remember(k, cl); play(cl, pr, performance.now());
+        }).catch(() => deviceSpeak(text, c));
+        return true;
+      }
+      if (reusable(text)) want(c.studio, text, 1);
+      return false;
+    }
+    function play(clip, pr, now) {
+      try {
+        const ctx = Sfx.ctx;
+        if (!bus) { bus = ctx.createGain(); bus.gain.value = 1; bus.connect(ctx.destination); }
+        const buf = ctx.createBuffer(1, clip.pcm.length, clip.sr), ch = buf.getChannelData(0);
+        for (let i = 0; i < clip.pcm.length; i++) ch[i] = clip.pcm[i] / 32768;
+        const src = ctx.createBufferSource();
+        src.buffer = buf; src.playbackRate.value = pr; src.connect(bus); src.start();
+        Voice.estEnd = Voice.endAt = now + (1000 * clip.pcm.length) / clip.sr / pr + 80;
+        Studio.played++;
+      } catch (_) {}
+    }
+    function status() {
+      if (!enabled()) return '';
+      if (state === 'loading') return progress > 0 ? `Studio voices: downloading the ${loadingWho} voice, ${Math.round(progress * 100)} percent` : saved.size ? `Studio voices: ${saved.size} lines saved, starting the voice engine` : 'Studio voices: starting the download';
+      if (state === 'failed') return err;
+      if (state === 'ready') {
+        const avg = genMs.length ? genMs.reduce((a, b) => a + b, 0) / genMs.length / 1000 : 0;
+        if (loadingWho && loadingWho !== 'ryan') return `Studio voices: ${saved.size} lines ready. Downloading the ${loadingWho} voice, ${Math.round(progress * 100)} percent.`;
+        const pace = avg ? ` About ${avg.toFixed(1)} s a line.` : '';
+        const bad = fails ? ` ${fails} failed: ${lastErr}` : '';
+        return (wanted.size ? `Studio voices: ${saved.size} lines ready, ${wanted.size} to go.` : `Studio voices: all ${saved.size} lines ready.`) + pace + bad;
+      }
+      return '';
+    }
+    return { start, tick, want, speak, status, cast, NARRATOR, played: 0, get state() { return state; }, get made() { return made; }, get wanted() { return wanted.size; }, get saved() { return saved.size; } };
+  })();
+  // the narrator's calls made ahead (fights and chases make none while they run)
+  const NARRATOR_LINES = ['Fight! Guard up.', 'Running', 'Sprawl!', 'Sprawl! Now hit.', 'Knockdown!', 'Angle!', 'Guard broken! Let them have it.', 'Takedown. Ground and pound.',
+    'Takedown! Quick, his friend is coming.', 'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall for the uppercut.', 'Knockout! March on.',
+    'You got dropped. Shake it off and march on.', 'You got away.', 'They ran off. March on.', 'Next one!', 'His friend jumps in!', 'Tag! The other one steps in.', 'They switch!',
+    'Sidestep. Hook him.', 'Jump out of the level change to take them down.', 'Ten more seconds.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
+    'He got away. Into the subway, probably.', 'Chase! High knees. Juke, jump and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
+    'Juke!', 'Jump!', 'Duck!', 'Got it.', 'One.', 'Two.', 'Three.', 'Again.', 'Moving on.', 'Car alarm up ahead. Someone is breaking in.', 'A street fight up ahead. Go break it up.',
+    'Corner deal going down ahead.', 'Someone is tagging a wall up ahead.', 'Someone is getting hassled up ahead. Go help.', 'Two of them hassling someone up ahead. Go help.'];
   // One queue, never talking over itself. Kinds:
   //   instruction  waits its turn, then starts 2 s after the last line ended (time to move the phone)
   //   prompt       an instruction from the framing check: a newer one replaces one still waiting,
@@ -9018,15 +9308,16 @@
     try { b = b || speechSynthesis.speaking || speechSynthesis.pending; } catch (_) {}
     return b;
   }
-  function say(text, kind = 'instruction') {
+  // cast: whose voice (castOf, sayAs); the narrator's when left out
+  function say(text, kind = 'instruction', cast = null) {
     if (!hasVoice()) return;
     const now = performance.now();
-    if (kind === 'feedback') { if (!speaking(now) && !Voice.q.length) speakNow(text, now); return; }
+    if (kind === 'feedback') { if (!speaking(now) && !Voice.q.length) speakNow(text, now, cast); return; }
     if (kind === 'prompt') {
       if (text === Voice.lastText && now - Voice.lastAt < 6000) return;
       Voice.q = Voice.q.filter((l) => l.kind !== 'prompt');
     }
-    Voice.q.push({ text, kind });
+    Voice.q.push({ text, kind, cast });
     voiceTick(now);
   }
   function voiceTick(now) {
@@ -9036,18 +9327,24 @@
     const next = Voice.q[0];
     if (next.kind !== 'confirm' && now - Voice.endAt < VOICE_GAP) return;
     Voice.q.shift();
-    speakNow(next.text, now);
+    speakNow(next.text, now, next.cast);
   }
-  function speakNow(text, now) {
+  function speakNow(text, now, cast) {
+    cast = cast || narratorCast();
+    Voice.lastText = text;
+    Voice.lastAt = now;
+    // fallback for browsers that report speaking late: about 65 ms a character
+    Voice.estEnd = Voice.endAt = now + 300 + (65 * text.length) / cast.rate;
+    if (Studio.speak(text, cast, now)) return;
+    deviceSpeak(text, cast);
+  }
+  function deviceSpeak(text, cast) {
     try {
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.05;
+      if (cast.dev) { u.voice = cast.dev; u.lang = cast.dev.lang; }
+      u.rate = cast.rate;
+      u.pitch = cast.pitch;
       speechSynthesis.speak(u);
-      // fallback for browsers that report speaking late: about 65 ms a character
-      Voice.estEnd = now + 300 + 65 * text.length;
-      Voice.endAt = Voice.estEnd;
-      Voice.lastText = text;
-      Voice.lastAt = now;
     } catch (_) {}
   }
   const voiceBusy = () => Voice.q.length > 0 || speaking(performance.now());
@@ -9376,6 +9673,10 @@
   }
 
   try { const g = localStorage.getItem('manhattan-miles-gym-first'); if (g !== null) $('gymFirst').checked = g === '1'; } catch (_) {}
+  try { if (localStorage.getItem('manhattan-miles-studio') === '1') $('studioOn').checked = true; } catch (_) {}
+  $('studioOn').addEventListener('change', () => { try { localStorage.setItem('manhattan-miles-studio', $('studioOn').checked ? '1' : '0'); } catch (_) {} if ($('studioOn').checked) Studio.start(); });
+  if ($('studioOn').checked) Studio.start();
+  setInterval(() => { const t = Studio.status(), el = $('studioLine'); if (el.textContent !== t) el.textContent = t; }, 1000);
   $('gymFirst').addEventListener('change', () => { try { localStorage.setItem('manhattan-miles-gym-first', $('gymFirst').checked ? '1' : '0'); } catch (_) {} });
   $('playCamera').addEventListener('click', () => { primeVoice(); setSticks(false); runCamera((preset) => engine.start(preset)); });
   $('setupCancel').addEventListener('click', () => {
@@ -9401,6 +9702,7 @@
     update(dt, now);
     updateWarm(dt, now);
     voiceTick(now);
+    Studio.tick(now);
     render(now);
     requestAnimationFrame(frame);
   }
@@ -9408,7 +9710,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

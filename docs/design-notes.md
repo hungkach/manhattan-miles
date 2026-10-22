@@ -2,6 +2,13 @@
 
 Mark's notes from play sessions, sorted into a backlog. Newest session first. Nothing here is built yet unless marked done.
 
+## 2026-10-22 requests (built 10/22)
+
+- Teep, Dutch rear low kick, knee: done (engine 0.11.0 `KickDetector`; game `FT.kick`, gym steps, touch buttons).
+- Squat and bound in the walking warm-up, so chase obstacles register: done (squat, bound, hop; the warm-up squat sets the chase duck floor).
+- Studio voices with a mix of women, men and accents: done. Device voices first (a cast from the device's English voices), Piper Studio voices opt in (l2arctic's second-language speakers for most of the city). Opponents are all men.
+- Graphics direction (GTA3 or Vice City look): recommendation given in chat; not started.
+
 ## 2026-10-21 PM session (30:25, 339 kcal; built 10/22)
 
 Mark: combat unplayable this session, rotational punches not registering. "We should mocap players during the gym tutorial, then that becomes their move: the coach teaches you how to throw a strike, the system captures it, and that's how it reads it." The combat needs to be perfected, not fine tuned.
@@ -104,7 +111,7 @@ Mark: effort is subjective, output is objective, and the player's own fitness is
 - Not yet:
   - Major graphics pass (Mark: Vice City level): next session. Plan: textured facades with lit windows, sidewalks with curbs, street furniture (lamps, hydrants, trees, subway entrances), sky and sun with time of day, fog, better people (proportions, clothes, hair), cars with wheels and lights, a quality setting.
   - Enter buildings, including the subway (long term).
-  - Studio voices (distant future).
+  - Studio voices: done 10/22.
   - The bound out and back from Homecoming Hero to start a "shift" (Dillashaw or Cruz angle change, a 1 to 4 s burst window): Mark's note was cut off; needs a bound detector in the engine.
 
 ## 2026-10-15 PM iPad test (8:47, 83 kcal, very light)
