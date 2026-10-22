@@ -283,7 +283,10 @@
       // swapFrames: frames of wrist height evidence averaged; flipMargin (T): a jump that big
       // toward the other wrist's place is the phone's labels flipping
       // peer: PeerJS options for the signaling server (null: PeerJS's free public one)
-      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0.3, alignMs: 25, peer: null },
+      // standPitch, standMs, standFrames (0.12.1): the side's standing hip height and thigh angle
+      // come from frames with both thighs within standPitch degrees of straight down, the last
+      // standMs, at least standFrames of them
+      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0.3, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };

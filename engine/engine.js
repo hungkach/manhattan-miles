@@ -126,6 +126,8 @@
       if (st.calibrator) runCalibrator();
 
       const sig = points ? RE.computeSignals(points, st.cal, cfg, world) : { confidence: 0, missing: RE.REQUIRED.map((i) => RE.LM_NAMES[i]), calibrated: !!st.cal };
+      // the side camera's thighs and hip drop in place of this camera's (0.12.1)
+      if (points && st.cal && st.side.connected(raw.t)) st.side.applySignals(sig, raw.t, cfg, st.cal);
       st.sig = sig;
 
       // confidence transitions

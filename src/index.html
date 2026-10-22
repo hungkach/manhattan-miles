@@ -185,11 +185,11 @@
 <div id="sidePanel" class="screen" hidden>
   <div class="card">
     <h2>Side camera</h2>
-    <p>A second phone at your side sees how far each punch reaches. Point its camera at this code, or share the link to it:</p>
+    <p>A second phone at your side sees how far each punch and kick reaches and how low you drop. Point its camera at this code, or share the link to it:</p>
     <canvas id="sideQr" width="232" height="232"></canvas>
     <p class="sidecode" id="sideCode"></p>
     <p class="hint" id="sideLink"></p>
-    <p>Prop it upright at chest height about 2 m from your open side (your right if you lead with your left), square to your side, your whole upper body in view. Then run the gym round once with it on: the game learns your punches as the side camera sees them.</p>
+    <p>Prop it upright at hip height about 2.5 m from your open side (your right if you lead with your left), square to your side, your whole body from head to knees in view. Then run the gym round once with it on: the game learns your punches as the side camera sees them.</p>
     <p class="hint" id="sideStatus"></p>
     <div class="btns"><button id="sideShare" class="main">Share the link</button><button id="sideDone" class="secondary">Done</button></div>
   </div>
@@ -198,7 +198,7 @@
 <div id="sideCam" class="screen" hidden>
   <div class="card">
     <h2>Side camera</h2>
-    <p>Code <b id="sideCamCode"></b>. Prop this phone upright at chest height about 2 m from the player's open side, square to it, their whole upper body in view. Keep this page open; the screen stays on.</p>
+    <p>Code <b id="sideCamCode"></b>. Prop this phone upright at hip height about 2.5 m from the player's open side, square to it, their whole body from head to knees in view. Keep this page open; the screen stays on.</p>
     <video id="sideVideo" playsinline muted></video>
     <p class="hint" id="sideCamStatus">Tap Start, then allow the camera.</p>
     <div class="btns"><button id="sideStart" class="main">Start</button></div>
@@ -4849,7 +4849,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 every ground strike lands, takedowns switch, gnp by type';
+  const BUILD = '2026-10-24 late \u00b7 side camera reads legs and level too (engine 0.12.1)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;

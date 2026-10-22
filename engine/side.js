@@ -42,7 +42,7 @@
 
   class SideView {
     constructor(cfg) { this.c = cfg.side; this.sm = cfg.smoothing; this.offset = null; this.reset(); }
-    reset() { this.samples = []; this.face = 0; this.swap = false; this.ev = 0; this.lastRaw = null; this.arrivals = []; this.spreads = []; this.f = {}; }
+    reset() { this.samples = []; this.face = 0; this.swap = false; this.ev = 0; this.lastRaw = null; this.legSwap = false; this.legEv = 0; this.lastKnees = null; this.stand = []; this.arrivals = []; this.spreads = []; this.f = {}; }
     // the phone's clock to the main clock: main = side + offset (ms)
     sync(offset) { this.offset = offset; }
     filt(key, v, tSec) { const f = (this.f[key] = this.f[key] || new RE.OneEuroFilter(this.sm)); return f.filter(v, tSec); }
@@ -81,7 +81,37 @@
       const flipped = !!lr && d(raw.l, lr.r) + d(raw.r, lr.l) + this.c.flipMargin < d(raw.l, lr.l) + d(raw.r, lr.r);
       this.lastRaw = raw;
       if (flipped) { this.swap = !this.swap; for (const k of ['e', 'w', 'h']) { const a = this.f['l' + k]; this.f['l' + k] = this.f['r' + k]; this.f['r' + k] = a; } }
-      this.samples.push({ t: ct, left: arm('l', L.L_SHOULDER, L.L_ELBOW, L.L_WRIST), right: arm('r', L.R_SHOULDER, L.R_ELBOW, L.R_WRIST), tilt });
+      // legs and level (0.12.1): each thigh's angle from straight down (degrees) and its knee's
+      // height above its hip (T); the hip midpoint's drop below where it stands (T), from the
+      // frames where both thighs hang straight (the last standMs)
+      const kr = { l: { x: (dir * (P[L.L_KNEE].x - hm.x)) / T, y: (hm.y - P[L.L_KNEE].y) / T }, r: { x: (dir * (P[L.R_KNEE].x - hm.x)) / T, y: (hm.y - P[L.R_KNEE].y) / T } };
+      const lk = this.lastKnees;
+      if (lk && d(kr.l, lk.r) + d(kr.r, lk.l) + this.c.flipMargin < d(kr.l, lk.l) + d(kr.r, lk.r)) {
+        this.legSwap = !this.legSwap;
+        for (const k of ['p', 'k']) { const a = this.f['l' + k]; this.f['l' + k] = this.f['r' + k]; this.f['r' + k] = a; }
+      }
+      this.lastKnees = kr;
+      // the thigh forward and down (T); across the body is the main camera's (applySignals)
+      const leg = (side, H, K) => {
+        const fw = this.filt(side + 'p', (dir * (P[K].x - P[H].x)) / T, tSec), dn = (P[K].y - P[H].y) / T;
+        return {
+          fw, dn,
+          pitch: (Math.atan2(Math.abs(fw), dn) * 180) / Math.PI,
+          kh: this.filt(side + 'k', -dn, tSec),
+          ok: P[H].v >= this.c.minVis && P[K].v >= this.c.minVis,
+        };
+      };
+      const legs = { left: leg('l', L.L_HIP, L.L_KNEE), right: leg('r', L.R_HIP, L.R_KNEE) };
+      if (legs.left.ok && legs.right.ok && legs.left.pitch < this.c.standPitch && legs.right.pitch < this.c.standPitch) this.stand.push([ct, hm.y, (legs.left.pitch + legs.right.pitch) / 2, T]);
+      while (this.stand.length && ct - this.stand[0][0] > this.c.standMs) this.stand.shift();
+      let level = null;
+      if (this.stand.length >= this.c.standFrames && Math.min(P[L.L_HIP].v, P[L.R_HIP].v) >= this.c.minVis) {
+        const med = (k) => { const a = this.stand.map((q) => q[k]).sort((x, y) => x - y); return a[a.length >> 1]; };
+        // in standing torso lengths, so the torso's own wobble does not read as a level change
+        level = this.filt('lv', (hm.y - med(1)) / med(3), tSec);
+        this.pitchBase = med(2);
+      }
+      this.samples.push({ t: ct, left: arm('l', L.L_SHOULDER, L.L_ELBOW, L.L_WRIST), right: arm('r', L.R_SHOULDER, L.R_ELBOW, L.R_WRIST), legs, level, tilt });
       while (this.samples.length > 2 && ct - this.samples[0].t > 1000) this.samples.shift();
     }
     // is the side camera sending (within a second)?
@@ -106,6 +136,39 @@
         if (this.ev > this.c.swapMargin) { this.swap = !this.swap; this.ev = 0; }
       }
       return this.swap ? { left: s.right, right: s.left } : { left: s.left, right: s.right };
+    }
+    // Legs and level into this frame's signals (0.12.1): the steps, kicks and level changes read
+    // pitchL/pitchR and levelDrop, so the side camera's thigh angles and hip drop take their place
+    // while it is fresh. The side's legs are matched to these by knee height (as the arms are).
+    applySignals(sig, t, cfg, cal) {
+      const s = this.newest(t);
+      if (!s || !s.legs || !sig.body) return false;
+      const b = sig.body, main = { left: b.lk.y - b.lh.y, right: b.rk.y - b.rh.y };
+      if (s !== this.legJudged) {
+        this.legJudged = s;
+        const same = Math.abs(s.legs.left.kh - main.left) + Math.abs(s.legs.right.kh - main.right);
+        const cross = Math.abs(s.legs.left.kh - main.right) + Math.abs(s.legs.right.kh - main.left);
+        const worse = this.legSwap ? cross - same : same - cross;
+        this.legEv += (worse - this.legEv) / this.c.swapFrames;
+        if (this.legEv > this.c.swapMargin) { this.legSwap = !this.legSwap; this.legEv = 0; }
+      }
+      const legs = this.legSwap ? { L: s.legs.right, R: s.legs.left } : { L: s.legs.left, R: s.legs.right };
+      // each thigh in 3D: forward and down from the side, across the body from this camera (in T;
+      // the body's x is in shoulder widths), so a low kick's sweep counts toward its angle
+      const sw = cal && cal.shoulderWidth > 0 && cal.torsoLength > 0 ? cal.shoulderWidth / cal.torsoLength : 0.75;
+      for (const k of ['L', 'R']) {
+        const g = legs[k];
+        if (!g.ok) continue;
+        const across = (k === 'L' ? b.lk.x - b.lh.x : b.rk.x - b.rh.x) * sw;
+        const pitch = (Math.atan2(Math.hypot(g.fw, across), g.dn) * 180) / Math.PI;
+        sig['pitch' + k] = Math.max(0, pitch - (this.pitchBase || 0));
+      }
+      if (s.level != null) {
+        sig.levelDrop = s.level;
+        sig.squatDepth = RE.clamp(s.level / cfg.signals.squatFullDrop, 0, 1);
+      }
+      sig.side = true;
+      return true;
     }
   }
   RE.SideView = SideView;
