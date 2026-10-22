@@ -41,6 +41,9 @@
       det: null,
       loco: new RE.Locomotion(cfg),
       combat: new RE.Combat(cfg),
+      // the side camera (0.12.0): what it last sent, and its newest frame for the recorder
+      side: new RE.SideView(cfg),
+      sideOut: null,
       demoInput: null,
       demoUi: null,
       frame: null,
@@ -96,6 +99,9 @@
       st.session.frames++;
       if (st.session.startedAt === null) st.session.startedAt = raw.t;
 
+      // the side camera's newest frame rides along in a recording; a replay feeds it back
+      if (st.sideOut && st.source === 'camera') { raw.side = st.sideOut; st.sideOut = null; }
+      else if (raw.side && st.source !== 'camera') st.side.push(raw.side, raw.t, st.cal);
       if (st.recorder.active && st.recorder.push(raw)) {
         emitter.emit('recording_done', { clip: st.recorder.stop() });
       }
@@ -137,7 +143,7 @@
       if (st.source !== 'demo') {
         // gesture detectors, then the state machine reads their events
         st.det = st.cal && points
-          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold, teach: st.teach })
+          ? st.detectors.update({ t: raw.t, w: raw.w, h: raw.h, points, raw: px, world, cal: st.cal, sig, low, upperLow: !sig.upperSeen, holdVis: cfg.visibility.hold, teach: st.teach, sideView: st.side, sideOn: st.side.connected(raw.t) })
           : null;
         if (st.det && st.capture.move === 'step' && st.det.stepCues) recordCues(st.det.stepCues);
         if (st.det) for (const [name, payload] of st.det.events) emitter.emit(name, payload);
@@ -158,6 +164,7 @@
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
           level_low: det ? !!det.levelLow : false,
+          side_cam: st.side.connected(raw.t), // a side camera is sending (0.12.0)
           confidence: sig.confidence,
         });
         combatTick(raw.t);
@@ -199,6 +206,7 @@
         if (prev && prev.cues && !cal.cues) cal.cues = prev.cues;
         // and the punches and guard taught in an earlier gym session (0.10.0)
         if (prev && prev.strikes && !cal.strikes) cal.strikes = prev.strikes;
+        if (prev && prev.strikesSide && !cal.strikesSide) cal.strikesSide = prev.strikesSide;
         if (prev && prev.guardPos && !cal.guardPos) cal.guardPos = prev.guardPos;
         RE.profiles.save(cal);
         st.calibrator = null;
@@ -382,7 +390,8 @@
       //                                      that hand makes out from rest is a sample of it
       //                                      ('strike_taught' { hand, role, n, speed })
       //   engine.teach_stop()                saves what was taught with the profile
-      //   engine.strike_samples()            { left: { straight: n, ... }, right: {...}, guard }
+      //   engine.strike_samples()            { left: { straight: n, ... }, right: {...}, guard, side }
+      //                                      (with a side camera on, the set taught with it)
       //   engine.forget_strikes()            back to the rules alone
       teach_guard() { st.teach = { guard: true }; const d = strikeDet(); if (d) d.guardAcc = { left: null, right: null }; },
       teach_strike(role, hand) {
@@ -402,13 +411,15 @@
         RE.profiles.save(st.cal);
       },
       strike_samples() {
-        const lib = (st.cal && st.cal.strikes) || {}, out = { guard: !!(st.cal && st.cal.guardPos) };
+        // the set in use: taught with the side camera when one is on (0.12.0)
+        const side = st.side.connected(st.raw ? st.raw.t : RE.now());
+        const lib = (st.cal && (side ? st.cal.strikesSide : st.cal.strikes)) || {}, out = { guard: !!(st.cal && st.cal.guardPos), side };
         for (const hand of ['left', 'right']) { out[hand] = {}; for (const role of ['straight', 'hook', 'uppercut']) out[hand][role] = (lib[hand] && lib[hand][role] || []).length; }
         return out;
       },
       forget_strikes() {
         if (!st.cal) return;
-        delete st.cal.strikes; delete st.cal.guardPos;
+        delete st.cal.strikes; delete st.cal.strikesSide; delete st.cal.guardPos;
         RE.profiles.save(st.cal);
       },
       // Back to the default step thresholds for this profile.
@@ -416,6 +427,22 @@
         if (!st.cal) return;
         delete st.cal.cues;
         RE.profiles.save(st.cal);
+      },
+      // The side camera (0.12.0, side.js; side-link.js connects one):
+      //   engine.side_feed(frame[, t])   a frame from RE.sidePack, arriving now (or at t, tests)
+      //   engine.side_sync(offset)       the phone's clock to this one (main = side + offset, ms)
+      //   engine.side_status()           { connected, fps, tilt (degrees from a true profile), synced,
+      //                                    using (fresh enough to read the arms) }
+      side_feed(frame, t) {
+        const at = t == null ? RE.now() : t;
+        st.side.push(frame, at, st.cal);
+        st.sideOut = frame;
+      },
+      // the phone's clock to this one: main = side + offset (ms), measured by the link
+      side_sync(offset) { st.side.sync(offset); },
+      side_status() {
+        const t = st.raw ? st.raw.t : RE.now(), s = st.side.samples[st.side.samples.length - 1];
+        return { connected: st.side.connected(t), fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null };
       },
       // Which camera is running: {facing, lens, fallback, label} or null.
       camera() { return st.sourceObj && st.sourceObj.info ? Object.assign({}, st.sourceObj.info) : null; },
@@ -501,6 +528,6 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, stride: 1, knee_lift: 0, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, side_cam: false, stride: 1, knee_lift: 0, confidence: 0 };
   }
 })(globalThis);

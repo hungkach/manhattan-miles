@@ -54,6 +54,11 @@
   #phone p { margin: 10px 0 0; font: 600 12px system-ui, sans-serif; color: var(--muted); text-align: center; }
   .screen { position: fixed; inset: 0; z-index: 5; display: flex; align-items: safe center; justify-content: center; overflow-y: auto; padding: 20px; background: rgba(6, 9, 15, .74); }
   .screen[hidden] { display: none; }
+  .sidecode { font: 900 40px ui-monospace, monospace; letter-spacing: 6px; text-align: center; margin: 6px 0; color: var(--accent); }
+  #sideQr { display: block; margin: 8px auto; width: 232px; height: 232px; image-rendering: pixelated; border-radius: 8px; }
+  #sideVideo { width: 100%; max-height: 46vh; border-radius: 12px; background: #000; transform: scaleX(-1); object-fit: cover; }
+  #sideChip { position: fixed; top: calc(6px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%) scale(var(--ui, 1)); transform-origin: 50% 0; z-index: 4; background: rgba(30, 140, 80, .85); color: #fff; font: 700 12px system-ui, sans-serif; padding: 3px 10px; border-radius: 10px; pointer-events: none; }
+  #sideChip[hidden] { display: none; }
   .card { width: min(440px, 100%); background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 22px 20px; text-align: center; }
   .card h1 { margin: 0 0 4px; font-size: 32px; color: var(--accent); }
   .card h2 { margin: 0 0 8px; font-size: 24px; }
@@ -168,12 +173,39 @@
         <select id="gfx"><option value="high">High (3D city)</option><option value="low">Low (3D city, lighter)</option><option value="classic">Classic (older phones)</option></select>
       </label>
       <button id="playCamera" class="secondary">Walk with camera</button>
+      <button id="sideBtn" class="secondary">Side camera (optional)</button>
+      <p id="sideLine" class="hint"></p>
     </div>
     <p class="hint" id="progLine"></p>
     <p class="stamp" id="buildStamp"></p>
     <p class="stamp">Map data &copy; OpenStreetMap contributors (ODbL). Subway data from the MTA. Businesses are real places; every person in the game is fictional.</p>
   </div>
 </div>
+
+<div id="sidePanel" class="screen" hidden>
+  <div class="card">
+    <h2>Side camera</h2>
+    <p>A second phone at your side sees how far each punch reaches. Point its camera at this code, or share the link to it:</p>
+    <canvas id="sideQr" width="232" height="232"></canvas>
+    <p class="sidecode" id="sideCode"></p>
+    <p class="hint" id="sideLink"></p>
+    <p>Prop it upright at chest height about 2 m from your open side (your right if you lead with your left), square to your side, your whole upper body in view. Then run the gym round once with it on: the game learns your punches as the side camera sees them.</p>
+    <p class="hint" id="sideStatus"></p>
+    <div class="btns"><button id="sideShare" class="main">Share the link</button><button id="sideDone" class="secondary">Done</button></div>
+  </div>
+</div>
+
+<div id="sideCam" class="screen" hidden>
+  <div class="card">
+    <h2>Side camera</h2>
+    <p>Code <b id="sideCamCode"></b>. Prop this phone upright at chest height about 2 m from the player's open side, square to it, their whole upper body in view. Keep this page open; the screen stays on.</p>
+    <video id="sideVideo" playsinline muted></video>
+    <p class="hint" id="sideCamStatus">Tap Start, then allow the camera.</p>
+    <div class="btns"><button id="sideStart" class="main">Start</button></div>
+  </div>
+</div>
+
+<div id="sideChip" hidden>Side cam</div>
 
 <div id="summary" class="screen" hidden>
   <div class="card">
@@ -1540,7 +1572,7 @@
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', tutorial: true, camera: engine.camera() }); Tutor.recording = true; }
     document.body.classList.add('fighting');
     Voice.q.length = 0; // nothing from the street follows you into the gym
-    say(isDemo() ? 'The gym. Every move twice.' : 'The gym. Three of each punch, your way. The game learns them.', 'instruction');
+    say(isDemo() ? 'The gym. Every move twice.' : engine.side_status().connected ? 'The gym, with the side camera. Three of each punch, your way. The game learns them as both cameras see them.' : 'The gym. Three of each punch, your way. The game learns them.', 'instruction');
     tutorNext(now);
     return true;
   }
@@ -4521,6 +4553,7 @@
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     W = innerWidth; H = innerHeight;
+    if (Side.phone) return; // the side phone only sends its camera
     // on the way into the gym (Mark 10/23: the streets showed for a moment first): the gym's dark
     // until the tutorial's room is up
     if (G.state === 'walk' && G.afterGym && !(Fight.active && Fight.active.tutor)) {
@@ -4810,7 +4843,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 \u00b7 city memory fix, sprawls, types, both bounds';
+  const BUILD = '2026-10-24 PM \u00b7 side camera (engine 0.12.0), city memory fix, sprawls';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -4931,7 +4964,7 @@
   }
 
   function show(id) {
-    for (const s of ['title', 'summary']) $(s).hidden = s !== id;
+    for (const s of ['title', 'summary', 'sidePanel', 'sideCam']) $(s).hidden = s !== id;
     if (id) note('');
   }
   function note(msg, ms = 6000) {
@@ -5775,6 +5808,181 @@
   $('saveTutor').addEventListener('click', () => { if (Tutor.clip) RE.downloadClip(Tutor.clip, `manhattan-miles-tutorial-${Date.now()}.json`); });
   $('saveFight').addEventListener('click', () => { if (Fight.clip) RE.downloadClip(Fight.clip, `manhattan-miles-fight-${Date.now()}.json`); });
 
+  // ---------- the side camera (10/24, engine 0.12.0; Mark: an iPhone at your open side, linked by a
+  // code with a url, optional) ----------
+  // On the tablet the title's Side camera button opens the link (RE.sideHost) with a code kept
+  // between sessions, so the phone's link stays the same; the phone opens ?side=CODE, which shows
+  // only its camera page (RE.sideCamera: camera, tracker, the screen kept on) and sends its
+  // landmarks. While it sends, the engine reads punch reach from it (side_cam) and a chip shows.
+  const SIDE_KEY = 'manhattan-miles-side-code';
+  const Side = { host: null, state: '', text: '', code: '', cam: null, phone: false, frames: 0 };
+  // A QR code for the side camera's link (10/24): byte mode, error correction level L, versions 1
+  // to 5 (one block each, up to 106 bytes), the mask with the lowest penalty. Returns rows of
+  // booleans (true is dark), or null when the text is too long.
+  function qrMatrix(text) {
+    const bytes = Array.from(new TextEncoder().encode(text));
+    const TOTAL = [0, 26, 44, 70, 100, 134], EC = [0, 7, 10, 15, 20, 26], ALIGN = [0, 0, 18, 22, 26, 30];
+    let v = 1;
+    while (v <= 5 && bytes.length + 2 > TOTAL[v] - EC[v]) v++;
+    if (v > 5) return null;
+    const dataN = TOTAL[v] - EC[v];
+    // the bit stream: mode 0100, an 8-bit count, the bytes, a terminator, pad bytes
+    const bits = [];
+    const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >> i) & 1); };
+    put(4, 4); put(bytes.length, 8);
+    for (const b of bytes) put(b, 8);
+    for (let i = 0; i < 4 && bits.length < dataN * 8; i++) bits.push(0);
+    while (bits.length % 8) bits.push(0);
+    const data = [];
+    for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+    for (let k = 0; data.length < dataN; k++) data.push(k % 2 ? 0x11 : 0xec);
+    // Reed-Solomon over GF(256), polynomial 0x11d
+    const EXP = new Array(512), LOG = new Array(256);
+    for (let i = 0, x = 1; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+    for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+    const mulG = (a, b) => (a && b ? EXP[LOG[a] + LOG[b]] : 0);
+    let gen = [1];
+    for (let i = 0; i < EC[v]; i++) {
+      const next = new Array(gen.length + 1).fill(0);
+      for (let j = 0; j < gen.length; j++) { next[j] ^= gen[j]; next[j + 1] ^= mulG(gen[j], EXP[i]); }
+      gen = next;
+    }
+    const rem = data.concat(new Array(EC[v]).fill(0));
+    for (let i = 0; i < data.length; i++) {
+      const c = rem[i];
+      if (c) for (let j = 0; j < gen.length; j++) rem[i + j] ^= mulG(gen[j], c);
+    }
+    const codewords = data.concat(rem.slice(data.length));
+    // the grid and the function patterns
+    const N = 17 + 4 * v, M = [], F = [];
+    for (let i = 0; i < N; i++) { M.push(new Array(N).fill(false)); F.push(new Array(N).fill(false)); }
+    const set = (r, c, d) => { M[r][c] = d; F[r][c] = true; };
+    for (const [r0, c0] of [[0, 0], [0, N - 7], [N - 7, 0]]) {
+      for (let r = -1; r <= 7; r++) for (let c = -1; c <= 7; c++) {
+        const rr = r0 + r, cc = c0 + c;
+        if (rr < 0 || cc < 0 || rr >= N || cc >= N) continue;
+        const ring = Math.max(Math.abs(r - 3), Math.abs(c - 3));
+        set(rr, cc, r >= 0 && r <= 6 && c >= 0 && c <= 6 && ring !== 2);
+      }
+    }
+    for (let i = 8; i < N - 8; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    if (v > 1) { const a = ALIGN[v]; for (let r = -2; r <= 2; r++) for (let c = -2; c <= 2; c++) set(a + r, a + c, Math.max(Math.abs(r), Math.abs(c)) !== 1); }
+    set(4 * v + 9, 8, true);
+    // reserve the format areas
+    for (let i = 0; i < 9; i++) { if (!F[8][i]) set(8, i, false); if (!F[i][8]) set(i, 8, false); }
+    for (let i = 0; i < 8; i++) { set(8, N - 1 - i, false); set(N - 1 - i, 8, false); }
+    // the data, in two-column zigzags from the bottom right
+    const stream = [];
+    for (const b of codewords) for (let i = 7; i >= 0; i--) stream.push((b >> i) & 1);
+    let k = 0;
+    for (let c = N - 1; c > 0; c -= 2) {
+      if (c === 6) c--;
+      const up = ((N - 1 - c) >> 1) % 2 === 0;
+      for (let i = 0; i < N; i++) {
+        const r = up ? N - 1 - i : i;
+        for (const cc of [c, c - 1]) if (!F[r][cc]) M[r][cc] = k < stream.length ? stream[k++] === 1 : false;
+      }
+    }
+    const MASKS = [(r, c) => (r + c) % 2 === 0, (r) => r % 2 === 0, (r, c) => c % 3 === 0, (r, c) => (r + c) % 3 === 0, (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+      (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0, (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0, (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0];
+    // format bits for level L (01) and a mask: BCH(15,5), XOR 0x5412
+    const format = (mask) => {
+      const d = (1 << 3) | mask;
+      let b = d << 10;
+      for (let i = 14; i >= 10; i--) if ((b >> i) & 1) b ^= 0x537 << (i - 10);
+      return ((d << 10) | b) ^ 0x5412;
+    };
+    const build = (mask) => {
+      const G = M.map((row, r) => row.map((d, c) => (F[r][c] ? d : d !== MASKS[mask](r, c))));
+      const f = format(mask), bit = (i) => ((f >> i) & 1) === 1;
+      // around the top-left finder
+      for (let i = 0; i <= 5; i++) G[i][8] = bit(i);
+      G[7][8] = bit(6); G[8][8] = bit(7); G[8][7] = bit(8);
+      for (let i = 9; i < 15; i++) G[8][14 - i] = bit(i);
+      // and split between the other two
+      for (let i = 0; i < 8; i++) G[8][N - 1 - i] = bit(i);
+      for (let i = 8; i < 15; i++) G[N - 15 + i][8] = bit(i);
+      G[N - 8][8] = true;
+      return G;
+    };
+    const penalty = (G) => {
+      let p = 0;
+      for (const line of [G, G[0].map((_, c) => G.map((row) => row[c]))]) for (const row of line) {
+        let run = 1;
+        for (let i = 1; i <= N; i++) { if (i < N && row[i] === row[i - 1]) run++; else { if (run >= 5) p += run - 2; run = 1; } }
+        for (let i = 0; i + 10 < N + 1; i++) {
+          const s = row.slice(i, i + 11).map((d) => (d ? 1 : 0)).join('');
+          if (s === '10111010000' || s === '00001011101') p += 40;
+        }
+      }
+      for (let r = 0; r < N - 1; r++) for (let c = 0; c < N - 1; c++) { const d = G[r][c]; if (G[r][c + 1] === d && G[r + 1][c] === d && G[r + 1][c + 1] === d) p += 3; }
+      const dark = G.reduce((n, row) => n + row.filter(Boolean).length, 0);
+      return p + 10 * Math.floor(Math.abs((dark * 100) / (N * N) - 50) / 5);
+    };
+    let best = null, bestP = Infinity;
+    for (let m = 0; m < 8; m++) { const G = build(m), p = penalty(G); if (p < bestP) { bestP = p; best = G; } }
+    return best;
+  }
+  function drawQr(text) {
+    const G = qrMatrix(text), cv = $('sideQr'), x = cv.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, cv.width, cv.height);
+    if (!G) return;
+    const N = G.length, s = Math.floor(cv.width / (N + 8)), o = Math.floor((cv.width - s * N) / 2);
+    x.fillStyle = '#000';
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (G[r][c]) x.fillRect(o + c * s, o + r * s, s, s);
+  }
+  // a test hook: headless checks name a local signaling server
+  const sidePeer = () => (window.__sidePeer ? { side: { peer: window.__sidePeer } } : undefined);
+  const sideUrl = (code) => location.origin + location.pathname + '?side=' + code;
+  function sideText(t, st) { Side.text = t; Side.state = st || Side.state; $('sideStatus').textContent = t; }
+  async function sideStart(fresh) {
+    let code = '';
+    try { code = localStorage.getItem(SIDE_KEY) || ''; } catch (_) {}
+    if (fresh || !/^[A-Z2-9]{6}$/.test(code)) { code = RE.sideCode(); try { localStorage.setItem(SIDE_KEY, code); } catch (_) {} }
+    Side.code = code;
+    $('sideCode').textContent = code; $('sideLink').textContent = sideUrl(code); drawQr(sideUrl(code));
+    sideText('Starting the link', 'starting');
+    try {
+      Side.host = await RE.sideHost(engine, {
+        code, config: sidePeer(),
+        onStatus: (t, st) => {
+          sideText(t, st);
+          // the code is still held from an earlier page load: a new one
+          if (st === 'error' && /taken/.test(t) && !fresh) { try { Side.host.close(); } catch (_) {} Side.host = null; sideStart(true); }
+        },
+      });
+    } catch (e) { sideText('The link did not start: ' + e.message, 'error'); Side.host = null; }
+  }
+  $('sideBtn').addEventListener('click', () => { show('sidePanel'); if (!Side.host) sideStart(false); });
+  $('sideDone').addEventListener('click', () => show('title'));
+  $('sideShare').addEventListener('click', async () => {
+    const url = sideUrl(Side.code);
+    try { if (navigator.share) { await navigator.share({ title: 'Manhattan Miles side camera', url }); return; } } catch (_) { return; }
+    try { await navigator.clipboard.writeText(url); sideText('Link copied', Side.state); } catch (_) { sideText(url, Side.state); }
+  });
+  {
+    const code = new URLSearchParams(location.search).get('side');
+    if (code) {
+      Side.phone = true;
+      $('sideCamCode').textContent = code.toUpperCase();
+      show('sideCam');
+      $('sideStart').addEventListener('click', async () => {
+        $('sideStart').hidden = true;
+        try {
+          Side.cam = await RE.sideCamera({ code, config: sidePeer(), video: $('sideVideo'), onStatus: (t) => { $('sideCamStatus').textContent = t; }, onFrame: () => { Side.frames++; } });
+          setInterval(() => { $('sideCamStatus').textContent = `Sending, ${Side.frames} frames a second. Keep this page open.`; Side.frames = 0; }, 1000);
+        } catch (e) { $('sideCamStatus').textContent = e.message; $('sideStart').hidden = false; }
+      });
+    }
+  }
+  // the chip while it sends, and the title's line
+  setInterval(() => {
+    const on = !!engine.side_status().connected;
+    $('sideChip').hidden = !on || Side.phone || G.state === 'title';
+    const line = Side.phone || !Side.host ? '' : on ? `Side camera connected, ${engine.side_status().fps} frames a second` : 'Side camera: waiting for the phone';
+    if ($('sideLine').textContent !== line) $('sideLine').textContent = line;
+  }, 500);
+
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
@@ -5791,7 +5999,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { ARCH, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Side, ARCH, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

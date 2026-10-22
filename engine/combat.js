@@ -200,6 +200,15 @@
   }
   RE.strikeShape = strikeShape;
 
+  // The player's taught punches. With a side camera on (0.12.0) the set taught with it, since its
+  // depth is truer and the paths differ; without one the main camera's set. Either falls back to
+  // the other until it has samples of its own.
+  function libOf(ctx) {
+    const c = ctx.cal;
+    if (!c) return null;
+    return (ctx.sideOn ? c.strikesSide || c.strikes : c.strikes || c.strikesSide) || null;
+  }
+  function libFor(ctx) { const k = ctx.sideOn ? 'strikesSide' : 'strikes'; return (ctx.cal[k] = ctx.cal[k] || {}); }
   class StrikeDetector {
     constructor(cfg) {
       this.c = cfg.combat.strike;
@@ -213,7 +222,7 @@
     armL(out) { return 0.6 * (out.armScale || 1); }
     // the player's samples: the nearest one per role for this hand (own, or the other hand mirrored)
     match(ctx, hand, path, out, early) {
-      const lib = ctx.cal && ctx.cal.strikes;
+      const lib = libOf(ctx);
       if (!lib) return null;
       const T = this.T, live = strikeShape(path, this.armL(out), T.points, T.angleW, early ? 0 : T.backFrac);
       if (!live) return null;
@@ -233,7 +242,7 @@
       return best;
     }
     taught(ctx, role) {
-      const lib = ctx.cal && ctx.cal.strikes;
+      const lib = libOf(ctx);
       return !!lib && ['left', 'right'].some((hd) => lib[hd] && lib[hd][role] && lib[hd][role].length);
     }
     // teaching: any move out from rest by the asked-for hand is a sample of the asked-for punch
@@ -251,7 +260,7 @@
       const shape = peakV >= T.minSpeed ? strikeShape(path, this.armL(out), T.points, T.angleW, T.backFrac) : null;
       if (!shape || shape.far * this.armL(out) < c.setTravel) return;
       const role = ctx.teach.role;
-      const lib = (ctx.cal.strikes = ctx.cal.strikes || {});
+      const lib = libFor(ctx);
       const list = ((lib[hand] = lib[hand] || {})[role] = lib[hand][role] || []);
       list.push(Object.assign(shape, { speed: peakV, out: strikeShape(path, this.armL(out), T.points, T.angleW, 0) }));
       while (list.length > T.keep) list.shift();
@@ -315,7 +324,7 @@
         const peakV = Math.max(...path.map((x) => x.v));
         // with taught samples a punch is judged whole, once the fist is on its way back (0.10.0);
         // the rules alone judge each kind as its shape completes and the fist slows
-        if (ctx.cal && ctx.cal.strikes) {
+        if (libOf(ctx)) {
           if (backAt([h.set, ...path], this.T.backFrac, c.setTravel) > 0) this.finish(ctx, hand, h, out, c, false);
           else if (peakV >= c.minSpeed && s.v <= c.stopFrac * peakV) this.finish(ctx, hand, h, out, c, false, true); // early, if it is plainly one punch
         }
@@ -527,7 +536,8 @@
       const arm = r.lu == null || r.ru == null ? 0 : Math.max(r.lu + r.lf, r.ru + r.rf);
       return arm >= 0.3 ? RE.clamp(arm / 0.6, 0.75, 1) : 1; // no reference yet: unscaled
     }
-    fix(ctx, frame) {
+    // side: a side camera's arms for this moment ({ left, right } reach in T, from SideView), or null
+    fix(ctx, frame, side) {
       const world = ctx.world, pts = ctx.points, c = this.c;
       const dt = this.t == null ? 0 : Math.max(0, (ctx.t - this.t) / 1000);
       this.t = ctx.t;
@@ -545,6 +555,8 @@
       const at = (p, d) => { const m = Math.max(0.2, (D - d) / D); return { x: cx + (p.x - cx) * m, y: cy + (p.y - cy) * m }; };
       const out = world.slice();
       const move = (p, d) => Object.assign({}, p, { x: p.x + frame.fwd.x * d, y: p.y + frame.fwd.y * d, z: p.z + frame.fwd.z * d });
+      const sd = side;
+      this.usedSide = false;
       for (const [S, E, W, side] of [[L.L_SHOULDER, L.L_ELBOW, L.L_WRIST, 'l'], [L.R_SHOULDER, L.R_ELBOW, L.R_WRIST, 'r']]) {
         const zE = dot(sub(world[E], world[S]), frame.fwd), zF = dot(sub(world[W], world[E]), frame.fwd);
         const l3u = len(sub(world[E], world[S])), l3f = len(sub(world[W], world[E]));
@@ -564,6 +576,15 @@
           const nF = zF > -c.behind && df > zF ? df : zF;
           dE = Math.max(0, nE); dW = dE + Math.max(0, nF);
         }
+        const sa = sd && sd[side === 'l' ? 'left' : 'right'];
+        if (sa && sa.ok) {
+          // the side camera saw how far in front of the shoulder the elbow and fist are: in
+          // torso lengths, times this torso in meters
+          out[E] = move(world[E], sa.e * wm - zE);
+          out[W] = move(world[W], sa.w * wm - zE - zF);
+          this.usedSide = true;
+          continue;
+        }
         const nE = zE > -c.behind && du > zE ? du : zE;
         const nF = zF > -c.behind && df > zF ? df : zF;
         out[E] = move(world[E], nE - zE);
@@ -574,13 +595,31 @@
   }
 
   // The arm pose for this frame, shared by the strike and stance detectors.
+  // With a side camera (0.12.0) the arms come from the main frame taken at the same moment as the
+  // newest side frame (within alignMs), so the two agree on a fast punch; the arms run that much
+  // behind (the link's delay, a frame or two).
   class ArmPose {
-    constructor(cfg) { this.depth = new ArmDepth(cfg); }
-    update(ctx, out) {
+    constructor(cfg) { this.depth = new ArmDepth(cfg); this.hist = []; this.alignMs = cfg.side.alignMs; }
+    update(ctx0, out) {
       out.arms = null;
+      let ctx = ctx0, side = null;
+      const sv = ctx0.sideView;
+      if (sv && ctx0.sideOn && ctx0.world && ctx0.points) {
+        this.hist.push({ t: ctx0.t, world: ctx0.world, points: ctx0.points });
+        while (this.hist.length && ctx0.t - this.hist[0].t > 500) this.hist.shift();
+        const s = sv.newest(ctx0.t);
+        let best = null;
+        if (s) for (const h of this.hist) if (!best || Math.abs(h.t - s.t) < Math.abs(best.t - s.t)) best = h;
+        if (best && Math.abs(best.t - s.t) <= this.alignMs) {
+          ctx = Object.assign({}, ctx0, { t: best.t, world: best.world, points: best.points });
+          const p = best.points, ipx = RE.dist(RE.mid(p[L.L_SHOULDER], p[L.R_SHOULDER]), RE.mid(p[L.L_HIP], p[L.R_HIP])) || 1;
+          side = sv.match(s, { left: (p[L.L_SHOULDER].y - p[L.L_WRIST].y) / ipx, right: (p[L.R_SHOULDER].y - p[L.R_WRIST].y) / ipx });
+        }
+      } else this.hist.length = 0;
       const frame = frameOf(ctx);
-      const world = frame && ctx.world ? this.depth.fix(ctx, frame) : ctx.world;
+      const world = frame && ctx.world ? this.depth.fix(ctx, frame, side) : ctx.world;
       out.armScale = this.depth.armScale();
+      out.sideUsed = !!this.depth.usedSide;
       const pose = RE.armPose(world, frame, ctx.cal.shoulderWidthW);
       if (!pose) return;
       pose.unitM = ctx.cal.shoulderWidthW || len(sub(ctx.world[L.R_SHOULDER], ctx.world[L.L_SHOULDER])) || 0.4;

@@ -275,6 +275,15 @@
         cadenceWindowMs: 3000,
         squatHoldMs: 1500, // the demo squat button holds a squat this long (touch cannot hold a crouch)
       },
+      // a second camera at the side (0.12.0, side.js): a sample is fresh for maxAgeMs; without
+      // a clock sync it is taken to be leadMs older than its arrival (the link's delay); landmarks below
+      // minVis are not used; the arms are swapped to match the main camera's when that fits
+      // swapMargin (T) better on average
+      // alignMs: the main frame used with a side frame is at most this far from it in time
+      // swapFrames: frames of wrist height evidence averaged; flipMargin (T): a jump that big
+      // toward the other wrist's place is the phone's labels flipping
+      // peer: PeerJS options for the signaling server (null: PeerJS's free public one)
+      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0.3, alignMs: 25, peer: null },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };

@@ -11,6 +11,7 @@
   // are the player's own anatomical sides.
   RE.LM = Object.freeze({
     NOSE: 0,
+    L_EAR: 7, R_EAR: 8,
     L_SHOULDER: 11, R_SHOULDER: 12,
     L_ELBOW: 13, R_ELBOW: 14,
     L_WRIST: 15, R_WRIST: 16,
