@@ -174,6 +174,21 @@
           refSpeed: 5,       // m/s of fist speed that is power 1
           overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
         },
+        // kicks and knees (0.11.0, KickDetector in combat.js), from the thigh and the knee
+        kick: {
+          onPitch: 30,      // degrees of thigh angle: a leg is up
+          offPitch: 18,     // and back down
+          downFrac: 0.6,    // judged on the way down, once under this share of its peak
+          maxMs: 1200,      // a kick is up for less than this
+          plantMs: 450,     // the other leg made no step this long before the kick
+          afterMs: 150,     // or this long after it (judged then)
+          lowPitch: 25,     // a low kick: the rear thigh this high
+          sweep: 0.2,       // with the knee sweeping this far (S) toward the lead side
+          teepPitch: 55,    // a teep: the lead thigh this high
+          kneePitch: 60,    // a knee: the rear thigh this high, straight up
+          refRate: 300,     // degrees a second of thigh rise that is power 1
+          liftPerDeg: 0.007, // T of knee rise per degree, when the world landmarks are missing
+        },
         // taught strikes (0.10.0, StrikeDetector in combat.js): samples of the player's own punches
         teach: {
           keep: 6,           // samples kept per punch and hand (the newest)

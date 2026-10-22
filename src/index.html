@@ -21,7 +21,7 @@
   @media (orientation: landscape) {
     body.fighting #demo .re-demo-zone { display: none; }
     body.fighting #demo .re-demo { top: auto; height: auto; grid-template-rows: auto; }
-    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(6, 1fr) !important; }
+    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(8, 1fr) !important; }
     body.fighting #demo .re-demo-buttons button { min-height: 38px; }
     body.fighting #endBtn, body.fighting #phoneBtn { display: none; }
   }
@@ -1260,6 +1260,10 @@
     windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, swingMs: 220,
     // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
     damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.3, down: 1.0, down_strike: 1.0 },
+    // kicks and knees (engine 0.11.0, Mark 10/22): damage by kind; a teep pushes them out for
+    // teepOutMs; each low kick slows their wind-ups by slowPer (up to slowMax) and legsAt of them
+    // take their legs (they cannot run); a knee into their shot lands td.levelBonus times
+    kick: { teep: 0.6, low_kick: 1.0, knee: 1.1, teepOutMs: 1600, slowPer: 0.15, slowMax: 1.6, legsAt: 2 },
     // a shift (Mark 10/17, Dillashaw and Cruz): a bound out and back takes an angle; for ms (1 to
     // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
     // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
@@ -1317,7 +1321,7 @@
     // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
     // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
     // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
-    myGuard: { hp: 6, straight: 1, hook: 1.5, uppercut: 1.5, regen: 0.3, pauseMs: 1200, bonus: { slip: 1, duck: 1, stuff: 1.5, ko: 3 } },
+    myGuard: { hp: 6, straight: 1, hook: 1.5, uppercut: 1.5, regen: 0.3, pauseMs: 1200, bonus: { slip: 1, duck: 1, stuff: 1.5, ko: 3, teep: 1.5 } },
     oneHand: false,
     // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
     fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
@@ -1339,7 +1343,7 @@
   // a punch landing: a burst and sparks where the glove met them, the damage and the punch's name
   // floating up, a combo count, their head or body snapping back, the screen shaking with the
   // weight of it, and a layered smack (a crowd "ooh" on a big one)
-  const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', overhand: 'Overhand', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike' };
+  const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', overhand: 'Overhand', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
   const comboBonus = (n) => Math.min(FT.combo.cap, FT.combo.step * Math.max(0, n - 1));
   function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
@@ -1495,6 +1499,9 @@
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
     { id: 'shift', big: 'Shift', small: 'Bound out to one side and back.', say: 'Shift. Bound out to one side, and straight back.', event: 'bound' },
+    { id: 'teep', big: 'Teep', small: 'Lead knee up, push the foot out at them, back down.', say: 'Teep. Lead knee up, push the foot out.', event: 'teep' },
+    { id: 'lowKick', big: 'Low kick', small: 'Rear leg swings across at their thigh, hips turning.', say: 'Low kick. Rear leg swings across, turn the hips.', event: 'low_kick' },
+    { id: 'knee', big: 'Knee', small: 'Rear knee straight up, hard.', say: 'Knee. Drive the rear knee up.', event: 'knee' },
   ];
   const Tutor = { steps: [], i: 0, n: 0, since: 0, holdSince: null, lead: 'left', stance: 'orthodox', log: [], results: [], clip: null, recording: false, lastRead: '', saved: null };
   const tutorDoneBefore = () => { try { return localStorage.getItem(TUTOR_KEY) === '1'; } catch (_) { return false; } };
@@ -1602,6 +1609,7 @@
   engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('shot', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'shot' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('bound', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'bound' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  for (const k of ['teep', 'low_kick', 'knee']) engine.on(k, () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === k && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('bound', (e) => recNote('bound', e.dist || 0));
   // a shift: the bound takes an angle on them; a quick one buys a longer window
   engine.on('bound', (e) => {
@@ -1953,19 +1961,63 @@
       else if (foe.hp < foe.maxHp * 0.3) fightTalk('foe', 'low', now, 0.3);
     }
     if (foe.state === 'windup' && kind !== 'jab' && Math.random() < 0.5) { foe.state = 'hurt'; foe.until = now + 500; } // a hard shot can break their wind-up
-    if (foe.hp <= 0) {
-      foe.state = 'ko'; foe.until = now + 1500;
-      guardBonus('ko');
-      say('Knockdown!', 'feedback');
-      bell(3); Fight.shake = { t: now, k: 2.4 }; Fight.flashAt = now;
-      fightMsg('Knockout!', 1600);
-      for (const p of Fight.people) p.cheerUntil = now + 2500;
-    } else if (!foe.fleeChecked && foe.hp < foe.maxHp * FT.fleeBelow && Fight.foes.filter((f) => f.state !== 'ko').length === 1) {
+    if (foe.hp <= 0) knockout(foe, now);
+    else if (!foe.fleeChecked && foe.hp < foe.maxHp * FT.fleeBelow && Fight.foes.filter((f) => f.state !== 'ko').length === 1) {
       // a beaten opponent may cut and run
       foe.fleeChecked = true;
       if (Math.random() < FT.fleeChance) { startChase(foe, now); return; }
     }
   }
+  function knockout(foe, now) {
+    foe.state = 'ko'; foe.until = now + 1500;
+    guardBonus('ko');
+    say('Knockdown!', 'feedback');
+    bell(3); Fight.shake = { t: now, k: 2.4 }; Fight.flashAt = now;
+    fightMsg('Knockout!', 1600);
+    for (const p of Fight.people) p.cheerUntil = now + 2500;
+  }
+  // ---------- kicks and knees (engine 0.11.0, Mark 10/22) ----------
+  //   teep      the lead leg pushes them out of range and tops up your guard bar; into a wind-up
+  //             or a shot it knocks them off balance (open), and in a pair the other steps in
+  //   low_kick  the rear leg to their legs, past the guard; it slows their wind-ups and two of
+  //             them take their legs: no running
+  //   knee      into their shot: double and the shot is stuffed; otherwise a knee to the body
+  // Power from the thigh's rise speed (honest reps: 0.6 to 1.4 by output, the floor still lands)
+  function kicked(kind, e) {
+    const a = Fight.active, now = performance.now();
+    if (!a || engine.combat().phase !== 'standing') return;
+    const foe = a.foe, K = FT.kick;
+    Fight.kick = { kind, t: now, leg: e.leg };
+    if (a.tutor) { impact(foe, null, kind === 'knee' ? 'body' : 'head', 1, now, kind, 1); return; }
+    if (['down', 'ko', 'flee', 'sub'].includes(foe.state)) return;
+    Fight.stats.thrown++;
+    if (Q.fight) Q.fight.thrown++;
+    if (kind === 'low_kick' && a.range === 'out') { fightMsg('Out of range'); return; }
+    const power = effort(e.power || 1, 0.5, 1.5, 0.6, 1.4);
+    let dmg = K[kind] * power;
+    if (kind === 'teep') {
+      guardBonus('teep');
+      if (foe.state === 'windup' || foe.state === 'shoot') {
+        foe.state = 'stuffed'; foe.until = now + 1400; Fight.openUntil = now + 1400;
+        fightMsg('Teep! Off balance', 1100);
+      } else { foe.state = 'out'; a.range = 'out'; foe.until = now + K.teepOutMs; fightMsg('Teep! Space', 900); }
+    } else if (kind === 'low_kick') {
+      foe.legHits = (foe.legHits || 0) + 1;
+      if (foe.legHits === K.legsAt) { foe.fleeChecked = true; fightMsg('Legs gone: no running', 1200); } else fightMsg('Low kick', 800);
+    } else if (foe.state === 'shoot') {
+      dmg *= FT.td.levelBonus; foe.state = 'stuffed'; foe.until = now + FT.stuffedMs; Fight.openUntil = now + FT.stuffedMs;
+      Fight.stats.reads++; fightMsg('Knee! Read it!', 1100);
+    } else { a.range = 'close'; fightMsg('Knee', 700); }
+    foe.hp -= dmg;
+    Fight.stats.landed++;
+    if (Q.fight) { Q.fight.landed++; Q.fight.clean++; }
+    impact(foe, null, kind === 'knee' || kind === 'low_kick' ? 'body' : 'body', power, now, kind, dmg);
+    foe.hurtUntil = now + 220;
+    if (foe.hp <= 0) knockout(foe, now);
+    else if (kind === 'teep' && foe.state === 'stuffed' && others(a).length) switchFoe(now, 'teep');
+  }
+  for (const k of ['teep', 'low_kick', 'knee']) engine.on(k, (e) => kicked(k, e || {}));
+
   // one hit per punch: the same hand again within FT.hit.pairMs is the same punch
   const claim = (hand, now) => {
     const h = Fight.hand[hand];
@@ -2189,14 +2241,17 @@
     next.state = 'guard'; next.until = now + 900; next.guardHp = next.guardHp ?? FT.guard.hp;
     a.range = 'close'; a.tagAt = now + rand(FT.tag.everyS[0], FT.tag.everyS[1]) * 1000;
     Fight.combo.n = 0;
-    const line = why === 'down' ? 'His friend jumps in!' : why === 'broken' ? 'Tag! The other one steps in.' : why === 'ko' ? 'Next one!' : 'They switch!';
+    const line = why === 'down' ? 'His friend jumps in!' : why === 'broken' || why === 'teep' ? 'Tag! The other one steps in.' : why === 'ko' ? 'Next one!' : 'They switch!';
     fightMsg(why === 'ko' ? 'Next one!' : 'Switch!', 1100); say(line, 'feedback');
     return true;
   }
   // slips, ducks, stuffed shots and knockouts top up your guard bar
   // (honest reps: a bigger slip or a deeper duck tops it up more, from 60% to 140% of the bonus)
   function guardBonus(why, k = 1) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0) * k); }
-  function windupMs() { const a = Fight.active; return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a && a.foe.boss ? STAGE.boss.windup : a ? archOf(a.foe).windup : 1); }
+  function windupMs() {
+    const a = Fight.active, slow = a ? Math.min(FT.kick.slowMax, 1 + FT.kick.slowPer * (a.foe.legHits || 0)) : 1; // low kicks slow them
+    return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a && a.foe.boss ? STAGE.boss.windup : a ? archOf(a.foe).windup : 1) * slow;
+  }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
     Fight.combo.n = 0;
@@ -2390,6 +2445,8 @@
     }
     P.speed = v;
     G.meters += Math.hypot(P.x - ox, P.z - oz);
+    // a duck: your own squat depth counts, not just the engine's squat
+    if (c.prompt && !c.prompt.done && c.prompt.kind === 'duck' && (engine.signals().squat_depth || 0) >= duckFloor()) chaseMove('squat');
     // the next obstacle: prompt, then judge it as you pass
     const o = c.obs.find((q) => !q.passed);
     if (o) {
@@ -3409,6 +3466,24 @@
     const tilt = Math.max(-0.4, Math.min(1.0, want - Math.atan2(g.y, g.z)));
     Fight.armTilt += (tilt - Fight.armTilt) * 0.15;
   }
+  // your leg, when you kick: it comes up into view from the bottom of the screen and back
+  function drawKick(now) {
+    const k = Fight.kick;
+    if (!k) return;
+    const u = (now - k.t) / 380;
+    if (u >= 1) { Fight.kick = null; return; }
+    const e = Math.sin(Math.PI * u), side = k.leg === 'right' ? 1 : -1, w = Math.min(W, H) * 0.16;
+    let a, b;
+    if (k.kind === 'teep') { a = { x: W * 0.5 + side * W * 0.08, y: H + w }; b = { x: W * 0.5, y: H * (1 - 0.5 * e) }; }
+    else if (k.kind === 'low_kick') { a = { x: W * (0.5 + 0.55 * side), y: H + w * 0.5 }; b = { x: W * (0.5 + side * (0.5 - 0.8 * e)), y: H * (0.92 - 0.12 * e) }; }
+    else { a = { x: W * 0.5 + side * W * 0.1, y: H + w }; b = { x: W * 0.5 + side * W * 0.04, y: H * (1 - 0.35 * e) }; }
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#1f2430'; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = w * 0.35; ctx.beginPath(); ctx.moveTo(a.x - w * 0.15, a.y); ctx.lineTo(b.x - w * 0.15, b.y); ctx.stroke();
+    if (k.kind !== 'knee') { ctx.fillStyle = '#e8e8ea'; ctx.beginPath(); ctx.ellipse(b.x, b.y, w * 0.62, w * 0.42, Math.atan2(b.y - a.y, b.x - a.x), 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
   function drawArms(now) {
     const arms = engine.arms();
     if (!arms) return;
@@ -4421,7 +4496,7 @@
     L = outdoorLook;
     ctx.restore();
     if (G.state === 'walk') {
-      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
+      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawKick(now); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
       // the HUD in logical pixels times the UI scale
       const RW = W, RH = H, U = Ui.u;
       ctx.setTransform(dpr * U, 0, 0, dpr * U, 0, 0);
@@ -4605,7 +4680,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-22 \u00b7 the gym learns your punches, opponent types, sidestep';
+  const BUILD = '2026-10-22 PM \u00b7 teep, low kick, knee; squat, bound and jump in the warm-up';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -4624,7 +4699,7 @@
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
-    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
+    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'teep', 'low_kick', 'knee', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
     chase: ['bound_left', 'bound_right', 'jump', 'squat'],
   };
   function enableTouch() {
@@ -4838,13 +4913,17 @@
     waveR: { big: 'Wave right', small: 'Right hand up above your head, wave.', say: 'Wave your right hand.', event: 'wave', hand: 'right', need: 1, secs: 3.5 },
     turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1, secs: 4 },
     turnR: { big: 'Turn right', small: 'Feet still. Turn your shoulders right, then back.', say: 'Turn your shoulders right.', event: 'turn_right', need: 1, side: 1, secs: 4 },
+    // 10/22 (Mark): the chase moves, so they register when a runner is on: duck, juke and hop
+    squat: { big: 'Squat', small: 'Sit down low, then stand back up.', say: 'Squat. Sit down low, then stand back up.', event: 'squat', need: 1, secs: 5 },
+    bound: { big: 'Bound', small: 'Hop out to one side, then straight back.', say: 'Bound. Hop out to the side, and straight back.', event: 'bound', need: 1, secs: 4.5 },
+    hop: { big: 'Jump', small: 'A small hop, both feet off the floor.', say: 'Jump. A small hop.', event: 'jump', need: 1, secs: 4 },
   };
-  const MOVE_NAMES = { march: 'low knees', high: 'high knees', waveL: 'left wave', waveR: 'right wave', turnL: 'left turn', turnR: 'right turn' };
-  const WARM_IDS = ['march', 'high', 'waveL', 'waveR', 'turnL', 'turnR'];
+  const MOVE_NAMES = { march: 'low knees', high: 'high knees', waveL: 'left wave', waveR: 'right wave', turnL: 'left turn', turnR: 'right turn', squat: 'squat', bound: 'bound', hop: 'jump' };
+  const WARM_IDS = ['march', 'high', 'waveL', 'waveR', 'turnL', 'turnR', 'squat', 'bound', 'hop'];
   const WARM_TRIES = 3;
   const move = (id, secs, round) => Object.assign({}, MOVES[id], { id, secs, round });
   const warmPlan = () => [
-    { id: 'intro', big: 'Warm-up', small: 'Low knees, high knees, waves and turns. Two rounds.', say: 'Warm-up. Low knees, high knees, waves and turns.', secs: 2.5 },
+    { id: 'intro', big: 'Warm-up', small: 'Low knees, high knees, waves, turns, a squat, a bound and a jump. Two rounds.', say: 'Warm-up. Low knees, high knees, waves, turns, then a squat, a bound and a jump.', secs: 2.5 },
     ...WARM_IDS.map((id) => move(id, MOVES[id].secs, 1)),
     { id: 'round', big: 'Round 2', small: 'Same moves again.', say: 'Round 2.', secs: 1.6 },
     ...WARM_IDS.map((id) => move(id, MOVES[id].secs * 0.8, 2)),
@@ -4856,6 +4935,14 @@
     move('march', 6, 1),
   ];
   const WARMED_KEY = (setup) => `manhattan-miles-warmed-${setup}`;
+  // the player's warm-up squat depth (0 to 1): a chase duck counts from 70% of it (honest reps: the
+  // floor is the player's own rep), never more than the engine's squat
+  const SQUAT_FLOOR_KEY = 'manhattan-miles-squat-floor';
+  function duckFloor() {
+    let f = 0;
+    try { f = Number(localStorage.getItem(SQUAT_FLOOR_KEY)) || 0; } catch (_) {}
+    return f > 0 ? Math.max(0.12, Math.min(LEVEL_SHOT, 0.7 * f)) : LEVEL_SHOT;
+  }
   const warmedBefore = (setup) => { try { return localStorage.getItem(WARMED_KEY(setup)) === '1'; } catch (_) { return false; } };
   const Warm = { quick: false, setup: null, plan: [], i: -1, left: 0, len: 1, hits: 0, coached: false, seen: {}, extra: false, done: false, capturing: false, retuned: false, lowCount: 0, clip: null, overlay: null };
 
@@ -4929,7 +5016,7 @@
 
   // count steps aloud up to "got it", so you hear right away whether marching registers
   const COUNT = ['', 'One', 'Two', 'Three'];
-  for (const ev of ['step', 'turn_left', 'turn_right', 'run_start', 'wave']) {
+  for (const ev of ['step', 'turn_left', 'turn_right', 'run_start', 'wave', 'squat', 'bound', 'jump']) {
     engine.on(ev, (e) => {
       const c = Warm.plan[Warm.i];
       if (G.state !== 'setup' || !c || c.event !== ev) return;
@@ -5105,11 +5192,13 @@
     if (engine.is_recording() && engine.recording_ms() > 28000) Warm.clip = engine.stop_recording();
     $('wFill').style.transform = `scaleX(${Math.max(0, Warm.left / Warm.len)})`;
     if (c.event) $('wLive').textContent = liveText(c);
+    // the player's own squat depth (honest reps: their floor) for the chase's duck
+    if (c.id === 'squat') Warm.squatPeak = Math.max(Warm.squatPeak || 0, engine.signals().squat_depth || 0);
     drawFig($('fig'), c.id, now / 1000);
     // nothing registered halfway through a move: one spoken nudge
     if (c.event && !Warm.coached && Warm.hits === 0 && Warm.left < Warm.len * 0.5) {
       Warm.coached = true;
-      say({ march: 'Knees higher.', high: 'Faster! Knees up.', waveL: 'Hand higher, above your head.', waveR: 'Hand higher, above your head.' }[c.id] || 'Turn further.', 'feedback');
+      say({ march: 'Knees higher.', high: 'Faster! Knees up.', waveL: 'Hand higher, above your head.', waveR: 'Hand higher, above your head.', squat: 'Lower. Sit back.', bound: 'Hop out to the side, then back.', hop: 'Both feet off the floor.' }[c.id] || 'Turn further.', 'feedback');
     }
     if (Warm.left > 0) return;
     // let the closing line finish before the walk starts
@@ -5118,6 +5207,7 @@
     if (c.event) {
       const ok = Warm.hits >= c.need;
       if (ok) Warm.seen[c.id] = true;
+      if (c.id === 'squat' && Warm.squatPeak > 0.05) { try { localStorage.setItem(SQUAT_FLOOR_KEY, String(Warm.squatPeak)); } catch (_) {} }
       if (c.id === 'march') {
         // tune the step thresholds to every march captured so far (half the weakest round),
         // so the next round counts the steps this one may have missed
@@ -5171,6 +5261,9 @@
 
   function liveText(c) {
     if (Warm.hits >= c.need) return 'Got it';
+    if (c.id === 'squat') return `Depth: ${Math.round((engine.signals().squat_depth || 0) * 100)}%`;
+    if (c.id === 'bound') return 'Out to the side, then back';
+    if (c.id === 'hop') return 'Both feet off the floor';
     if (c.id === 'march') return `Steps seen: ${Warm.hits}`;
     if (c.id === 'high') return `Pace: ${Math.round(engine.signals().cadence_spm || 0)} steps a minute`;
     if (c.hand) return 'Hand above your head, side to side';
@@ -5186,16 +5279,19 @@
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
     const period = id === 'march' ? 1.1 : id === 'high' ? 0.6 : id.startsWith('wave') ? 0.7 : 2;
     const u = (t % period) / period, wave = Math.sin(u * Math.PI * 2), hold = Math.sin(Math.PI * clamp(u * 1.25, 0, 1));
-    let kneeL = 0, kneeR = 0, armL = 0.15, armR = 0.15, lift = 0, yaw = 0;
+    let kneeL = 0, kneeR = 0, armL = 0.15, armR = 0.15, lift = 0, yaw = 0, sq = 0, shift = 0;
     const side = MOVES[id].side || 0;
     if (id === 'march') { kneeL = 0.5 * Math.max(0, wave); kneeR = 0.5 * Math.max(0, -wave); armL = 0.15 + 0.3 * Math.max(0, -wave); armR = 0.15 + 0.3 * Math.max(0, wave); lift = 2 * Math.abs(wave); }
     else if (id === 'high') { kneeL = 1 * Math.max(0, wave); kneeR = 1 * Math.max(0, -wave); armL = 0.2 + 0.6 * Math.max(0, -wave); armR = 0.2 + 0.6 * Math.max(0, wave); lift = 6 * Math.abs(wave); }
+    else if (id === 'squat') { sq = 52 * hold; armL = armR = 1.3 * hold + 0.15; }
+    else if (id === 'bound') shift = 46 * Math.sin(Math.PI * u) * (Math.floor(t / period) % 2 ? 1 : -1);
+    else if (id === 'hop') lift = 26 * Math.max(0, Math.sin(Math.PI * clamp(u * 1.6, 0, 1)));
     else if (id === 'waveL') armL = Math.PI - 0.5 + 0.35 * wave;
     else if (id === 'waveR') armR = Math.PI - 0.5 + 0.35 * wave;
-    else yaw = 0.9 * hold;
+    else if (MOVES[id].side) yaw = 0.9 * hold;
     x.save();
     x.scale(Wd / 240, Ht / 320);
-    const cx = 120, ground = 296, hip = { x: cx, y: 176 - lift }, neck = { x: cx, y: hip.y - 70 }; // turns pivot in place, never slide
+    const cx = 120 + shift, ground = 296, hip = { x: cx, y: 176 - lift + sq }, neck = { x: cx, y: hip.y - 70 }; // turns pivot in place, never slide
     const half = 24 * Math.cos(yaw);
     // the shoulder on the turning side goes back (dimmer), the other comes forward
     const sh = (k) => ({ x: neck.x + k * half, y: neck.y });

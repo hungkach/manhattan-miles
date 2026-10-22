@@ -13,7 +13,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound']) RE.detectors.add(name);
+  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -592,7 +592,66 @@
   }
 
   // run after the locomotion detectors (stance reads the turn detector's yaw)
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg)];
+  // Kicks and knees (0.11.0, Mark 10/22: a lead teep and a Dutch-style rear low kick; the knee
+  // was the plan's counter to a shot). Knees-up framing often hides the feet, so a kick is read
+  // from the thigh and the knee: one leg comes up while the other stays planted (no step from the
+  // other leg within plantMs either side, so marching and high knees never kick), judged as it
+  // comes back down:
+  //   'low_kick'  the rear leg, its knee sweeping sweep (S) or more toward the lead side
+  //   'teep'      the lead leg, the thigh up past teepPitch (degrees)
+  //   'knee'      the rear leg straight up past kneePitch, without the sweep
+  // Payload { leg, pitch (degrees, peak thigh angle), sweep (S), ms, power (rise speed over
+  // refRate, 0.5 to 1.5) }. Thigh pitch comes from the world landmarks; without them the knee's
+  // rise in the image (T) stands in (liftPerDeg).
+  class KickDetector {
+    constructor(cfg) { this.c = cfg.combat.kick; this.legs = { left: { up: null, lastUp: -Infinity, lastDown: -Infinity }, right: { up: null, lastUp: -Infinity, lastDown: -Infinity } }; }
+    update(ctx, out) {
+      const t = ctx.t, c = this.c, sig = ctx.sig, b = sig.body;
+      if (!b) return;
+      const lead = out.stance === 'southpaw' ? 'right' : 'left';
+      for (const leg of ['left', 'right']) {
+        const L = this.legs[leg], other = this.legs[leg === 'left' ? 'right' : 'left'];
+        const k = leg === 'left' ? 'L' : 'R';
+        let pitch = sig['pitch' + k];
+        if (pitch == null) { const lift = sig['kneeLift' + k]; pitch = lift == null ? null : lift / c.liftPerDeg; }
+        if (pitch == null) { L.up = null; continue; }
+        const knee = leg === 'left' ? b.lk : b.rk;
+        if (!L.up) {
+          if (pitch >= c.onPitch) { L.up = { t0: t, x0: knee.x, peak: pitch, sweep: 0, rise: 0, prevT: t, prevP: pitch }; L.lastUp = t; }
+          continue;
+        }
+        const u = L.up;
+        u.peak = Math.max(u.peak, pitch);
+        if (t > u.prevT) u.rise = Math.max(u.rise, (pitch - u.prevP) / ((t - u.prevT) / 1000));
+        u.prevT = t; u.prevP = pitch;
+        // toward the lead side: the player's left is -x in body units for an orthodox stance
+        const toLead = lead === 'left' ? -1 : 1;
+        u.sweep = Math.max(u.sweep, toLead * (knee.x - u.x0));
+        if (pitch > Math.max(c.offPitch, c.downFrac * u.peak) && t - u.t0 < c.maxMs) continue;
+        // back down: judge it
+        L.up = null; L.lastDown = t; L.downing = true;
+        const ms = t - u.t0;
+        if (ms >= c.maxMs) continue;
+        // a step from the other leg just before or during: marching, not a kick
+        if (other.up || other.lastUp > u.t0 - c.plantMs || other.lastDown > u.t0 - c.plantMs) continue;
+        let kind = null;
+        if (leg !== lead && u.sweep >= c.sweep && u.peak >= c.lowPitch) kind = 'low_kick';
+        else if (leg === lead && u.peak >= c.teepPitch) kind = 'teep';
+        else if (leg !== lead && u.peak >= c.kneePitch) kind = 'knee';
+        if (!kind) continue;
+        // and the other leg has to stay planted a moment after (not the first step of a march)
+        L.pending = { kind, at: t, payload: { leg, pitch: u.peak, sweep: u.sweep, ms, power: RE.clamp(u.rise / c.refRate, 0.5, 1.5) } };
+      }
+      for (const leg of ['left', 'right']) {
+        const L = this.legs[leg], other = this.legs[leg === 'left' ? 'right' : 'left'];
+        if (!L.pending) continue;
+        if (other.up || other.lastUp > L.pending.at) { L.pending = null; continue; }
+        if (t - L.pending.at >= c.afterMs) { out.events.push([L.pending.kind, L.pending.payload]); L.pending = null; }
+      }
+    }
+  }
+
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all

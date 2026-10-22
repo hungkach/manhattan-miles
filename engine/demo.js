@@ -115,6 +115,10 @@
           this.emit('jump', { height: 0.2 });
           break;
         case 'stomp': this.emit('stomp', { leg: this.leg, power: 1 }); this.leg = this.leg === 'left' ? 'right' : 'left'; break;
+        // 0.11.0: the lead teep, the rear low kick and the rear knee
+        case 'teep': this.emit('teep', { leg: this.lead(), pitch: 70, sweep: 0, ms: 600, power: 1 }); break;
+        case 'low_kick': this.emit('low_kick', { leg: this.rear(), pitch: 50, sweep: 0.3, ms: 600, power: 1 }); break;
+        case 'knee': this.emit('knee', { leg: this.rear(), pitch: 75, sweep: 0, ms: 500, power: 1 }); break;
         default: break;
       }
     }
@@ -146,6 +150,7 @@
     ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['overhand', 'Overhand'], ['uppercut', 'Upper'], ['bound_left', 'Bound L'], ['bound_right', 'Bound R'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
     ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
+    ['teep', 'Teep'], ['low_kick', 'Low kick'], ['knee', 'Knee'],
   ];
   RE.DEMO_BUTTONS = Object.freeze(BUTTONS.map(([action]) => action));
 
