@@ -6538,7 +6538,7 @@ void main() {
     hp: [12, 16], playerHp: 10,
     windupMs: 650, graceMs: 200, shootMs: 1300, stuffedMs: 1500, swingMs: 220,
     // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
-    damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.3, down: 1.0, down_strike: 1.0 },
+    damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.3, down: 1.0, down_strike: 0.8 }, // ground strikes all land (10/24), so a bit less each
     // kicks and knees (engine 0.11.0, Mark 10/22): damage by kind; a teep pushes them out for
     // teepOutMs; each low kick slows their wind-ups by slowPer (up to slowMax) and legsAt of them
     // take their legs (they cannot run); a knee into their shot lands td.levelBonus times
@@ -6554,14 +6554,15 @@ void main() {
     // punches: standing ones are the engine's strike events (engine 0.9.0 reads them from a set
     // guard; 10/21 the glove hitbox stopped landing standing punches: waving read as hooks).
     // Power from the fist's speed (shoulder widths a second, floor `speed`, cap `capSpeed`, the
-    // fastest over the last speedMs). On top, any fast extending punch is a down strike (gnp*).
+    // fastest over the last speedMs). On top, any fast extending punch is a down strike (gnp*;
+    // 10/24, Mark: every strike lands in the window, so the bar is low and gnpPairMs apart).
     // One hit per punch: a second report from the same hand within pairMs is the same punch.
     // 10/19 (Mark: hooks and uppercuts read at the fight's start, on slips and on level changes):
     // hooks, uppercuts and overhands do not count while the body itself is moving (slip faster
     // than bodySlip a second, squat depth faster than bodyLevel a second, and bodyQuietMs after)
     // or in the first startQuietMs of a fight
     gate: { bodySlip: 2, bodyLevel: 1, bodyQuietMs: 220, startQuietMs: 1000 },
-    hit: { capSpeed: 10, speed: 2.5, speedMs: 450, pairMs: 450, body: 0.8, gnpSpeed: 2.0, gnpRearm: 1.0, gnpExtend: 1.2 },
+    hit: { capSpeed: 10, speed: 2.5, speedMs: 450, pairMs: 450, body: 0.8, gnpSpeed: 1.4, gnpRearm: 0.9, gnpExtend: 0.6, gnpPairMs: 200 },
     // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
     // under beatBrace power is stuffed, and an uppercut catches them low (levelBonus). A shot
@@ -7298,9 +7299,10 @@ void main() {
   for (const k of ['teep', 'low_kick', 'knee']) engine.on(k, (e) => kicked(k, e || {}));
 
   // one hit per punch: the same hand again within FT.hit.pairMs is the same punch
+  // one hit per punch per hand: pairMs apart standing, gnpPairMs on the ground (every punch lands)
   const claim = (hand, now) => {
     const h = Fight.hand[hand];
-    if (!h || now - h.last < FT.hit.pairMs) return false;
+    if (!h || now - h.last < (engine.combat().phase === 'top' ? FT.hit.gnpPairMs : FT.hit.pairMs)) return false;
     h.last = now; h.armed = false;
     return true;
   };
@@ -7366,7 +7368,8 @@ void main() {
     if (!timed && tq.q < archK(foe, 'stuff')) return { takedown: false, braced: true };
     const q = Math.max(0, Math.min(1, tq.q + tdK + (timed ? FT.td.timedBonus : 0)));
     // 10/23 (Mark): no penalty for taking one down in a group: the full burst, and the friend waits
-    return { takedown: true, topMs: Math.round(FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q), timed };
+    // the window by your takedown's quality, times their type (boxers stay down, wrestlers bounce up)
+    return { takedown: true, topMs: Math.round((FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q) * archK(foe, 'gnp')), timed };
   }
   engine.on('takedown', (e) => {
     const a = Fight.active;
@@ -7396,8 +7399,9 @@ void main() {
     const a = Fight.active;
     if (!a || a.foe.state !== 'down') return;
     if (a.tutor) { a.foe.state = 'pads'; return; }
+    // 10/24 (Mark: takedowns force switches): with someone waiting, they step in as this one gets up
     a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
-    if (!switchFoe(performance.now(), 'down')) fightMsg('Back up');
+    if (!switchFoe(performance.now(), 'down')) fightMsg(archK(a.foe, 'gnp') < 1 ? 'Up fast' : 'Back up');
   });
   // their shot: a whoosh at once (the spoken call comes late), open to a sprawl for shootMs by type
   function startShot(foe, now) {
@@ -8037,16 +8041,18 @@ void main() {
   //   stuff    a shot below this quality is stuffed even when they are not braced (wrestlers)
   //   shoot    how long their shot stays open to a sprawl (thugs telegraph, wrestlers are quick)
   //   sprawl   how deep your sprawl has to be, times your own warm-up floor (wrestlers: deeper)
+  //   gnp      the ground and pound window after your takedown, times (10/24: boxers stay down
+  //            longer, wrestlers get up fast)
   //   tweakers and roidheads are only health and pace; thugs are weak all around
   const ARCH = {
-    thug: { name: 'Thug', tip: 'Weak all around', w: 10, hp: 0.75, guard: 0.5, turtle: 0.05, windup: 1.3, think: 1.25, hit: 1, counter: 1.4, td: 0.2, stuff: 0, shoot: 1.5, sprawl: 0.8, moves: { straight: 3, hook: 4, uppercut: 0.5, shoot: 0.3, out: 1, cover: 0.5, wait: 1.5 } },
-    boxer: { name: 'Boxer', tip: 'Tight counters, easy takedown', w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, counter: 0.55, td: 0.25, stuff: 0, shoot: 1, sprawl: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
-    wrestler: { name: 'Wrestler', tip: 'Long counters, tough sprawl and takedown', w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, counter: 1.6, td: -0.2, stuff: 0.45, shoot: 0.8, sprawl: 1.35, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
+    thug: { name: 'Thug', tip: 'Weak all around', gnp: 1.2, w: 10, hp: 0.75, guard: 0.5, turtle: 0.05, windup: 1.3, think: 1.25, hit: 1, counter: 1.4, td: 0.2, stuff: 0, shoot: 1.5, sprawl: 0.8, moves: { straight: 3, hook: 4, uppercut: 0.5, shoot: 0.3, out: 1, cover: 0.5, wait: 1.5 } },
+    boxer: { name: 'Boxer', tip: 'Tight counters, easy to take down and keep down', gnp: 1.4, w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, counter: 0.55, td: 0.25, stuff: 0, shoot: 1, sprawl: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
+    wrestler: { name: 'Wrestler', tip: 'Long counters, tough sprawl and takedown, up fast', gnp: 0.6, w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, counter: 1.6, td: -0.2, stuff: 0.45, shoot: 0.8, sprawl: 1.35, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
     tweaker: { name: 'Tweaker', tip: 'Fast, fragile', w: 1.5, hp: 0.55, guard: 0.6, turtle: 0, windup: 0.75, think: 0.55, hit: 1, scale: 0.95, moves: { straight: 3, hook: 4, uppercut: 1, shoot: 0.5, out: 0.5, cover: 0, wait: 0.3 } },
     roidhead: { name: 'Roidhead', tip: 'Slow, a lot of health', w: 1.2, hp: 1.8, guard: 1.3, turtle: 0.1, windup: 1.4, think: 1.3, hit: 1, scale: 1.12, moves: { straight: 1.5, hook: 4, uppercut: 2, shoot: 0.5, out: 0.3, cover: 0.5, wait: 1.5 } },
     turtle: { name: 'Turtle', tip: 'Covers up', w: 1, hp: 1, guard: 1.4, turtle: 0.55, windup: 1, think: 1, hit: 1, moves: { straight: 3, hook: 2, uppercut: 1, shoot: 0.5, out: 1, cover: 1, wait: 1 } },
   };
-  const archK = (f, key) => { const v = archOf(f)[key]; return v === undefined ? (key === 'td' || key === 'stuff' ? 0 : 1) : v; };
+  const archK = (f, key) => { const v = f && f.boss && key === 'gnp' ? 1 : archOf(f)[key]; return v === undefined ? (key === 'td' || key === 'stuff' ? 0 : 1) : v; };
   // your counter window after a slip, duck or bait, by who you are fighting
   const counterMs = (f) => FT.counterMs * archK(f, 'counter');
   // how deep a sprawl has to go: your own warm-up squat floor, times their type, never past a full level change
@@ -10082,7 +10088,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 PM \u00b7 side camera (engine 0.12.0), city memory fix, sprawls';
+  const BUILD = '2026-10-24 late \u00b7 every ground strike lands, takedowns switch, gnp by type';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -11238,7 +11244,7 @@ void main() {
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Side, ARCH, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Side, ARCH, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
