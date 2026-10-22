@@ -378,7 +378,9 @@ void main() {
   }
 
   MMGL.create = function (canvas, MW, opts = {}) {
-    const gl = canvas.getContext('webgl2', { alpha: true, antialias: !!opts.high, depth: true, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+    // no antialiasing (10/23, Mark's iPad lost the city past the start): 4x MSAA at an iPad's full
+    // resolution is about 180 MB of GPU memory next to MediaPipe's, and GTA3 had none anyway
+    const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, depth: true, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
     if (!gl) return null;
     let P = {};
     try {
@@ -438,7 +440,7 @@ void main() {
     })();
 
     // ---------- ground tiles: painted once each into a texture ----------
-    const TILE_PX = opts.high ? 1024 : 512;
+    let TILE_PX = opts.high ? 1024 : 512;
     const tiles = new Map();
     const tileQuad = (() => {
       const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -454,6 +456,7 @@ void main() {
     const pc = paintCanvas.getContext('2d');
     function buildTile(ti, tj) {
       const t = MW.tile(ti, tj), H = MW.H, AT = H.AT;
+      if (paintCanvas.width !== TILE_PX) paintCanvas.width = paintCanvas.height = TILE_PX;
       const x0 = H.X0 + ti * AT, zs0 = H.Z0 + tj * AT, k = TILE_PX / AT;
       pc.fillStyle = `rgb(${MW.WATER_COL.join(',')})`; pc.fillRect(0, 0, TILE_PX, TILE_PX);
       if (t) for (const cls of GROUND_ORDER) {
@@ -628,6 +631,9 @@ void main() {
 
     // chunk caches, built nearest first within a time budget each frame
     const chunks = new Map();
+    // GPU memory: how long things out of view stay, how many chunks at most, the resolution cap
+    const mem = { keepMs: 4000, maxChunks: 16, dprCap: opts.high ? 1.5 : 1, checkAt: 0 };
+    const sizes = new WeakMap();
     const chunkKey = (cx, cz) => cz * 1000 + cx;
     function freeChunk(c) { for (const m of [c.st, c.bl]) if (m) { gl.deleteBuffer(m.b || m.buf); gl.deleteVertexArray(m.vao); } }
 
@@ -640,7 +646,8 @@ void main() {
     // f: { W, H, dpr, F, cam, roll, shk, look, drawDistance, sun: { x, z } }
     function begin(f) {
       cam = f.cam; look = f.look; D = f.drawDistance; Wd = f.W; Ht = f.H;
-      const cw = Math.round(f.W * f.dpr), chh = Math.round(f.H * f.dpr);
+      // resolution capped (1.5 on high, 1 on low or after the GPU ran short), the 2D layer on top stays sharp
+      const dpr = Math.min(f.dpr, mem.dprCap), cw = Math.round(f.W * dpr), chh = Math.round(f.H * dpr);
       if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
       const th = -(f.roll || 0), c = Math.cos(th), s = Math.sin(th), hw = f.W / 2, hh = f.H / 2, F = f.F;
       const n = 0.12, fa = 1500, za = (fa + n) / (fa - n), zb = (-2 * fa * n) / (fa - n);
@@ -716,10 +723,10 @@ void main() {
         // behind the camera entirely
         let ahead = false;
         for (const [x, z] of [[x0, z0], [x0 + CH, z0], [x0, z1], [x0 + CH, z1]]) if ((x - cam.x) * cam.sy + (z - cam.z) * cam.cy > -30) ahead = true;
-        if (!ahead && dist > 30) continue;
-        out.push({ cx, cz, dist });
+        // behind you: kept loaded (turning around would rebuild it) but not drawn
+        out.push({ cx, cz, dist, ahead: ahead || dist <= 30 });
       }
-      return out.sort((a, b) => a.dist - b.dist);
+      return out.sort((a, b) => (b.ahead - a.ahead) || a.dist - b.dist);
     }
 
     function draw() {
@@ -731,9 +738,9 @@ void main() {
       gl.disable(gl.CULL_FACE);
       const t0 = performance.now(), budget = opts.budgetMs || 6;
       // chunks: build what is missing, nearest first, within the time budget (at least one)
-      const view = chunksInView();
+      const near = chunksInView(), view = near.filter((v) => v.ahead);
       let builtOne = false;
-      for (const v of view) {
+      for (const v of near) {
         const k = chunkKey(v.cx, v.cz);
         let c = chunks.get(k);
         if (!c) { c = { cx: v.cx, cz: v.cz }; chunks.set(k, c); }
@@ -749,7 +756,8 @@ void main() {
         }
       }
       // free chunks unused for a while
-      if (chunks.size > 40) for (const [k, c] of chunks) if (t0 - c.used > 20000) { freeChunk(c); chunks.delete(k); }
+      // free chunks out of view for a few seconds: GPU memory on a tablet is shared with the camera's tracker
+      for (const [k, c] of chunks) if (t0 - c.used > mem.keepMs || (chunks.size > mem.maxChunks && c.used !== t0)) { freeChunk(c); chunks.delete(k); }
 
       // 1. the ground: tiles, then streets layer by layer, no depth (nothing sits under them)
       gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND);
@@ -773,7 +781,7 @@ void main() {
           gl.uniform4f(p.u.uTile, t.x0, t.zTop, t.size, 0);
           gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
         }
-        if (tiles.size > 12) for (const [k, t] of tiles) if (t0 - t.used > 20000) { gl.deleteTexture(t.tex); tiles.delete(k); }
+        for (const [k, t] of tiles) if (t0 - t.used > mem.keepMs) { gl.deleteTexture(t.tex); tiles.delete(k); }
       }
       {
         const p = P.street; gl.useProgram(p.p); setCommon(p);
@@ -796,7 +804,7 @@ void main() {
         for (const [B, lit] of [[flats, 0], [shadows, 0]]) {
           if (!B.n) continue;
           gl.uniform1f(p.u.uLit, lit);
-          gl.bufferData(gl.ARRAY_BUFFER, B.a.subarray(0, B.n), gl.STREAM_DRAW);
+          upload(B);
           gl.drawArrays(gl.TRIANGLES, 0, B.n / 7);
         }
       }
@@ -829,7 +837,7 @@ void main() {
         const l = Math.hypot(sw.x, sw.y, sw.z);
         gl.uniform3f(p.u.uSunW, sw.x / l, sw.y / l, sw.z / l);
         gl.bindVertexArray(cube.vao); gl.bindBuffer(gl.ARRAY_BUFFER, cube.ibuf);
-        gl.bufferData(gl.ARRAY_BUFFER, boxes.a.subarray(0, boxes.n), gl.STREAM_DRAW);
+        upload(boxes);
         gl.drawElementsInstanced(gl.TRIANGLES, cube.count, gl.UNSIGNED_SHORT, 0, boxes.n / 12);
       }
       if (capsN.n || capsF.n) {
@@ -840,12 +848,35 @@ void main() {
         for (const [B, mesh] of [[capsN, capNear], [capsF, capFar]]) {
           if (!B.n) continue;
           gl.bindVertexArray(mesh.vao); gl.bindBuffer(gl.ARRAY_BUFFER, mesh.ibuf);
-          gl.bufferData(gl.ARRAY_BUFFER, B.a.subarray(0, B.n), gl.STREAM_DRAW);
+          upload(B);
           gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, B.n / 10);
         }
       }
       gl.bindVertexArray(null);
+      memCheck(t0);
       st.ms = performance.now() - t0;
+      st.chunks = chunks.size; st.tiles = tiles.size;
+    }
+    // per-frame data into the bound buffer: it keeps its size and only grows, so the driver does not
+    // reallocate every frame
+    function upload(B) {
+      const buf = gl.getParameter(gl.ARRAY_BUFFER_BINDING);
+      const cap = sizes.get(buf) || 0, need = B.n * 4;
+      if (need > cap) { const n = Math.max(need, cap * 2, 65536); gl.bufferData(gl.ARRAY_BUFFER, n, gl.DYNAMIC_DRAW); sizes.set(buf, n); }
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, B.a, 0, B.n);
+    }
+    // once a second: did the GPU run out of memory? Then free everything out of view, halve the
+    // ground textures and drop the resolution, and the next frames rebuild what is in view
+    function memCheck(t0) {
+      if (t0 < mem.checkAt) return;
+      mem.checkAt = t0 + 1000;
+      let e, oom = false;
+      while ((e = gl.getError()) !== gl.NO_ERROR) { if (e === gl.OUT_OF_MEMORY) oom = true; st.glErrors = (st.glErrors || 0) + 1; }
+      if (!oom) return;
+      st.oom = (st.oom || 0) + 1;
+      for (const [k, c] of chunks) { freeChunk(c); chunks.delete(k); }
+      for (const [k, t] of tiles) { gl.deleteTexture(t.tex); tiles.delete(k); }
+      TILE_PX = 512; mem.dprCap = 1; mem.maxChunks = 12;
     }
     function clear() { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); }
     return { begin, draw, clear, cap, box, flat, shadow, stats: st, get lost() { return gl.isContextLost(); } };

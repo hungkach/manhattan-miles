@@ -4533,7 +4533,9 @@ void main() {
   }
 
   MMGL.create = function (canvas, MW, opts = {}) {
-    const gl = canvas.getContext('webgl2', { alpha: true, antialias: !!opts.high, depth: true, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+    // no antialiasing (10/23, Mark's iPad lost the city past the start): 4x MSAA at an iPad's full
+    // resolution is about 180 MB of GPU memory next to MediaPipe's, and GTA3 had none anyway
+    const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, depth: true, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
     if (!gl) return null;
     let P = {};
     try {
@@ -4593,7 +4595,7 @@ void main() {
     })();
 
     // ---------- ground tiles: painted once each into a texture ----------
-    const TILE_PX = opts.high ? 1024 : 512;
+    let TILE_PX = opts.high ? 1024 : 512;
     const tiles = new Map();
     const tileQuad = (() => {
       const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -4609,6 +4611,7 @@ void main() {
     const pc = paintCanvas.getContext('2d');
     function buildTile(ti, tj) {
       const t = MW.tile(ti, tj), H = MW.H, AT = H.AT;
+      if (paintCanvas.width !== TILE_PX) paintCanvas.width = paintCanvas.height = TILE_PX;
       const x0 = H.X0 + ti * AT, zs0 = H.Z0 + tj * AT, k = TILE_PX / AT;
       pc.fillStyle = `rgb(${MW.WATER_COL.join(',')})`; pc.fillRect(0, 0, TILE_PX, TILE_PX);
       if (t) for (const cls of GROUND_ORDER) {
@@ -4783,6 +4786,9 @@ void main() {
 
     // chunk caches, built nearest first within a time budget each frame
     const chunks = new Map();
+    // GPU memory: how long things out of view stay, how many chunks at most, the resolution cap
+    const mem = { keepMs: 4000, maxChunks: 16, dprCap: opts.high ? 1.5 : 1, checkAt: 0 };
+    const sizes = new WeakMap();
     const chunkKey = (cx, cz) => cz * 1000 + cx;
     function freeChunk(c) { for (const m of [c.st, c.bl]) if (m) { gl.deleteBuffer(m.b || m.buf); gl.deleteVertexArray(m.vao); } }
 
@@ -4795,7 +4801,8 @@ void main() {
     // f: { W, H, dpr, F, cam, roll, shk, look, drawDistance, sun: { x, z } }
     function begin(f) {
       cam = f.cam; look = f.look; D = f.drawDistance; Wd = f.W; Ht = f.H;
-      const cw = Math.round(f.W * f.dpr), chh = Math.round(f.H * f.dpr);
+      // resolution capped (1.5 on high, 1 on low or after the GPU ran short), the 2D layer on top stays sharp
+      const dpr = Math.min(f.dpr, mem.dprCap), cw = Math.round(f.W * dpr), chh = Math.round(f.H * dpr);
       if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
       const th = -(f.roll || 0), c = Math.cos(th), s = Math.sin(th), hw = f.W / 2, hh = f.H / 2, F = f.F;
       const n = 0.12, fa = 1500, za = (fa + n) / (fa - n), zb = (-2 * fa * n) / (fa - n);
@@ -4871,10 +4878,10 @@ void main() {
         // behind the camera entirely
         let ahead = false;
         for (const [x, z] of [[x0, z0], [x0 + CH, z0], [x0, z1], [x0 + CH, z1]]) if ((x - cam.x) * cam.sy + (z - cam.z) * cam.cy > -30) ahead = true;
-        if (!ahead && dist > 30) continue;
-        out.push({ cx, cz, dist });
+        // behind you: kept loaded (turning around would rebuild it) but not drawn
+        out.push({ cx, cz, dist, ahead: ahead || dist <= 30 });
       }
-      return out.sort((a, b) => a.dist - b.dist);
+      return out.sort((a, b) => (b.ahead - a.ahead) || a.dist - b.dist);
     }
 
     function draw() {
@@ -4886,9 +4893,9 @@ void main() {
       gl.disable(gl.CULL_FACE);
       const t0 = performance.now(), budget = opts.budgetMs || 6;
       // chunks: build what is missing, nearest first, within the time budget (at least one)
-      const view = chunksInView();
+      const near = chunksInView(), view = near.filter((v) => v.ahead);
       let builtOne = false;
-      for (const v of view) {
+      for (const v of near) {
         const k = chunkKey(v.cx, v.cz);
         let c = chunks.get(k);
         if (!c) { c = { cx: v.cx, cz: v.cz }; chunks.set(k, c); }
@@ -4904,7 +4911,8 @@ void main() {
         }
       }
       // free chunks unused for a while
-      if (chunks.size > 40) for (const [k, c] of chunks) if (t0 - c.used > 20000) { freeChunk(c); chunks.delete(k); }
+      // free chunks out of view for a few seconds: GPU memory on a tablet is shared with the camera's tracker
+      for (const [k, c] of chunks) if (t0 - c.used > mem.keepMs || (chunks.size > mem.maxChunks && c.used !== t0)) { freeChunk(c); chunks.delete(k); }
 
       // 1. the ground: tiles, then streets layer by layer, no depth (nothing sits under them)
       gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND);
@@ -4928,7 +4936,7 @@ void main() {
           gl.uniform4f(p.u.uTile, t.x0, t.zTop, t.size, 0);
           gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
         }
-        if (tiles.size > 12) for (const [k, t] of tiles) if (t0 - t.used > 20000) { gl.deleteTexture(t.tex); tiles.delete(k); }
+        for (const [k, t] of tiles) if (t0 - t.used > mem.keepMs) { gl.deleteTexture(t.tex); tiles.delete(k); }
       }
       {
         const p = P.street; gl.useProgram(p.p); setCommon(p);
@@ -4951,7 +4959,7 @@ void main() {
         for (const [B, lit] of [[flats, 0], [shadows, 0]]) {
           if (!B.n) continue;
           gl.uniform1f(p.u.uLit, lit);
-          gl.bufferData(gl.ARRAY_BUFFER, B.a.subarray(0, B.n), gl.STREAM_DRAW);
+          upload(B);
           gl.drawArrays(gl.TRIANGLES, 0, B.n / 7);
         }
       }
@@ -4984,7 +4992,7 @@ void main() {
         const l = Math.hypot(sw.x, sw.y, sw.z);
         gl.uniform3f(p.u.uSunW, sw.x / l, sw.y / l, sw.z / l);
         gl.bindVertexArray(cube.vao); gl.bindBuffer(gl.ARRAY_BUFFER, cube.ibuf);
-        gl.bufferData(gl.ARRAY_BUFFER, boxes.a.subarray(0, boxes.n), gl.STREAM_DRAW);
+        upload(boxes);
         gl.drawElementsInstanced(gl.TRIANGLES, cube.count, gl.UNSIGNED_SHORT, 0, boxes.n / 12);
       }
       if (capsN.n || capsF.n) {
@@ -4995,12 +5003,35 @@ void main() {
         for (const [B, mesh] of [[capsN, capNear], [capsF, capFar]]) {
           if (!B.n) continue;
           gl.bindVertexArray(mesh.vao); gl.bindBuffer(gl.ARRAY_BUFFER, mesh.ibuf);
-          gl.bufferData(gl.ARRAY_BUFFER, B.a.subarray(0, B.n), gl.STREAM_DRAW);
+          upload(B);
           gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0, B.n / 10);
         }
       }
       gl.bindVertexArray(null);
+      memCheck(t0);
       st.ms = performance.now() - t0;
+      st.chunks = chunks.size; st.tiles = tiles.size;
+    }
+    // per-frame data into the bound buffer: it keeps its size and only grows, so the driver does not
+    // reallocate every frame
+    function upload(B) {
+      const buf = gl.getParameter(gl.ARRAY_BUFFER_BINDING);
+      const cap = sizes.get(buf) || 0, need = B.n * 4;
+      if (need > cap) { const n = Math.max(need, cap * 2, 65536); gl.bufferData(gl.ARRAY_BUFFER, n, gl.DYNAMIC_DRAW); sizes.set(buf, n); }
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, B.a, 0, B.n);
+    }
+    // once a second: did the GPU run out of memory? Then free everything out of view, halve the
+    // ground textures and drop the resolution, and the next frames rebuild what is in view
+    function memCheck(t0) {
+      if (t0 < mem.checkAt) return;
+      mem.checkAt = t0 + 1000;
+      let e, oom = false;
+      while ((e = gl.getError()) !== gl.NO_ERROR) { if (e === gl.OUT_OF_MEMORY) oom = true; st.glErrors = (st.glErrors || 0) + 1; }
+      if (!oom) return;
+      st.oom = (st.oom || 0) + 1;
+      for (const [k, c] of chunks) { freeChunk(c); chunks.delete(k); }
+      for (const [k, t] of tiles) { gl.deleteTexture(t.tex); tiles.delete(k); }
+      TILE_PX = 512; mem.dprCap = 1; mem.maxChunks = 12;
     }
     function clear() { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); }
     return { begin, draw, clear, cap, box, flat, shadow, stats: st, get lost() { return gl.isContextLost(); } };
@@ -6170,7 +6201,7 @@ void main() {
     rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
     reach: { jab: 2.6, cross: 2.6, hook: 1.85, overhand: 1.95, uppercut: 1.85 },
     hp: [12, 16], playerHp: 10,
-    windupMs: 650, graceMs: 200, shootMs: 900, stuffedMs: 1500, swingMs: 220,
+    windupMs: 650, graceMs: 200, shootMs: 1300, stuffedMs: 1500, swingMs: 220,
     // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
     damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.3, down: 1.0, down_strike: 1.0 },
     // kicks and knees (engine 0.11.0, Mark 10/22): damage by kind; a teep pushes them out for
@@ -6213,9 +6244,9 @@ void main() {
     // brokenMs. It comes back by regen a second while your hands are not taking punches.
     // two opponents tag team (Mark 10/16, the old kung fu movie rule: one at a time): the other
     // circles at sideM and subs in when the one in front gets their guard broken (once it runs
-    // out), gets up from a takedown, or every everyS. Taking one down with the other there is
-    // risky: the ground and pound is cut to gnpCut and the other hits you every backHitMs.
-    tag: { sideM: 3.4, everyS: [14, 22], gnpCut: 0.5, backHitMs: 1500 },
+    // out), gets up from a takedown, or every everyS. Taking one down with the other there costs
+    // nothing (10/23, Mark): the other waits their turn.
+    tag: { sideM: 3.4, everyS: [14, 22] },
     // a beaten opponent who runs can be chased down (high knees): they run at speed (m/s), slowing
     // by tire a second; catch them within catchM before they get loseM away or ms runs out
     // 10/20 (Mark: chases were hard unless your shoulders aimed perfectly, and they ended flat):
@@ -6230,7 +6261,7 @@ void main() {
     // 10/21 (Mark: runners too fast, the moves need time and should not cost your speed): while a
     // prompt is up the chase runs in slow motion (slowK), your speed holds through the move, and a
     // clean move keeps it boostK faster for boostMs after.
-    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: 1.15, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
+    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: [1.08, 1.35], boost: { bound: [0.9, 1.8], jump: [0.2, 0.45] }, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
     // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
     // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
     // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
@@ -6993,12 +7024,14 @@ void main() {
     Fight.lastTq = tq;
     if (Q.fight) Q.fight.takedowns.push(tq.q);
     // a braced opponent was waiting for it: only a quality shot gets through
-    if (foe.state === 'brace' && tq.q < FT.td.beatBrace) return { takedown: false, braced: true };
+    // by type (10/23): boxers go down easier, wrestlers stuff a weak shot even unbraced
+    const tdK = archK(foe, 'td');
+    if (foe.state === 'brace' && tq.q + tdK < FT.td.beatBrace) return { takedown: false, braced: true };
     const timed = ['windup', 'hurt', 'broken', 'stuffed'].includes(foe.state);
-    const q = Math.max(0, Math.min(1, tq.q + (timed ? FT.td.timedBonus : 0)));
-    // on the ground with their friend standing over you: a short burst
-    const cut = others(a).length ? FT.tag.gnpCut : 1;
-    return { takedown: true, topMs: Math.round((FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q) * cut), timed };
+    if (!timed && tq.q < archK(foe, 'stuff')) return { takedown: false, braced: true };
+    const q = Math.max(0, Math.min(1, tq.q + tdK + (timed ? FT.td.timedBonus : 0)));
+    // 10/23 (Mark): no penalty for taking one down in a group: the full burst, and the friend waits
+    return { takedown: true, topMs: Math.round(FT.td.gnpMs[0] + (FT.td.gnpMs[1] - FT.td.gnpMs[0]) * q), timed };
   }
   engine.on('takedown', (e) => {
     const a = Fight.active;
@@ -7009,9 +7042,7 @@ void main() {
     Fight.gnpStart = now; Fight.gnpMs = e.topMs || FT.td.gnpMs[0];
     Fight.stats.takedowns++;
     award(Math.round(effort(Fight.lastTq ? Fight.lastTq.q : 0, 0, 1, XP.takedown * 0.4, XP.takedown)), 'takedown');
-    Fight.backHitAt = now + FT.tag.backHitMs;
-    if (others(a).length) say('Takedown! Quick, his friend is coming.', 'feedback');
-    else say('Takedown. Ground and pound.', 'feedback');
+    say('Takedown. Ground and pound.', 'feedback');
     Talk.voiceAt = performance.now(); if (Math.random() < 0.5) fightTalk('crowd', 'takedown', performance.now(), 0.8); else fightTalk('foe', 'down', performance.now(), 0.8);
     fightMsg('Takedown', 1200);
   });
@@ -7033,17 +7064,30 @@ void main() {
     a.foe.state = 'guard'; a.foe.until = performance.now() + 900;
     if (!switchFoe(performance.now(), 'down')) fightMsg('Back up');
   });
-  engine.on('sprawl', () => {
+  // their shot: a whoosh at once (the spoken call comes late), open to a sprawl for shootMs by type
+  function startShot(foe, now) {
+    foe.state = 'shoot'; foe.until = now + FT.shootMs * archK(foe, 'shoot');
+    tone(240, 0.18, 0.18, 'sawtooth', 0, 120);
+    say('Sprawl!', 'feedback');
+  }
+  // 10/23 (Mark: no stuffed takedowns in many versions): besides the engine's sprawl (a squat past
+  // the level change mark, or a held one), any drop to your own warm-up floor during their shot
+  // sprawls it (deeper for a wrestler); a deeper one tops up your guard bar more
+  function sprawlCheck(a, s, now) {
+    if (a.foe.state === 'shoot' && (s.squat_depth || 0) >= sprawlNeed(a.foe)) sprawled(s.squat_depth || 0);
+  }
+  engine.on('sprawl', () => sprawled(engine.signals().squat_depth || 0));
+  function sprawled(depth) {
     const a = Fight.active;
     if (!a || a.foe.state !== 'shoot') return;
     a.foe.state = 'stuffed'; a.foe.until = performance.now() + FT.stuffedMs;
     Fight.openUntil = performance.now() + FT.stuffedMs;
     Fight.stats.sprawls++;
-    guardBonus('stuff');
+    guardBonus('stuff', effort(depth, sprawlNeed(a.foe), Math.min(1, LEVEL_SHOT * 1.8)));
     say('Sprawl! Now hit.', 'feedback');
     Talk.voiceAt = performance.now(); fightTalk('foe', 'sprawled', performance.now(), 0.6);
     fightMsg('Sprawl!');
-  });
+  }
   engine.on('escape', () => { if (Fight.active) endFight('escaped', performance.now()); });
 
   // the opponent: guard, then a telegraphed attack, a step back or a cover-up
@@ -7064,6 +7108,7 @@ void main() {
       if (Math.random() < FT.td.braceChance) { foe.state = 'brace'; foe.until = now + FT.td.braceMs; fightMsg('They read it', 800); return; }
     }
     if (Fight.lowSince === null) foe.bracedFor = null;
+    sprawlCheck(a, s, now);
     if (foe.state === 'down' || now < foe.until) return;
     if (Fight.shift && now < Fight.shift.until) return; // turned away, looking for you
     // a state just ran out
@@ -7081,9 +7126,9 @@ void main() {
       // change (both top up your guard bar and open a counter); an uppercut that catches you low
       // lands double; anything else the guard bar blocks by itself while it has enough left
       const cost = FT.myGuard[foe.kind] || 1;
-      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + FT.counterMs; guardBonus('slip', effort(Math.abs(s.slip), 0.5, 1)); fightMsg('Slipped: counter!'); }
-      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + FT.counterMs; guardBonus('duck', effort(s.squat_depth || 0, LEVEL_SHOT * 0.7, Math.min(1, LEVEL_SHOT * 1.8))); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
-      else if (foe.kind === 'uppercut' && !low && now - Fight.lastLowAt < 1600) { Fight.counterUntil = now + FT.counterMs; guardBonus('duck', 1); fightMsg('Baited it: counter!', 1100); tone(520, 0.1, 0.12, 'triangle'); }
+      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', effort(Math.abs(s.slip), 0.5, 1)); fightMsg('Slipped: counter!'); }
+      else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + counterMs(foe); guardBonus('duck', effort(s.squat_depth || 0, LEVEL_SHOT * 0.7, Math.min(1, LEVEL_SHOT * 1.8))); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
+      else if (foe.kind === 'uppercut' && !low && now - Fight.lastLowAt < 1600) { Fight.counterUntil = now + counterMs(foe); guardBonus('duck', 1); fightMsg('Baited it: counter!', 1100); tone(520, 0.1, 0.12, 'triangle'); }
       else if (foe.kind === 'uppercut' && low) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
       else if (Fight.guardHp >= cost * 0.5) {
         Fight.guardHp = Math.max(0, Fight.guardHp - cost);
@@ -7127,7 +7172,7 @@ void main() {
     const lowLately = now - Fight.lastLowAt < 2500;
     if (reads.includes('slips') && slipsLately >= 2 && Math.random() < 0.6) { punch('hook'); foe.read = 'slips'; return; }
     if (reads.includes('level') && lowLately && Math.random() < 0.6) { punch('uppercut'); foe.read = 'level'; return; }
-    if (reads.includes('level') && !lowLately && a.range === 'close' && elapsed > 3000 && Math.random() < 0.3) { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); return; }
+    if (reads.includes('level') && !lowLately && a.range === 'close' && elapsed > 3000 && Math.random() < 0.3) { startShot(foe, now); return; }
     foe.read = null;
     // otherwise a weighted pick of their moves (no shots early on, no stepping out at the start)
     const w = Object.assign({}, A.moves);
@@ -7136,7 +7181,7 @@ void main() {
     let r = Math.random() * Object.values(w).reduce((n, x) => n + x, 0), move = 'wait';
     for (const [k, x] of Object.entries(w)) { if ((r -= x) <= 0) { move = k; break; } }
     if (move === 'straight' || move === 'hook' || move === 'uppercut') punch(move);
-    else if (move === 'shoot') { foe.state = 'shoot'; foe.until = now + FT.shootMs; say('Sprawl!', 'feedback'); }
+    else if (move === 'shoot') startShot(foe, now);
     else if (move === 'out') { foe.state = 'out'; a.range = 'out'; foe.until = now + rand(FT.outMs[0], FT.outMs[1]); }
     else if (move === 'cover') { foe.state = 'cover'; foe.until = now + 1400; }
     else { foe.state = 'guard'; foe.until = now + rand(600, 1200) * A.think; }
@@ -7208,11 +7253,6 @@ void main() {
       const tx = P.x + ux * FT.tag.sideM, tz = P.z + uz * FT.tag.sideM;
       if (!blocked(tx, tz)) { const k = Math.min(1, dt * 2); f.x += (tx - f.x) * k; f.z += (tz - f.z) * k; }
     });
-    // on top with their friend still standing: they lay into you
-    if (engine.combat().phase === 'top' && others(a).length && now >= (Fight.backHitAt || 0)) {
-      Fight.backHitAt = now + FT.tag.backHitMs;
-      hurtPlayer(now, 1); fightMsg('Watch your back!', 900); Fight.shake = { t: now, k: 1.2 };
-    }
     const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : a.range === 'mid' ? FT.rangeMid : FT.rangeClose;
     const d = foeDist(foe) || 1;
     const k = Math.min(1, dt * 4) * (d - want) / d;
@@ -7359,7 +7399,7 @@ void main() {
     P.speed = v;
     G.meters += Math.hypot(P.x - ox, P.z - oz);
     // a duck: your own squat depth counts, not just the engine's squat
-    if (c.prompt && !c.prompt.done && c.prompt.kind === 'duck' && (engine.signals().squat_depth || 0) >= duckFloor()) chaseMove('squat');
+    if (c.prompt && !c.prompt.done && c.prompt.kind === 'duck' && (engine.signals().squat_depth || 0) >= duckFloor()) chaseMove('squat', engine.signals().squat_depth || 0);
     // the next obstacle: prompt, then judge it as you pass
     const o = c.obs.find((q) => !q.passed);
     if (o) {
@@ -7394,17 +7434,21 @@ void main() {
     }
   }
   // a move during a chase: clears the obstacle being prompted
-  function chaseMove(ev) {
+  // 10/23 (Mark, honest reps): the boost after a clean move scales with the move itself: a deeper
+  // duck, a higher hop, a longer juke carry you faster, from boostK[0] at your floor to boostK[1]
+  function chaseMove(ev, out = 0) {
     const c = Fight.chase;
     if (!c || c.mode !== 'run' || !c.prompt || c.prompt.done) return;
     if (OBSTACLES[c.prompt.kind].ev !== ev) return;
     c.prompt.done = true;
-    c.boostUntil = performance.now() + FT.run.boostMs; c.boostV = (c.prompt.v0 || 0) * FT.run.boostK;
+    const B = FT.run.boost, [lo, hi] = FT.run.boostK;
+    const k = ev === 'bound' ? effort(out, B.bound[0], B.bound[1], lo, hi) : ev === 'jump' ? effort(out, B.jump[0], B.jump[1], lo, hi) : effort(out, duckFloor(), Math.min(1, LEVEL_SHOT * 1.8), lo, hi);
+    c.boostUntil = performance.now() + FT.run.boostMs; c.boostV = (c.prompt.v0 || 0) * k; c.boostK = k;
     clack(); // the prompt turns green and says so
   }
-  engine.on('bound', () => chaseMove('bound'));
-  engine.on('jump', () => chaseMove('jump'));
-  engine.on('squat', () => chaseMove('squat'));
+  engine.on('bound', (e) => chaseMove('bound', (e && e.dist) || 0));
+  engine.on('jump', (e) => chaseMove('jump', (e && e.height) || 0));
+  engine.on('squat', () => chaseMove('squat', engine.signals().squat_depth || 0));
   function thud() { burst(160, 0.8, 0.25, 0.5, 'lowpass'); }
 
 
@@ -7652,14 +7696,26 @@ void main() {
   //            'level': after you drop your level they throw the uppercut (stand back up and it
   //            misses: a counter), and they shoot when you stand tall up close
   //   dodge    a share of your straights into their guard they slip (boxers)
+  // 10/23 (Mark): strengths and weaknesses, not just tendencies
+  //   counter  how long your counter window lasts after a slip, duck or bait (boxers give little)
+  //   td       added to your takedown's quality (boxers go down easier, wrestlers harder)
+  //   stuff    a shot below this quality is stuffed even when they are not braced (wrestlers)
+  //   shoot    how long their shot stays open to a sprawl (thugs telegraph, wrestlers are quick)
+  //   sprawl   how deep your sprawl has to be, times your own warm-up floor (wrestlers: deeper)
+  //   tweakers and roidheads are only health and pace; thugs are weak all around
   const ARCH = {
-    thug: { name: 'Thug', w: 10, hp: 0.85, guard: 0.6, turtle: 0.05, windup: 1.25, think: 1.2, hit: 1, moves: { straight: 3, hook: 4, uppercut: 0.5, shoot: 0.3, out: 1, cover: 0.5, wait: 1.5 } },
-    boxer: { name: 'Boxer', w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
-    wrestler: { name: 'Wrestler', w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
-    tweaker: { name: 'Tweaker', w: 1.5, hp: 0.55, guard: 0.6, turtle: 0, windup: 0.75, think: 0.55, hit: 1, scale: 0.95, moves: { straight: 3, hook: 4, uppercut: 1, shoot: 0.5, out: 0.5, cover: 0, wait: 0.3 } },
-    roidhead: { name: 'Roidhead', w: 1.2, hp: 1.8, guard: 1.3, turtle: 0.1, windup: 1.4, think: 1.3, hit: 2, scale: 1.12, moves: { straight: 1.5, hook: 4, uppercut: 2, shoot: 0.5, out: 0.3, cover: 0.5, wait: 1.5 } },
-    turtle: { name: 'Turtle', w: 1, hp: 1, guard: 1.4, turtle: 0.55, windup: 1, think: 1, hit: 1, moves: { straight: 3, hook: 2, uppercut: 1, shoot: 0.5, out: 1, cover: 1, wait: 1 } },
+    thug: { name: 'Thug', tip: 'Weak all around', w: 10, hp: 0.75, guard: 0.5, turtle: 0.05, windup: 1.3, think: 1.25, hit: 1, counter: 1.4, td: 0.2, stuff: 0, shoot: 1.5, sprawl: 0.8, moves: { straight: 3, hook: 4, uppercut: 0.5, shoot: 0.3, out: 1, cover: 0.5, wait: 1.5 } },
+    boxer: { name: 'Boxer', tip: 'Tight counters, easy takedown', w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, counter: 0.55, td: 0.25, stuff: 0, shoot: 1, sprawl: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
+    wrestler: { name: 'Wrestler', tip: 'Long counters, tough sprawl and takedown', w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, counter: 1.6, td: -0.2, stuff: 0.45, shoot: 0.8, sprawl: 1.35, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
+    tweaker: { name: 'Tweaker', tip: 'Fast, fragile', w: 1.5, hp: 0.55, guard: 0.6, turtle: 0, windup: 0.75, think: 0.55, hit: 1, scale: 0.95, moves: { straight: 3, hook: 4, uppercut: 1, shoot: 0.5, out: 0.5, cover: 0, wait: 0.3 } },
+    roidhead: { name: 'Roidhead', tip: 'Slow, a lot of health', w: 1.2, hp: 1.8, guard: 1.3, turtle: 0.1, windup: 1.4, think: 1.3, hit: 1, scale: 1.12, moves: { straight: 1.5, hook: 4, uppercut: 2, shoot: 0.5, out: 0.3, cover: 0.5, wait: 1.5 } },
+    turtle: { name: 'Turtle', tip: 'Covers up', w: 1, hp: 1, guard: 1.4, turtle: 0.55, windup: 1, think: 1, hit: 1, moves: { straight: 3, hook: 2, uppercut: 1, shoot: 0.5, out: 1, cover: 1, wait: 1 } },
   };
+  const archK = (f, key) => { const v = archOf(f)[key]; return v === undefined ? (key === 'td' || key === 'stuff' ? 0 : 1) : v; };
+  // your counter window after a slip, duck or bait, by who you are fighting
+  const counterMs = (f) => FT.counterMs * archK(f, 'counter');
+  // how deep a sprawl has to go: your own warm-up squat floor, times their type, never past a full level change
+  const sprawlNeed = (f) => Math.min(LEVEL_SHOT, duckFloor() * archK(f, 'sprawl'));
   const skillPerLevel = 0.15;
   function pickArch(lvl) {
     const ws = Object.entries(ARCH).map(([id, A]) => [id, A.w * (id === 'thug' ? 1 : 1 + skillPerLevel * (lvl - 1))]);
@@ -7677,6 +7733,12 @@ void main() {
     return f;
   }
   const archOf = (f) => ARCH[f && f.arch] || ARCH.thug;
+  // the health bar names the type, and for its first seconds in front of you, what it is weak or strong at
+  function archLabel(f, now) {
+    const A = archOf(f);
+    if (!f.metAt) f.metAt = now;
+    return now - f.metAt < 4500 && A.tip ? `${A.name}: ${A.tip}` : A.name;
+  }
   const makeFoe = (x, z, i, lvl) => {
     const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
     return applyArch({ x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() }, pickArch(lvl));
@@ -8543,7 +8605,7 @@ void main() {
     const w = Math.min(W - 28, 360);
     if (a.tutor) tutorHud(now);
     else {
-      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', a.foe.boss ? `Boss: ${a.foe.name}` : Stage.on ? `${archOf(a.foe).name} \u00b7 ${others(a).length + 1} left` : archOf(a.foe).name);
+      bar(W / 2 - w / 2, 14, w, 24, Math.max(0, a.foe.hp / a.foe.maxHp), '#d0413a', a.foe.boss ? `Boss: ${a.foe.name}` : Stage.on ? `${archLabel(a.foe, now)} \u00b7 ${others(a).length + 1} left` : archLabel(a.foe, now));
       bar(W / 2 - w / 2, 42, w * 0.6, 18, Math.max(0, Fight.hp / FT.playerHp), '#5be37c', 'You');
     }
     const s = engine.signals();
@@ -8891,7 +8953,8 @@ void main() {
   const GLF = { on: false, shown: false, r: null, key: '', failed: false };
   function glRenderer() {
     const key = HIGH ? 'high' : 'low';
-    if (GLF.key === key && (GLF.r || GLF.failed)) return GLF.r && !GLF.r.lost ? GLF.r : null;
+    // a lost context, or the GPU running out of memory three times over: the classic renderer
+    if (GLF.key === key && (GLF.r || GLF.failed)) return GLF.r && !GLF.r.lost && (GLF.r.stats.oom || 0) < 3 ? GLF.r : null;
     const cv = document.createElement('canvas');
     cv.id = 'world';
     $('world').replaceWith(cv);
@@ -9394,6 +9457,13 @@ void main() {
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     W = innerWidth; H = innerHeight;
+    // on the way into the gym (Mark 10/23: the streets showed for a moment first): the gym's dark
+    // until the tutorial's room is up
+    if (G.state === 'walk' && G.afterGym && !(Fight.active && Fight.active.tutor)) {
+      if (GLF.shown) { GLF.shown = GLF.on = false; document.body.classList.remove('gl'); }
+      ctx.fillStyle = rgbOf(LOOKS.gym.hor); ctx.fillRect(0, 0, W, H);
+      return;
+    }
     // running widens the view a little, so a run reads at a glance
     P.runBlend += ((P.running ? 1 : 0) - P.runBlend) * 0.08;
     F = Math.max(W, H) * 0.55 * (1 - 0.15 * P.runBlend);
@@ -9589,7 +9659,7 @@ void main() {
         const o = c.prompt;
         if (o) {
           const ob = OBSTACLES[o.kind], d = Math.max(0, o.s - c.sp), k = Math.max(0, Math.min(1, d / (Math.max(P.speed, 4) * FT.run.promptS)));
-          big(o.done ? ob.done : ob.big, H * 0.42, 44, o.done ? '#5be37c' : '#ffcf3f');
+          big(o.done ? `${ob.done} +${Math.round(((c.boostK || 1) - 1) * 100)}%` : ob.big, H * 0.42, 44, o.done ? '#5be37c' : '#ffcf3f');
           if (!o.done) {
             big(ob.small, H * 0.42 + 36, 17, '#fff');
             const bw = Math.min(W - 120, 260);
@@ -9676,7 +9746,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-23 \u00b7 the 3D city (WebGL); classic in Graphics';
+  const BUILD = '2026-10-24 \u00b7 city memory fix, sprawls, types, both bounds';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -9911,11 +9981,13 @@ void main() {
     turnR: { big: 'Turn right', small: 'Feet still. Turn your shoulders right, then back.', say: 'Turn your shoulders right.', event: 'turn_right', need: 1, side: 1, secs: 4 },
     // 10/22 (Mark): the chase moves, so they register when a runner is on: duck, juke and hop
     squat: { big: 'Squat', small: 'Sit down low, then stand back up.', say: 'Squat. Sit down low, then stand back up.', event: 'squat', need: 1, secs: 5 },
-    bound: { big: 'Bound', small: 'Hop out to one side, then straight back.', say: 'Bound. Hop out to the side, and straight back.', event: 'bound', need: 1, secs: 4.5 },
+    // both sides (Mark 10/23: the warm-up only asked for one): a chase juke goes either way
+    boundL: { big: 'Bound left', small: 'Hop out to your left, then straight back.', say: 'Bound left. Out to your left, and straight back.', event: 'bound', bside: 'left', need: 1, secs: 4.5 },
+    boundR: { big: 'Bound right', small: 'Hop out to your right, then straight back.', say: 'Bound right. Out to your right, and straight back.', event: 'bound', bside: 'right', need: 1, secs: 4.5 },
     hop: { big: 'Jump', small: 'A small hop, both feet off the floor.', say: 'Jump. A small hop.', event: 'jump', need: 1, secs: 4 },
   };
-  const MOVE_NAMES = { march: 'low knees', high: 'high knees', waveL: 'left wave', waveR: 'right wave', turnL: 'left turn', turnR: 'right turn', squat: 'squat', bound: 'bound', hop: 'jump' };
-  const WARM_IDS = ['march', 'high', 'waveL', 'waveR', 'turnL', 'turnR', 'squat', 'bound', 'hop'];
+  const MOVE_NAMES = { march: 'low knees', high: 'high knees', waveL: 'left wave', waveR: 'right wave', turnL: 'left turn', turnR: 'right turn', squat: 'squat', boundL: 'left bound', boundR: 'right bound', hop: 'jump' };
+  const WARM_IDS = ['march', 'high', 'waveL', 'waveR', 'turnL', 'turnR', 'squat', 'boundL', 'boundR', 'hop'];
   const WARM_TRIES = 3;
   const move = (id, secs, round) => Object.assign({}, MOVES[id], { id, secs, round });
   const warmPlan = () => [
@@ -10232,7 +10304,7 @@ void main() {
   })();
   // the narrator's calls made ahead (fights and chases make none while they run)
   const NARRATOR_LINES = ['Fight! Guard up.', 'Running', 'Sprawl!', 'Sprawl! Now hit.', 'Knockdown!', 'Angle!', 'Guard broken! Let them have it.', 'Takedown. Ground and pound.',
-    'Takedown! Quick, his friend is coming.', 'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall for the uppercut.', 'Knockout! March on.',
+    'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall for the uppercut.', 'Knockout! March on.',
     'You got dropped. Shake it off and march on.', 'You got away.', 'They ran off. March on.', 'Next one!', 'His friend jumps in!', 'Tag! The other one steps in.', 'They switch!',
     'Sidestep. Hook him.', 'Jump out of the level change to take them down.', 'Ten more seconds.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
     'He got away. Into the subway, probably.', 'Chase! High knees. Juke, jump and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
@@ -10312,6 +10384,7 @@ void main() {
       const c = Warm.plan[Warm.i];
       if (G.state !== 'setup' || !c || c.event !== ev) return;
       if (c.hand && (!e || e.hand !== c.hand)) return;
+      if (c.bside && (!e || e.side !== c.bside)) return;
       Warm.hits++;
       if (Warm.hits === c.need) say('Got it', 'confirm');
       else if (Warm.hits < c.need) say(COUNT[Warm.hits] || String(Warm.hits), 'feedback');
@@ -10553,7 +10626,7 @@ void main() {
   function liveText(c) {
     if (Warm.hits >= c.need) return 'Got it';
     if (c.id === 'squat') return `Depth: ${Math.round((engine.signals().squat_depth || 0) * 100)}%`;
-    if (c.id === 'bound') return 'Out to the side, then back';
+    if (c.bside) return `Out to your ${c.bside}, then back`;
     if (c.id === 'hop') return 'Both feet off the floor';
     if (c.id === 'march') return `Steps seen: ${Warm.hits}`;
     if (c.id === 'high') return `Pace: ${Math.round(engine.signals().cadence_spm || 0)} steps a minute`;
@@ -10575,7 +10648,7 @@ void main() {
     if (id === 'march') { kneeL = 0.5 * Math.max(0, wave); kneeR = 0.5 * Math.max(0, -wave); armL = 0.15 + 0.3 * Math.max(0, -wave); armR = 0.15 + 0.3 * Math.max(0, wave); lift = 2 * Math.abs(wave); }
     else if (id === 'high') { kneeL = 1 * Math.max(0, wave); kneeR = 1 * Math.max(0, -wave); armL = 0.2 + 0.6 * Math.max(0, -wave); armR = 0.2 + 0.6 * Math.max(0, wave); lift = 6 * Math.abs(wave); }
     else if (id === 'squat') { sq = 52 * hold; armL = armR = 1.3 * hold + 0.15; }
-    else if (id === 'bound') shift = 46 * Math.sin(Math.PI * u) * (Math.floor(t / period) % 2 ? 1 : -1);
+    else if (MOVES[id].bside) shift = 46 * Math.sin(Math.PI * u) * (MOVES[id].bside === 'right' ? 1 : -1);
     else if (id === 'hop') lift = 26 * Math.max(0, Math.sin(Math.PI * clamp(u * 1.6, 0, 1)));
     else if (id === 'waveL') armL = Math.PI - 0.5 + 0.35 * wave;
     else if (id === 'waveR') armR = Math.PI - 0.5 + 0.35 * wave;
@@ -10654,7 +10727,7 @@ void main() {
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { ARCH, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
