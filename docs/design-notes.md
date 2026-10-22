@@ -7,7 +7,7 @@ Mark's notes from play sessions, sorted into a backlog. Newest session first. No
 - Teep, Dutch rear low kick, knee: done (engine 0.11.0 `KickDetector`; game `FT.kick`, gym steps, touch buttons).
 - Squat and bound in the walking warm-up, so chase obstacles register: done (squat, bound, hop; the warm-up squat sets the chase duck floor).
 - Studio voices with a mix of women, men and accents: done. Device voices first (a cast from the device's English voices), Piper Studio voices opt in (l2arctic's second-language speakers for most of the city). Opponents are all men.
-- Graphics direction (GTA3 or Vice City look): recommendation given in chat; not started.
+- Graphics direction (GTA3 or Vice City look): done 10/23 (Mark: "do all of it"). WebGL city made in code: textured facades by style (brick, limestone, brownstone, glass, concrete grid, storefronts, fire escapes), roofs and water tanks, textured streets and sidewalks, painted ground tiles, people and props as lit capsules with faces, cars with sloped glass and lights. Classic 2D stays as a setting and the fallback. Next if wanted: real model packs (rigged people, car models) once a session can download them; per-business sign textures on the storefronts.
 
 ## 2026-10-21 PM session (30:25, 339 kcal; built 10/22)
 

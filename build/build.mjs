@@ -10,15 +10,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLACEHOLDER = '<!-- rep-engine:inline -->';
 const WORLD = '<!-- world:inline -->';
 
-// The map: src/world.js and the data it decodes (Mark's Vigil map: OpenStreetMap, MTA),
+// The map: src/world.js, the WebGL city (src/gl.js) and the data world.js decodes (Mark's Vigil map: OpenStreetMap, MTA),
 // inlined as script tags the game reads at startup.
 export function worldScripts() {
   const read = (f) => readFileSync(join(ROOT, f), 'utf8').trim();
-  const code = read('src/world.js'), world = read('data/world.b64'), biz = read('data/biz.json'), subway = read('data/subway.json');
-  for (const [name, text] of [['src/world.js', code], ['data/biz.json', biz], ['data/subway.json', subway]]) {
+  const code = read('src/world.js'), glCode = read('src/gl.js'), world = read('data/world.b64'), biz = read('data/biz.json'), subway = read('data/subway.json');
+  for (const [name, text] of [['src/world.js', code], ['src/gl.js', glCode], ['data/biz.json', biz], ['data/subway.json', subway]]) {
     if (/<\/script|<!--|<script/i.test(text)) throw new Error(`${name} contains markup that would break inlining`);
   }
-  return `<script>\n${code}\n</script>\n<script id="worldData" type="text/plain">${world}</script>\n<script id="bizData" type="application/json">${biz}</script>\n<script id="subwayData" type="application/json">${subway}</script>`;
+  return `<script>\n${code}\n</script>\n<script>\n${glCode}\n</script>\n<script id="worldData" type="text/plain">${world}</script>\n<script id="bizData" type="application/json">${biz}</script>\n<script id="subwayData" type="application/json">${subway}</script>`;
 }
 
 export function engineSource() {

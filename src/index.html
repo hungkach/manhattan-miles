@@ -9,6 +9,9 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0b0f18; color: var(--ink); font: 16px/1.4 system-ui, -apple-system, sans-serif; overflow: hidden; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #sky, #world { position: fixed; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; visibility: hidden; }
+  body.gl #sky, body.gl #world { visibility: visible; }
+  body.setup #sky, body.setup #world { visibility: hidden; }
   #demo { position: fixed; inset: 0; z-index: 2; }
   #demo .re-demo { top: auto; height: 52%; }
   body.fighting #demo .re-demo { height: 34%; }
@@ -104,6 +107,8 @@
 <!-- world:inline -->
 </head>
 <body>
+<canvas id="sky"></canvas>
+<canvas id="world"></canvas>
 <canvas id="game"></canvas>
 <div id="demo"></div>
 <div id="sticks" hidden><div class="pad" id="stickL"><div class="ring"><div class="knob"></div></div></div><div class="pad" id="lookPad"></div></div>
@@ -160,7 +165,7 @@
         <select id="look"><option value="golden">Golden hour</option><option value="day">Day</option><option value="night">Night</option></select>
       </label>
       <label class="pick">Graphics
-        <select id="gfx"><option value="high">High</option><option value="low">Low (older phones)</option></select>
+        <select id="gfx"><option value="high">High (3D city)</option><option value="low">Low (3D city, lighter)</option><option value="classic">Classic (older phones)</option></select>
       </label>
       <button id="playCamera" class="secondary">Walk with camera</button>
     </div>
@@ -185,7 +190,8 @@
   const RE = window.RepEngine;
   const $ = (id) => document.getElementById(id);
   const canvas = $('game');
-  const ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d');
+  const mainCtx = ctx, skyCanvas = $('sky'), skyCtx = skyCanvas.getContext('2d');
 
   // ---------- tuning ----------
   const T = {
@@ -3072,6 +3078,7 @@
   const projC = (c, fv) => ({ x: W / 2 + (fv * c.x) / c.z, y: H / 2 - (fv * c.y) / c.z, s: fv / c.z });
   // a limb from a to b (camera space), radius r (m): queued for depth sorting
   function capsule(list, a, b, r, col, fv) {
+    if (GLF.on && fv === F) { if (a.z > -1 || b.z > -1) GLF.r.cap(a, b, r, col); return; }
     if (a.z < NEAR3 && b.z < NEAR3) return;
     if (a.z < NEAR3 || b.z < NEAR3) {
       const [i, o] = a.z < NEAR3 ? [b, a] : [a, b];
@@ -3082,6 +3089,7 @@
     list.push({ kind: 'cap', a: projC(a, fv), b: projC(b, fv), r, col, depth: (a.z + b.z) / 2 });
   }
   function ball(list, c, r, col, fv) {
+    if (GLF.on && fv === F) { if (c.z > -r) GLF.r.cap(c, c, r, col); return; }
     if (c.z < NEAR3 + r * 0.5) return;
     list.push({ kind: 'ball', c: projC(c, fv), r, col, depth: c.z });
   }
@@ -3153,6 +3161,7 @@
   // half height; only the faces turned toward the camera, shaded by the sun
   const BOX_FACES = [[[4, 5, 7, 6], 1, 0, 0], [[0, 1, 3, 2], -1, 0, 0], [[2, 3, 7, 6], 0, 1, 0], [[0, 1, 5, 4], 0, -1, 0], [[1, 3, 7, 5], 0, 0, 1]];
   function boxPrims(list, cx, cy, cz, hl, hw, hh, hx, hz, col) {
+    if (GLF.on) { GLF.r.box(cx, cy, cz, hl, hw, hh, hx, hz, col); return; }
     const rx = hz, rz = -hx, v = [];
     for (const a of [-1, 1]) for (const b of [-1, 1]) for (const c of [-1, 1]) v.push({ x: cx + hx * hl * a + rx * hw * b, y: cy + hh * c, z: cz + hz * hl * a + rz * hw * b });
     for (const [ix, fa, fb, up] of BOX_FACES) {
@@ -3166,10 +3175,38 @@
     }
   }
   const GLASS = [52, 66, 82], TIRE = [22, 22, 24];
+  // a car in WebGL: a body, a cabin with sloped glass (a tapered box), a roof, bumpers, lights
+  // that glow at night, wheels across their axles
+  function glCar(c, flash) {
+    const R = GLF.r, hx = c.hx, hz = c.hz, rx = hz, rz = -hx, night = !!L.night;
+    const at = (al, ac) => [c.x + hx * al + rx * ac, c.z + hz * al + rz * ac];
+    R.box(c.x, 0.62, c.z, 2.22, 0.9, 0.3, hx, hz, c.col);
+    R.box(c.x, 0.38, c.z, 2.3, 0.93, 0.07, hx, hz, [38, 40, 44]);
+    const [gx, gz] = at(-0.25, 0);
+    R.box(gx, 1.2, gz, 1.3, 0.84, 0.28, hx, hz, GLASS, 0.7);
+    R.box(gx, 1.5, gz, 0.91, 0.76, 0.035, hx, hz, c.col);
+    if (c.cab) R.box(gx, 1.64, gz, 0.3, 0.42, 0.1, hx, hz, [250, 244, 214], 1, night);
+    if (c.cop) {
+      const [lx, lz] = at(-0.25, 0.3), [mx, mz] = at(-0.25, -0.3);
+      R.box(lx, 1.6, lz, 0.14, 0.28, 0.07, hx, hz, c.siren && flash ? [255, 40, 40] : [120, 30, 30], 1, c.siren && flash);
+      R.box(mx, 1.6, mz, 0.14, 0.28, 0.07, hx, hz, c.siren && !flash ? [60, 120, 255] : [30, 40, 120], 1, c.siren && !flash);
+      R.box(c.x, 0.7, c.z, 2.23, 0.915, 0.06, hx, hz, [30, 36, 60]);
+    }
+    for (const b of [-0.62, 0.62]) {
+      const [fx, fz] = at(2.22, b), [tx, tz] = at(-2.22, b);
+      R.box(fx, 0.74, fz, 0.03, 0.17, 0.07, hx, hz, [255, 248, 214], 1, night);
+      R.box(tx, 0.78, tz, 0.03, 0.15, 0.06, hx, hz, [200, 24, 24], 1, night);
+    }
+    for (const a of [-1.38, 1.38]) for (const b of [-0.8, 0.8]) {
+      const [x0, z0] = at(a, b - 0.11 * Math.sign(b)), [x1, z1] = at(a, b + 0.04 * Math.sign(b));
+      R.cap(toCam(x0, 0.33, z0), toCam(x1, 0.33, z1), 0.3, TIRE);
+    }
+  }
   function drawCar(c) {
     const list = [];
     const ty = c.cab ? 0 : 0.05;
     const rx = c.hz, rz = -c.hx;
+    if (GLF.on) { glCar(c, Math.floor(performance.now() / 180) % 2); carGlow(c, rx, rz); return; }
     boxPrims(list, c.x, 0.47, c.z, 2.28, 0.92, 0.17, c.hx, c.hz, [38, 40, 44]); // bumpers and sills
     boxPrims(list, c.x, 0.82, c.z, 2.2, 0.9, 0.2, c.hx, c.hz, c.col);
     boxPrims(list, c.x - c.hx * 0.2, 1.3 - ty, c.z - c.hz * 0.2, 1.15, 0.8, 0.28, c.hx, c.hz, GLASS);
@@ -3188,6 +3225,12 @@
     }
     for (const a of [-1.35, 1.35]) for (const b of [-0.84, 0.84]) { const q = toCam(c.x + c.hx * a + rx * b, 0.33, c.z + c.hz * a + rz * b); ball(list, q, 0.33, TIRE, F); }
     drawPrims(list);
+    carGlow(c, rx, rz);
+  }
+  function carGlow(c, rx, rz) {
+    if (!((c.cop && c.siren) || c.alarm || L.night)) return;
+    if (GLF.on && occluded(c.x, 1, c.z, null)) return; // glows have no depth: not through a building
+    const flash = Math.floor(performance.now() / 180) % 2;
     // the siren's lights and a car alarm's blinkers glow, at any hour
     if ((c.cop && c.siren) || c.alarm) {
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
@@ -3268,7 +3311,10 @@
   // joints the poses do not carry: hair over the head, toes ahead of the feet
   function extraJoints(o, fr, j) {
     const at = (q) => { const w = toWorld(o, fr, q); return toCam(w.x, w.y, w.z); };
-    return { hair: at([j.head[0], j.head[1] + 0.035, j.head[2] - 0.03]), toeL: at([j.ftL[0], j.ftL[1] - 0.01, j.ftL[2] + 0.13]), toeR: at([j.ftR[0], j.ftR[1] - 0.01, j.ftR[2] + 0.13]) };
+    const ex = { hair: at([j.head[0], j.head[1] + 0.035, j.head[2] - 0.03]), toeL: at([j.ftL[0], j.ftL[1] - 0.01, j.ftL[2] + 0.13]), toeR: at([j.ftR[0], j.ftR[1] - 0.01, j.ftR[2] + 0.13]) };
+    // eyes and a nose (WebGL only: the 3D city's people are close enough to have faces)
+    if (GLF.on) { ex.eyeL = at([j.head[0] - 0.036, j.head[1] + 0.022, j.head[2] + 0.088]); ex.eyeR = at([j.head[0] + 0.036, j.head[1] + 0.022, j.head[2] + 0.088]); ex.nose = at([j.head[0], j.head[1] - 0.005, j.head[2] + 0.1]); }
+    return ex;
   }
   function bodyPrims(list, c, st, ex, depth) {
     const lerp3 = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
@@ -3280,6 +3326,7 @@
     capsule(list, c.chest, c.neck, 0.052, st.skin, F);
     if (!st.bald) ball(list, ex.hair, 0.108, st.hair, F);
     ball(list, c.head, 0.105, st.skin, F);
+    if (ex.eyeL && depth < 30) { ball(list, ex.eyeL, 0.017, [24, 22, 22], F); ball(list, ex.eyeR, 0.017, [24, 22, 22], F); ball(list, ex.nose, 0.022, st.skin.map((v) => v * 0.92), F); }
     for (const sd of ['L', 'R']) {
       capsule(list, c['sh' + sd], c['el' + sd], 0.052, st.sleeve ? st.top : st.skin, F);
       capsule(list, c['el' + sd], c['fi' + sd], 0.042, st.skin, F);
@@ -3292,6 +3339,7 @@
   }
   // a soft shadow on the ground under someone
   function groundShadow(o, fr, along, across, lying) {
+    if (GLF.on) { GLF.r.shadow(o.x, o.z, fr.fx, fr.fz, lying ? along * 2 : along, across, L.night ? 0.22 : 0.3); return; }
     const sh = [];
     for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2, u = Math.cos(a) * (lying ? along * 2 : along), v = Math.sin(a) * across; sh.push(toCam(o.x + fr.fx * u + fr.rx * v, 0.02, o.z + fr.fz * u + fr.rz * v)); }
     const pr = project(sh);
@@ -3328,8 +3376,8 @@
       const a = (i / 16) * Math.PI * 2, along = Math.cos(a) * (lying ? 0.8 : 0.42), across = Math.sin(a) * 0.38;
       sh.push(toCam(mid.x + fr.fx * along + fr.rx * across, 0.02, mid.z + fr.fz * along + fr.rz * across));
     }
-    const shp = project(sh);
-    if (shp) fillPoly(shp, 'rgba(0, 0, 0, .28)');
+    if (GLF.on) GLF.r.shadow(mid.x, mid.z, fr.fx, fr.fz, lying ? 0.8 : 0.42, 0.38, 0.32);
+    else { const shp = project(sh); if (shp) fillPoly(shp, 'rgba(0, 0, 0, .28)'); }
     // a street fighter: tank top, bare arms, taped fists
     if (!f.style) f.style = Object.assign(styleOf(f.seed || (f.col[0] * 7 + f.col[2]) / 1000, f.col, false), { sleeve: false, fist: 0.07, hand: GLOVE });
     const st = hurt ? Object.assign({}, f.style, { top: shirt }) : f.style;
@@ -3926,8 +3974,27 @@
   let L = LOOKS.golden, HIGH = true;
   function setLook(id) { L = LOOKS[id] || LOOKS.golden; SUN.x = Math.sin(L.az); SUN.z = Math.cos(L.az); PrimLit.cache = new WeakMap(); }
   const PrimLit = { cache: new WeakMap() };
-  const GX = { windows: true, store: true, cornice: true, facade: true, street: true, props: true, clouds: true, towers: true };
-  try { setLook(localStorage.getItem(LOOK_KEY) || 'golden'); HIGH = localStorage.getItem(GFX_KEY) !== 'low'; } catch (_) { setLook('golden'); }
+  const GX = { gl: true, windows: true, store: true, cornice: true, facade: true, street: true, props: true, clouds: true, towers: true };
+  // graphics: high and low draw the city in WebGL (high: sharper textures, more distance, water
+  // tanks); classic is the 2D renderer from before 10/23, which phones without WebGL 2 also get
+  const GFX = { mode: 'high' };
+  try { setLook(localStorage.getItem(LOOK_KEY) || 'golden'); GFX.mode = localStorage.getItem(GFX_KEY) || 'high'; } catch (_) { setLook('golden'); }
+  if (!['high', 'low', 'classic'].includes(GFX.mode)) GFX.mode = 'high';
+  HIGH = GFX.mode !== 'low';
+  // the WebGL city, made on first use and again when the graphics setting changes (a canvas keeps
+  // its first context, so a new setting gets a new canvas)
+  const GLF = { on: false, shown: false, r: null, key: '', failed: false };
+  function glRenderer() {
+    const key = HIGH ? 'high' : 'low';
+    if (GLF.key === key && (GLF.r || GLF.failed)) return GLF.r && !GLF.r.lost ? GLF.r : null;
+    const cv = document.createElement('canvas');
+    cv.id = 'world';
+    $('world').replaceWith(cv);
+    GLF.key = key;
+    try { GLF.r = window.MMGL ? MMGL.create(cv, MW, { high: HIGH, facadeOf }) : null; } catch (e) { console.warn(e); GLF.r = null; }
+    GLF.failed = !GLF.r;
+    return GLF.r;
+  }
   const GROUND_ORDER = [8, 0, 6, 4, 2, 1, 3, 5, 7];
   const ASPHALT = [66, 69, 74], WALK = [176, 172, 164], LINE_Y = [214, 178, 52];
   const rgbOf = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -4077,13 +4144,19 @@
       if (L < 0.01) continue;
       const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L, nx = uz, nz = -ux;
       const fade = Math.max(0.15, 1 - run / ROUTE_M);
-      const pr = project([toCam(a.x + nx * hw, y, a.z + nz * hw), toCam(b.x + nx * hw, y, b.z + nz * hw), toCam(b.x - nx * hw, y, b.z - nz * hw), toCam(a.x - nx * hw, y, a.z - nz * hw)]);
-      if (pr) fillPoly(pr, `rgba(${rgb}, ${0.6 * fade})`);
+      if (GLF.on) GLF.r.flat([[a.x + nx * hw, a.z + nz * hw], [b.x + nx * hw, b.z + nz * hw], [b.x - nx * hw, b.z - nz * hw], [a.x - nx * hw, a.z - nz * hw]], y, rgb.split(',').map(Number), 0.6 * fade);
+      else {
+        const pr = project([toCam(a.x + nx * hw, y, a.z + nz * hw), toCam(b.x + nx * hw, y, b.z + nz * hw), toCam(b.x - nx * hw, y, b.z - nz * hw), toCam(a.x - nx * hw, y, a.z - nz * hw)]);
+        if (pr) fillPoly(pr, `rgba(${rgb}, ${0.6 * fade})`);
+      }
       // chevrons every 9 m
       while (nextChev < run + L) {
         const t = nextChev - run, cx = a.x + ux * t, cz = a.z + uz * t;
-        const tri = project([toCam(cx + ux * 1.0, y + 0.01, cz + uz * 1.0), toCam(cx - nx * 0.9 - ux * 0.3, y + 0.01, cz - nz * 0.9 - uz * 0.3), toCam(cx + nx * 0.9 - ux * 0.3, y + 0.01, cz + nz * 0.9 - uz * 0.3)]);
-        if (tri) fillPoly(tri, `rgba(255, 255, 255, ${0.85 * fade})`);
+        if (GLF.on) GLF.r.flat([[cx + ux * 1.0, cz + uz * 1.0], [cx - nx * 0.9 - ux * 0.3, cz - nz * 0.9 - uz * 0.3], [cx + nx * 0.9 - ux * 0.3, cz + nz * 0.9 - uz * 0.3]], y + 0.01, [255, 255, 255], 0.85 * fade);
+        else {
+          const tri = project([toCam(cx + ux * 1.0, y + 0.01, cz + uz * 1.0), toCam(cx - nx * 0.9 - ux * 0.3, y + 0.01, cz - nz * 0.9 - uz * 0.3), toCam(cx + nx * 0.9 - ux * 0.3, y + 0.01, cz + nz * 0.9 - uz * 0.3)]);
+          if (tri) fillPoly(tri, `rgba(255, 255, 255, ${0.85 * fade})`);
+        }
         nextChev += 9;
       }
       run += L;
@@ -4453,26 +4526,41 @@
     Ui.u = uiScale();
     if (Ui.u !== Ui.css) { Ui.css = Ui.u; document.documentElement.style.setProperty('--ui', Ui.u.toFixed(3)); }
     const shk = shakeOffset(now);
-    ctx.save();
-    ctx.translate(shk.x, shk.y);
-    if (pv.roll) { ctx.translate(W / 2, H / 2); ctx.rotate(-pv.roll); ctx.translate(-W / 2, -H / 2); }
     const horizon = H / 2 - F * (cam.sp / cam.cp);
     const gym = Fight.active && Fight.active.tutor && Tutor.room;
-    const outdoorLook = L;
-    if (gym) { L = LOOKS.gym; drawGym(); }
-    else {
+    // the city in WebGL (10/23) on its own layer, the sky under it, this canvas over it for
+    // everything 2D; the gym and the classic setting draw it all here as before
+    const glr = !gym && World.ready && GFX.mode !== 'classic' && GX.gl ? glRenderer() : null;
+    GLF.on = !!glr;
+    if (GLF.on !== GLF.shown) { GLF.shown = GLF.on; document.body.classList.toggle('gl', GLF.on); }
+    const skyFill = () => {
       drawSky(horizon);
       // below the horizon: the rivers, then land, parks and streets over them
       ctx.fillStyle = rgbOf(litRGB(MW.WATER_COL, 0.85, 0)); ctx.fillRect(-W, Math.max(0, horizon), W * 3, H * 2);
+    };
+    const shaken = () => { ctx.translate(shk.x, shk.y); if (pv.roll) { ctx.translate(W / 2, H / 2); ctx.rotate(-pv.roll); ctx.translate(-W / 2, -H / 2); } };
+    if (glr) {
+      // the sky changes slowly across the screen: half resolution is plenty
+      const sd = dpr * 0.5, sw = Math.round(innerWidth * sd), shh = Math.round(innerHeight * sd);
+      if (skyCanvas.width !== sw || skyCanvas.height !== shh) { skyCanvas.width = sw; skyCanvas.height = shh; }
+      ctx = skyCtx;
+      ctx.setTransform(sd, 0, 0, sd, 0, 0); ctx.save(); shaken(); skyFill(); ctx.restore();
+      ctx = mainCtx;
+      ctx.clearRect(0, 0, W, H);
+      glr.begin({ W, H, dpr, F, cam, roll: pv.roll, shk, look: L, drawDistance: HIGH ? T.drawDistance : Math.min(T.drawDistance, 320), sun: SUN, golden: L === LOOKS.golden });
     }
+    ctx.save();
+    shaken();
+    const outdoorLook = L;
+    if (gym) { L = LOOKS.gym; drawGym(); }
+    else if (!glr) skyFill();
     if (World.ready && !gym) {
       const D = T.drawDistance;
-      drawGround(D);
-      drawStreets(Math.min(D, 380));
+      if (!glr) { drawGround(D); drawStreets(Math.min(D, 380)); }
       if (G.state === 'walk' && !Fight.active && !Fight.chase) { if (Stage.on) drawRoute(stagePoints(), '255, 96, 70'); else drawRoute(); }
       const faces = [];
       Facade.budget = HIGH ? 1400 : 500;
-      buildingFaces(faces, D);
+      if (!glr) buildingFaces(faces, D);
       faces.sort((a, b) => b.depth - a.depth);
       for (const f of faces) {
         if (f.draw) { f.draw(); continue; }
@@ -4492,11 +4580,12 @@
       // furniture hide behind any building in the way
       const street = gym ? [] : Peds.list.concat(Vendors.list).filter((p) => foeDist(p) < 120).map((f) => ({ f })).concat(Traffic.cars.filter((c) => foeDist(c) < 220).map((f) => ({ f, car: true })), World.ready && GX.props ? nearProps().map((f) => ({ f, prop: true })) : []);
       const obs = (Fight.chase && Fight.chase.obs ? Fight.chase.obs.map((f) => ({ f, obstacle: true })) : []).concat(Stage.on ? Stage.people.filter((p) => foeDist(p) < 90).map((f) => ({ f })) : []);
-      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(obs, gym ? [] : Fight.people.map((f) => ({ f })), street.filter((it) => Math.hypot(it.f.x - cam.x, it.f.z - cam.z) < 12 || !occluded(it.f.x, it.prop ? 2 : 1.2, it.f.z, null)));
+      const all = Fight.foes.map((f) => ({ f, foe: true })).concat(obs, gym ? [] : Fight.people.map((f) => ({ f })), street.filter((it) => GLF.on || Math.hypot(it.f.x - cam.x, it.f.z - cam.z) < 12 || !occluded(it.f.x, it.prop ? 2 : 1.2, it.f.z, null)));
       for (const it of all.sort((a, b) => Math.hypot(b.f.x - cam.x, b.f.z - cam.z) - Math.hypot(a.f.x - cam.x, a.f.z - cam.z))) { if (it.obstacle) drawObstacle(it.f, now); else if (it.prop) drawProp(it.f); else if (it.car) drawCar(it.f); else if (it.foe) drawFoe(it.f, now); else drawPerson(it.f, now); }
     }
     L = outdoorLook;
     ctx.restore();
+    if (glr) glr.draw();
     if (G.state === 'walk') {
       if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawKick(now); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
       // the HUD in logical pixels times the UI scale
@@ -4682,7 +4771,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-22 late \u00b7 a cast of voices; studio voices';
+  const BUILD = '2026-10-23 \u00b7 the 3D city (WebGL); classic in Graphics';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -4694,9 +4783,9 @@
   }).catch((err) => { World.error = err; $('playDemo').textContent = 'Could not load the map: ' + err.message; });
   $('realNames').checked = realNames;
   $('look').value = Object.keys(LOOKS).find((k) => LOOKS[k] === L);
-  $('gfx').value = HIGH ? 'high' : 'low';
+  $('gfx').value = GFX.mode;
   $('look').addEventListener('change', () => { setLook($('look').value); try { localStorage.setItem(LOOK_KEY, $('look').value); } catch (_) {} });
-  $('gfx').addEventListener('change', () => { HIGH = $('gfx').value === 'high'; try { localStorage.setItem(GFX_KEY, $('gfx').value); } catch (_) {} });
+  $('gfx').addEventListener('change', () => { GFX.mode = $('gfx').value; HIGH = GFX.mode !== 'low'; try { localStorage.setItem(GFX_KEY, GFX.mode); } catch (_) {} });
   $('realNames').addEventListener('change', () => { realNames = $('realNames').checked; try { localStorage.setItem(REAL_KEY, realNames ? '1' : '0'); } catch (_) {} });
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
@@ -5660,7 +5749,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
