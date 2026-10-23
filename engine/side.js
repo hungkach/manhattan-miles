@@ -13,7 +13,7 @@
 // Side picture measures (each frame, in the side image, smoothed like the main landmarks):
 //   T        torso length, shoulder midpoint to hip midpoint (px)
 //   facing   which way the player faces across the picture: the nose ahead of the ears (EMA)
-//   reach    per arm: elbow and wrist in front of their shoulder, in T
+//   reach    per arm: elbow and wrist in front of the shoulder midpoint, in T
 //   height   per arm: wrist above its shoulder, in T, to tell the arms apart. MediaPipe's left and
 //            right are unreliable in profile, so the side's arms are matched to the main camera's:
 //            a frame where the phone's two wrists swap places against the last frame is its
@@ -69,31 +69,35 @@
       while (this.spreads.length && ct - this.spreads[0][0] > 5000) this.spreads.shift();
       const tilt = Math.asin(Math.min(...this.spreads.map((q) => q[1])));
       const tSec = ct / 1000;
+      // from the shoulder midpoint, not each arm's own shoulder (0.12.2): the phone's labels
+      // can swap the fists without the shoulders, and a bladed stance puts the shoulders at
+      // different depths; the main camera gives each shoulder's own offset (ArmDepth)
       const arm = (side, S, E, W) => ({
-        e: this.filt(side + 'e', (dir * (P[E].x - P[S].x)) / T, tSec),
-        w: this.filt(side + 'w', (dir * (P[W].x - P[S].x)) / T, tSec),
-        h: this.filt(side + 'h', (P[S].y - P[W].y) / T, tSec),
+        e: this.filt(side + 'e', (dir * (P[E].x - sm.x)) / T, tSec),
+        w: this.filt(side + 'w', (dir * (P[W].x - sm.x)) / T, tSec),
+        h: this.filt(side + 'h', (sm.y - P[W].y) / T, tSec),
         ok: P[E].v >= this.c.minVis && P[W].v >= this.c.minVis,
       });
       // the phone's own labels flipping since the last frame: both wrists jump to where the other was
       const raw = { l: { x: (dir * (P[L.L_WRIST].x - sm.x)) / T, y: (sm.y - P[L.L_WRIST].y) / T }, r: { x: (dir * (P[L.R_WRIST].x - sm.x)) / T, y: (sm.y - P[L.R_WRIST].y) / T } };
-      const lr = this.lastRaw, d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-      const flipped = !!lr && d(raw.l, lr.r) + d(raw.r, lr.l) + this.c.flipMargin < d(raw.l, lr.l) + d(raw.r, lr.r);
-      this.lastRaw = raw;
+      // 0.12.2 (Mark: stray punches during head movement): both fists sit together in front of
+      // the face from the side, and a label swap there gave one hand the other's reach. Each
+      // fist is followed from where its own speed puts it, and the nearer pairing wins by
+      // flipMargin, so a swap between hands close together is caught and a punch passing the
+      // other fist is not one
+      const flipped = this.follow('lastRaw', raw);
       if (flipped) { this.swap = !this.swap; for (const k of ['e', 'w', 'h']) { const a = this.f['l' + k]; this.f['l' + k] = this.f['r' + k]; this.f['r' + k] = a; } }
       // legs and level (0.12.1): each thigh's angle from straight down (degrees) and its knee's
       // height above its hip (T); the hip midpoint's drop below where it stands (T), from the
       // frames where both thighs hang straight (the last standMs)
       const kr = { l: { x: (dir * (P[L.L_KNEE].x - hm.x)) / T, y: (hm.y - P[L.L_KNEE].y) / T }, r: { x: (dir * (P[L.R_KNEE].x - hm.x)) / T, y: (hm.y - P[L.R_KNEE].y) / T } };
-      const lk = this.lastKnees;
-      if (lk && d(kr.l, lk.r) + d(kr.r, lk.l) + this.c.flipMargin < d(kr.l, lk.l) + d(kr.r, lk.r)) {
+      if (this.follow('lastKnees', kr)) {
         this.legSwap = !this.legSwap;
         for (const k of ['p', 'k']) { const a = this.f['l' + k]; this.f['l' + k] = this.f['r' + k]; this.f['r' + k] = a; }
       }
-      this.lastKnees = kr;
       // the thigh forward and down (T); across the body is the main camera's (applySignals)
       const leg = (side, H, K) => {
-        const fw = this.filt(side + 'p', (dir * (P[K].x - P[H].x)) / T, tSec), dn = (P[K].y - P[H].y) / T;
+        const fw = this.filt(side + 'p', (dir * (P[K].x - hm.x)) / T, tSec), dn = (P[K].y - hm.y) / T;
         return {
           fw, dn,
           pitch: (Math.atan2(Math.abs(fw), dn) * 180) / Math.PI,
@@ -113,6 +117,18 @@
       }
       this.samples.push({ t: ct, left: arm('l', L.L_SHOULDER, L.L_ELBOW, L.L_WRIST), right: arm('r', L.R_SHOULDER, L.R_ELBOW, L.R_WRIST), legs, level, tilt });
       while (this.samples.length > 2 && ct - this.samples[0].t > 1000) this.samples.shift();
+    }
+    // the phone's labels this frame against where each one's own track predicts it (cur: { l, r }
+    // positions in T); keeps the track under key; true when the labels flipped
+    follow(key, cur) {
+      const last = this[key], d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const pred = last ? { l: { x: last.l.x + last.vl.x, y: last.l.y + last.vl.y }, r: { x: last.r.x + last.vr.x, y: last.r.y + last.vr.y } } : null;
+      const flipped = !!pred && d(cur.l, pred.r) + d(cur.r, pred.l) + this.c.flipMargin < d(cur.l, pred.l) + d(cur.r, pred.r);
+      // the track's previous point under this frame's labels, for the velocity
+      const pl = !last ? cur.l : flipped ? last.r : last.l, pr = !last ? cur.r : flipped ? last.l : last.r;
+      const vel = (a, b) => ({ x: (a.x - b.x) * 0.6, y: (a.y - b.y) * 0.6 }); // a damped step
+      this[key] = { l: cur.l, r: cur.r, vl: vel(cur.l, pl), vr: vel(cur.r, pr) };
+      return flipped;
     }
     // is the side camera sending (within a second)?
     connected(t) { return !!this.arrivals.length && t - this.arrivals[this.arrivals.length - 1] < 1000; }

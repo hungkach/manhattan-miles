@@ -520,6 +520,7 @@
           locomotion: st.loco.snapshot(),
           combat: st.mode === 'combat' ? st.combat.snapshot() : null,
           capture: st.capture,
+          side: st.side,
         };
       },
 

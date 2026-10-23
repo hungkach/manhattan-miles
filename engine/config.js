@@ -141,6 +141,8 @@
           // 0.9.0: a fast move out from a set hand toward the camera, judged where it ends
           // (StrikeDetector in combat.js). Meters and m/s scale with arm length (armScale).
           windowMs: 600,     // a move is given up (or guessed) after this long
+          hipSpeed: 1.2,     // S/s: the hips moving sideways this fast (a bound) start no punch and drop one in progress (0.12.2)
+          hipQuietMs: 250,   // and for this long after
           refractoryMs: 200, // per hand (spec: 200 ms jab/cross)
           setBelow: 0.3,     // m: a set hand's wrist no lower than this under its shoulder
           setWide: 0.4,      // m: and within this of the body's middle (not out to the side)
@@ -280,13 +282,13 @@
       // minVis are not used; the arms are swapped to match the main camera's when that fits
       // swapMargin (T) better on average
       // alignMs: the main frame used with a side frame is at most this far from it in time
-      // swapFrames: frames of wrist height evidence averaged; flipMargin (T): a jump that big
-      // toward the other wrist's place is the phone's labels flipping
+      // swapFrames: frames of wrist height evidence averaged; flipMargin (T): the other pairing of
+      // the phone's labels has to fit each fist's (or knee's) predicted place by this much better
       // peer: PeerJS options for the signaling server (null: PeerJS's free public one)
       // standPitch, standMs, standFrames (0.12.1): the side's standing hip height and thigh angle
       // come from frames with both thighs within standPitch degrees of straight down, the last
       // standMs, at least standFrames of them
-      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0.3, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
+      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };

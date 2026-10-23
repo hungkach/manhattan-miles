@@ -273,6 +273,14 @@
       if (!arms) return;
       const sw = arms.unitM;
       const c = scaled(this.c, out.armScale || 1);
+      // the whole body moving sideways (a bound) shifts the arms in the picture without a punch
+      // (0.12.2): no punch starts while the hips move fast sideways, or just after
+      const hm = ctx.sig && ctx.sig.body && ctx.sig.body.hMid;
+      if (hm) {
+        if (this.hipPrev && t > this.hipPrev.t && Math.abs(hm.x - this.hipPrev.x) / ((t - this.hipPrev.t) / 1000) > this.c.hipSpeed) this.hipQuiet = t + this.c.hipQuietMs;
+        this.hipPrev = { t, x: hm.x };
+      }
+      const bodyMoving = t < (this.hipQuiet || 0);
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand];
         const a = arms[hand];
@@ -285,6 +293,7 @@
         h.hist.push(s);
         while (h.hist.length && t - h.hist[0].t > c.windowMs) h.hist.shift();
         if (ctx.upperLow) { h.stillSince = null; h.live = false; continue; }
+        if (bodyMoving && !(ctx.teach && ctx.teach.role)) { h.live = false; h.setAt = -Infinity; h.stillSince = null; continue; }
         if (s.v < c.stillSpeed) { h.calm = s; h.calmAt = t; }
         // teaching (0.10.0): the guard's resting place, or this hand's sample of a punch
         if (ctx.teach && ctx.teach.guard && s.v < c.stillSpeed) {
@@ -578,10 +587,12 @@
         }
         const sa = sd && sd[side === 'l' ? 'left' : 'right'];
         if (sa && sa.ok) {
-          // the side camera saw how far in front of the shoulder the elbow and fist are: in
-          // torso lengths, times this torso in meters
-          out[E] = move(world[E], sa.e * wm - zE);
-          out[W] = move(world[W], sa.w * wm - zE - zF);
+          // the side camera saw how far in front of the shoulder midpoint the elbow and fist are,
+          // in torso lengths; less this shoulder's own offset from the midpoint (this camera
+          // reads the torso well), it is the depth from this shoulder
+          const off = dot(sub(world[S], RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER])), frame.fwd);
+          out[E] = move(world[E], sa.e * wm - off - zE);
+          out[W] = move(world[W], sa.w * wm - off - zE - zF);
           this.usedSide = true;
           continue;
         }

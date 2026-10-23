@@ -24,7 +24,7 @@
   @media (orientation: landscape) {
     body.fighting #demo .re-demo-zone { display: none; }
     body.fighting #demo .re-demo { top: auto; height: auto; grid-template-rows: auto; }
-    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(8, 1fr) !important; }
+    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(6, 1fr) !important; }
     body.fighting #demo .re-demo-buttons button { min-height: 38px; }
     body.fighting #endBtn, body.fighting #phoneBtn { display: none; }
   }
@@ -109,7 +109,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.12.1 from hungkach/body-arcade@9c653a7, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.12.2 from hungkach/body-arcade@27e19b5, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -362,6 +362,8 @@
           // 0.9.0: a fast move out from a set hand toward the camera, judged where it ends
           // (StrikeDetector in combat.js). Meters and m/s scale with arm length (armScale).
           windowMs: 600,     // a move is given up (or guessed) after this long
+          hipSpeed: 1.2,     // S/s: the hips moving sideways this fast (a bound) start no punch and drop one in progress (0.12.2)
+          hipQuietMs: 250,   // and for this long after
           refractoryMs: 200, // per hand (spec: 200 ms jab/cross)
           setBelow: 0.3,     // m: a set hand's wrist no lower than this under its shoulder
           setWide: 0.4,      // m: and within this of the body's middle (not out to the side)
@@ -501,13 +503,13 @@
       // minVis are not used; the arms are swapped to match the main camera's when that fits
       // swapMargin (T) better on average
       // alignMs: the main frame used with a side frame is at most this far from it in time
-      // swapFrames: frames of wrist height evidence averaged; flipMargin (T): a jump that big
-      // toward the other wrist's place is the phone's labels flipping
+      // swapFrames: frames of wrist height evidence averaged; flipMargin (T): the other pairing of
+      // the phone's labels has to fit each fist's (or knee's) predicted place by this much better
       // peer: PeerJS options for the signaling server (null: PeerJS's free public one)
       // standPitch, standMs, standFrames (0.12.1): the side's standing hip height and thigh angle
       // come from frames with both thighs within standPitch degrees of straight down, the last
       // standMs, at least standFrames of them
-      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0.3, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
+      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };
@@ -1742,6 +1744,14 @@
       if (!arms) return;
       const sw = arms.unitM;
       const c = scaled(this.c, out.armScale || 1);
+      // the whole body moving sideways (a bound) shifts the arms in the picture without a punch
+      // (0.12.2): no punch starts while the hips move fast sideways, or just after
+      const hm = ctx.sig && ctx.sig.body && ctx.sig.body.hMid;
+      if (hm) {
+        if (this.hipPrev && t > this.hipPrev.t && Math.abs(hm.x - this.hipPrev.x) / ((t - this.hipPrev.t) / 1000) > this.c.hipSpeed) this.hipQuiet = t + this.c.hipQuietMs;
+        this.hipPrev = { t, x: hm.x };
+      }
+      const bodyMoving = t < (this.hipQuiet || 0);
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand];
         const a = arms[hand];
@@ -1754,6 +1764,7 @@
         h.hist.push(s);
         while (h.hist.length && t - h.hist[0].t > c.windowMs) h.hist.shift();
         if (ctx.upperLow) { h.stillSince = null; h.live = false; continue; }
+        if (bodyMoving && !(ctx.teach && ctx.teach.role)) { h.live = false; h.setAt = -Infinity; h.stillSince = null; continue; }
         if (s.v < c.stillSpeed) { h.calm = s; h.calmAt = t; }
         // teaching (0.10.0): the guard's resting place, or this hand's sample of a punch
         if (ctx.teach && ctx.teach.guard && s.v < c.stillSpeed) {
@@ -2047,10 +2058,12 @@
         }
         const sa = sd && sd[side === 'l' ? 'left' : 'right'];
         if (sa && sa.ok) {
-          // the side camera saw how far in front of the shoulder the elbow and fist are: in
-          // torso lengths, times this torso in meters
-          out[E] = move(world[E], sa.e * wm - zE);
-          out[W] = move(world[W], sa.w * wm - zE - zF);
+          // the side camera saw how far in front of the shoulder midpoint the elbow and fist are,
+          // in torso lengths; less this shoulder's own offset from the midpoint (this camera
+          // reads the torso well), it is the depth from this shoulder
+          const off = dot(sub(world[S], RE.mid3(world[L.L_SHOULDER], world[L.R_SHOULDER])), frame.fwd);
+          out[E] = move(world[E], sa.e * wm - off - zE);
+          out[W] = move(world[W], sa.w * wm - off - zE - zF);
           this.usedSide = true;
           continue;
         }
@@ -2266,7 +2279,7 @@
 // Side picture measures (each frame, in the side image, smoothed like the main landmarks):
 //   T        torso length, shoulder midpoint to hip midpoint (px)
 //   facing   which way the player faces across the picture: the nose ahead of the ears (EMA)
-//   reach    per arm: elbow and wrist in front of their shoulder, in T
+//   reach    per arm: elbow and wrist in front of the shoulder midpoint, in T
 //   height   per arm: wrist above its shoulder, in T, to tell the arms apart. MediaPipe's left and
 //            right are unreliable in profile, so the side's arms are matched to the main camera's:
 //            a frame where the phone's two wrists swap places against the last frame is its
@@ -2322,31 +2335,35 @@
       while (this.spreads.length && ct - this.spreads[0][0] > 5000) this.spreads.shift();
       const tilt = Math.asin(Math.min(...this.spreads.map((q) => q[1])));
       const tSec = ct / 1000;
+      // from the shoulder midpoint, not each arm's own shoulder (0.12.2): the phone's labels
+      // can swap the fists without the shoulders, and a bladed stance puts the shoulders at
+      // different depths; the main camera gives each shoulder's own offset (ArmDepth)
       const arm = (side, S, E, W) => ({
-        e: this.filt(side + 'e', (dir * (P[E].x - P[S].x)) / T, tSec),
-        w: this.filt(side + 'w', (dir * (P[W].x - P[S].x)) / T, tSec),
-        h: this.filt(side + 'h', (P[S].y - P[W].y) / T, tSec),
+        e: this.filt(side + 'e', (dir * (P[E].x - sm.x)) / T, tSec),
+        w: this.filt(side + 'w', (dir * (P[W].x - sm.x)) / T, tSec),
+        h: this.filt(side + 'h', (sm.y - P[W].y) / T, tSec),
         ok: P[E].v >= this.c.minVis && P[W].v >= this.c.minVis,
       });
       // the phone's own labels flipping since the last frame: both wrists jump to where the other was
       const raw = { l: { x: (dir * (P[L.L_WRIST].x - sm.x)) / T, y: (sm.y - P[L.L_WRIST].y) / T }, r: { x: (dir * (P[L.R_WRIST].x - sm.x)) / T, y: (sm.y - P[L.R_WRIST].y) / T } };
-      const lr = this.lastRaw, d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-      const flipped = !!lr && d(raw.l, lr.r) + d(raw.r, lr.l) + this.c.flipMargin < d(raw.l, lr.l) + d(raw.r, lr.r);
-      this.lastRaw = raw;
+      // 0.12.2 (Mark: stray punches during head movement): both fists sit together in front of
+      // the face from the side, and a label swap there gave one hand the other's reach. Each
+      // fist is followed from where its own speed puts it, and the nearer pairing wins by
+      // flipMargin, so a swap between hands close together is caught and a punch passing the
+      // other fist is not one
+      const flipped = this.follow('lastRaw', raw);
       if (flipped) { this.swap = !this.swap; for (const k of ['e', 'w', 'h']) { const a = this.f['l' + k]; this.f['l' + k] = this.f['r' + k]; this.f['r' + k] = a; } }
       // legs and level (0.12.1): each thigh's angle from straight down (degrees) and its knee's
       // height above its hip (T); the hip midpoint's drop below where it stands (T), from the
       // frames where both thighs hang straight (the last standMs)
       const kr = { l: { x: (dir * (P[L.L_KNEE].x - hm.x)) / T, y: (hm.y - P[L.L_KNEE].y) / T }, r: { x: (dir * (P[L.R_KNEE].x - hm.x)) / T, y: (hm.y - P[L.R_KNEE].y) / T } };
-      const lk = this.lastKnees;
-      if (lk && d(kr.l, lk.r) + d(kr.r, lk.l) + this.c.flipMargin < d(kr.l, lk.l) + d(kr.r, lk.r)) {
+      if (this.follow('lastKnees', kr)) {
         this.legSwap = !this.legSwap;
         for (const k of ['p', 'k']) { const a = this.f['l' + k]; this.f['l' + k] = this.f['r' + k]; this.f['r' + k] = a; }
       }
-      this.lastKnees = kr;
       // the thigh forward and down (T); across the body is the main camera's (applySignals)
       const leg = (side, H, K) => {
-        const fw = this.filt(side + 'p', (dir * (P[K].x - P[H].x)) / T, tSec), dn = (P[K].y - P[H].y) / T;
+        const fw = this.filt(side + 'p', (dir * (P[K].x - hm.x)) / T, tSec), dn = (P[K].y - hm.y) / T;
         return {
           fw, dn,
           pitch: (Math.atan2(Math.abs(fw), dn) * 180) / Math.PI,
@@ -2366,6 +2383,18 @@
       }
       this.samples.push({ t: ct, left: arm('l', L.L_SHOULDER, L.L_ELBOW, L.L_WRIST), right: arm('r', L.R_SHOULDER, L.R_ELBOW, L.R_WRIST), legs, level, tilt });
       while (this.samples.length > 2 && ct - this.samples[0].t > 1000) this.samples.shift();
+    }
+    // the phone's labels this frame against where each one's own track predicts it (cur: { l, r }
+    // positions in T); keeps the track under key; true when the labels flipped
+    follow(key, cur) {
+      const last = this[key], d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const pred = last ? { l: { x: last.l.x + last.vl.x, y: last.l.y + last.vl.y }, r: { x: last.r.x + last.vr.x, y: last.r.y + last.vr.y } } : null;
+      const flipped = !!pred && d(cur.l, pred.r) + d(cur.r, pred.l) + this.c.flipMargin < d(cur.l, pred.l) + d(cur.r, pred.r);
+      // the track's previous point under this frame's labels, for the velocity
+      const pl = !last ? cur.l : flipped ? last.r : last.l, pr = !last ? cur.r : flipped ? last.l : last.r;
+      const vel = (a, b) => ({ x: (a.x - b.x) * 0.6, y: (a.y - b.y) * 0.6 }); // a damped step
+      this[key] = { l: cur.l, r: cur.r, vl: vel(cur.l, pl), vr: vel(cur.r, pr) };
+      return flipped;
     }
     // is the side camera sending (within a second)?
     connected(t) { return !!this.arrivals.length && t - this.arrivals[this.arrivals.length - 1] < 1000; }
@@ -4066,6 +4095,7 @@
           locomotion: st.loco.snapshot(),
           combat: st.mode === 'combat' ? st.combat.snapshot() : null,
           capture: st.capture,
+          side: st.side,
         };
       },
 
@@ -6303,9 +6333,10 @@ void main() {
     }
     BM.t = now; BM.slip = s.slip || 0; BM.sq = s.squat_depth || 0;
   }
-  // a hook, uppercut or overhand that should not count (camera play only)
+  // a punch that should not count (camera play only): mid head movement or level change, or in the first second
+  // 10/24 (Mark, side camera test: stray punches during head movement): straights too
   function gated(kind, hand, now) {
-    if (isDemo() || !['hook', 'uppercut', 'overhand'].includes(kind)) return false;
+    if (isDemo()) return false;
     const a = Fight.active;
     return now < BM.until || (a && now - a.start < FT.gate.startQuietMs);
   }
@@ -6610,7 +6641,9 @@ void main() {
     // kicks and knees (engine 0.11.0, Mark 10/22): damage by kind; a teep pushes them out for
     // teepOutMs; each low kick slows their wind-ups by slowPer (up to slowMax) and legsAt of them
     // take their legs (they cannot run); a knee into their shot lands td.levelBonus times
-    kick: { teep: 0.6, low_kick: 1.0, knee: 1.1, teepOutMs: 1600, slowPer: 0.15, slowMax: 1.6, legsAt: 2 },
+    // on: off for now (10/24, Mark: away from kicks and knees for the next few versions, until
+    // the strikes are sorted out); the engine still reads them, the game ignores them
+    kick: { on: false, teep: 0.6, low_kick: 1.0, knee: 1.1, teepOutMs: 1600, slowPer: 0.15, slowMax: 1.6, legsAt: 2 },
     // a shift (Mark 10/17, Dillashaw and Cruz): a bound out and back takes an angle; for ms (1 to
     // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
     // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
@@ -6847,10 +6880,11 @@ void main() {
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
     { id: 'shift', big: 'Shift', small: 'Bound out to one side and back.', say: 'Shift. Bound out to one side, and straight back.', event: 'bound' },
+  ].concat(FT.kick.on ? [
     { id: 'teep', big: 'Teep', small: 'Lead knee up, push the foot out at them, back down.', say: 'Teep. Lead knee up, push the foot out.', event: 'teep' },
     { id: 'lowKick', big: 'Low kick', small: 'Rear leg swings across at their thigh, hips turning.', say: 'Low kick. Rear leg swings across, turn the hips.', event: 'low_kick' },
     { id: 'knee', big: 'Knee', small: 'Rear knee straight up, hard.', say: 'Knee. Drive the rear knee up.', event: 'knee' },
-  ];
+  ] : []);
   const Tutor = { steps: [], i: 0, n: 0, since: 0, holdSince: null, lead: 'left', stance: 'orthodox', log: [], results: [], clip: null, recording: false, lastRead: '', saved: null };
   const tutorDoneBefore = () => { try { return localStorage.getItem(TUTOR_KEY) === '1'; } catch (_) { return false; } };
   const rearOf = (h) => (h === 'left' ? 'right' : 'left');
@@ -7332,6 +7366,7 @@ void main() {
   //   knee      into their shot: double and the shot is stuffed; otherwise a knee to the body
   // Power from the thigh's rise speed (honest reps: 0.6 to 1.4 by output, the floor still lands)
   function kicked(kind, e) {
+    if (!FT.kick.on) return;
     const a = Fight.active, now = performance.now();
     if (!a || engine.combat().phase !== 'standing') return;
     const foe = a.foe, K = FT.kick;
@@ -10156,7 +10191,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 side camera reads legs and level too (engine 0.12.1)';
+  const BUILD = '2026-10-24 late \u00b7 no strays from head movement (engine 0.12.2), kicks off';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -10175,7 +10210,7 @@ void main() {
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
-    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'teep', 'low_kick', 'knee', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
+    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', ...(FT.kick.on ? ['teep', 'low_kick', 'knee'] : []), 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
     chase: ['bound_left', 'bound_right', 'jump', 'squat'],
   };
   function enableTouch() {

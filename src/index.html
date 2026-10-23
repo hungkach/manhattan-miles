@@ -24,7 +24,7 @@
   @media (orientation: landscape) {
     body.fighting #demo .re-demo-zone { display: none; }
     body.fighting #demo .re-demo { top: auto; height: auto; grid-template-rows: auto; }
-    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(8, 1fr) !important; }
+    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(6, 1fr) !important; }
     body.fighting #demo .re-demo-buttons button { min-height: 38px; }
     body.fighting #endBtn, body.fighting #phoneBtn { display: none; }
   }
@@ -996,9 +996,10 @@
     }
     BM.t = now; BM.slip = s.slip || 0; BM.sq = s.squat_depth || 0;
   }
-  // a hook, uppercut or overhand that should not count (camera play only)
+  // a punch that should not count (camera play only): mid head movement or level change, or in the first second
+  // 10/24 (Mark, side camera test: stray punches during head movement): straights too
   function gated(kind, hand, now) {
-    if (isDemo() || !['hook', 'uppercut', 'overhand'].includes(kind)) return false;
+    if (isDemo()) return false;
     const a = Fight.active;
     return now < BM.until || (a && now - a.start < FT.gate.startQuietMs);
   }
@@ -1303,7 +1304,9 @@
     // kicks and knees (engine 0.11.0, Mark 10/22): damage by kind; a teep pushes them out for
     // teepOutMs; each low kick slows their wind-ups by slowPer (up to slowMax) and legsAt of them
     // take their legs (they cannot run); a knee into their shot lands td.levelBonus times
-    kick: { teep: 0.6, low_kick: 1.0, knee: 1.1, teepOutMs: 1600, slowPer: 0.15, slowMax: 1.6, legsAt: 2 },
+    // on: off for now (10/24, Mark: away from kicks and knees for the next few versions, until
+    // the strikes are sorted out); the engine still reads them, the game ignores them
+    kick: { on: false, teep: 0.6, low_kick: 1.0, knee: 1.1, teepOutMs: 1600, slowPer: 0.15, slowMax: 1.6, legsAt: 2 },
     // a shift (Mark 10/17, Dillashaw and Cruz): a bound out and back takes an angle; for ms (1 to
     // 4 s, a quicker bound longer) they are turned away and every punch does bonus damage, less
     // than a ground and pound but free. It dodges a punch in flight. One per cooldownMs.
@@ -1540,10 +1543,11 @@
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
     { id: 'shift', big: 'Shift', small: 'Bound out to one side and back.', say: 'Shift. Bound out to one side, and straight back.', event: 'bound' },
+  ].concat(FT.kick.on ? [
     { id: 'teep', big: 'Teep', small: 'Lead knee up, push the foot out at them, back down.', say: 'Teep. Lead knee up, push the foot out.', event: 'teep' },
     { id: 'lowKick', big: 'Low kick', small: 'Rear leg swings across at their thigh, hips turning.', say: 'Low kick. Rear leg swings across, turn the hips.', event: 'low_kick' },
     { id: 'knee', big: 'Knee', small: 'Rear knee straight up, hard.', say: 'Knee. Drive the rear knee up.', event: 'knee' },
-  ];
+  ] : []);
   const Tutor = { steps: [], i: 0, n: 0, since: 0, holdSince: null, lead: 'left', stance: 'orthodox', log: [], results: [], clip: null, recording: false, lastRead: '', saved: null };
   const tutorDoneBefore = () => { try { return localStorage.getItem(TUTOR_KEY) === '1'; } catch (_) { return false; } };
   const rearOf = (h) => (h === 'left' ? 'right' : 'left');
@@ -2025,6 +2029,7 @@
   //   knee      into their shot: double and the shot is stuffed; otherwise a knee to the body
   // Power from the thigh's rise speed (honest reps: 0.6 to 1.4 by output, the floor still lands)
   function kicked(kind, e) {
+    if (!FT.kick.on) return;
     const a = Fight.active, now = performance.now();
     if (!a || engine.combat().phase !== 'standing') return;
     const foe = a.foe, K = FT.kick;
@@ -4849,7 +4854,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 side camera reads legs and level too (engine 0.12.1)';
+  const BUILD = '2026-10-24 late \u00b7 no strays from head movement (engine 0.12.2), kicks off';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -4868,7 +4873,7 @@
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
-    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', 'teep', 'low_kick', 'knee', 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
+    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', ...(FT.kick.on ? ['teep', 'low_kick', 'knee'] : []), 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
     chase: ['bound_left', 'bound_right', 'jump', 'squat'],
   };
   function enableTouch() {
