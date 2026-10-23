@@ -40,6 +40,34 @@
     return { t: raw.t, w: raw.w, h: raw.h, p: RE.SIDE_LM.map((i) => [round(raw.lm[i][0], 1e4), round(raw.lm[i][1], 1e4), round(raw.lm[i][3] == null ? 1 : raw.lm[i][3], 100)]) };
   };
 
+  // The side camera's zone (0.14.1, Mark: "a zone visible to the user that is ideal for picking
+  // up"): the picture's middle with a margin all round (side.zone, picture fractions). The player
+  // is in it with the nose, the shoulders, the hips and both knees seen inside it, head to knees
+  // at least minH of the picture's height, centered between cy0 and cy1. get(i) gives landmark i as { x, y, v } in picture
+  // fractions. Returns { ok, hint, box, top, bottom, cx } (hint: what to change, plain words; the
+  // phone's preview is mirrored, so it never says left or right).
+  RE.sideZone = function (get, zone) {
+    const Z = zone || RE.defaultConfig().side.zone;
+    const box = { x0: Z.x0, x1: Z.x1, y0: Z.y0, y1: Z.y1 };
+    const seen = (i) => { const p = get(i); return p && p.v >= Z.minVis ? p : null; };
+    const core = [L.NOSE, L.L_SHOULDER, L.R_SHOULDER, L.L_HIP, L.R_HIP].map(seen);
+    // part of them seen (a shoulder, a hip): too close; nothing: not in the picture
+    if (core.some((p) => !p)) return { ok: false, hint: core.some(Boolean) ? 'Move the phone back' : 'Step into the picture', box };
+    const knees = [L.L_KNEE, L.R_KNEE].map(seen);
+    const top = core[0].y, cx = (core[3].x + core[4].x) / 2;
+    const bottom = knees.every(Boolean) ? Math.max(knees[0].y, knees[1].y) : 1.01;
+    const xs = core.concat(knees.filter(Boolean)).map((p) => p.x);
+    const out = { box, top, bottom, cx };
+    if (top < Z.y0 || bottom > Z.y1) return Object.assign(out, { ok: false, hint: top < Z.y0 && bottom <= Z.y1 ? 'Tilt the phone up a little, or move it back' : bottom > Z.y1 && top >= Z.y0 ? 'Tilt the phone down a little, or move it back' : 'Move the phone back' });
+    if (Math.min(...xs) < Z.x0 || Math.max(...xs) > Z.x1) return Object.assign(out, { ok: false, hint: 'Turn the phone to put the player in the middle' });
+    if (bottom - top < Z.minH) return Object.assign(out, { ok: false, hint: 'Move the phone closer' });
+    // at hip height the player stands in the middle; a phone low on the floor sees them high up
+    const cy = (top + bottom) / 2;
+    if (cy < Z.cy0) return Object.assign(out, { ok: false, hint: 'Raise the phone to hip height' });
+    if (cy > Z.cy1) return Object.assign(out, { ok: false, hint: 'Lower the phone to hip height' });
+    return Object.assign(out, { ok: true, hint: 'In the zone' });
+  };
+
   class SideView {
     constructor(cfg) { this.c = cfg.side; this.sm = cfg.smoothing; this.offset = null; this.reset(); }
     reset() { this.samples = []; this.face = 0; this.swap = false; this.ev = 0; this.lastRaw = null; this.legSwap = false; this.legEv = 0; this.lastKnees = null; this.stand = []; this.arrivals = []; this.spreads = []; this.f = {}; }
@@ -51,6 +79,7 @@
       if (!frame || !frame.p || frame.p.length < RE.SIDE_LM.length) return;
       const P = {};
       RE.SIDE_LM.forEach((i, k) => { const q = frame.p[k]; P[i] = { x: q[0] * frame.w, y: q[1] * frame.h, v: q[2] }; });
+      this.zone = RE.sideZone((i) => { const q = frame.p[RE.SIDE_LM.indexOf(i)]; return q && { x: q[0], y: q[1], v: q[2] }; }, this.c.zone);
       const sm = RE.mid(P[L.L_SHOULDER], P[L.R_SHOULDER]), hm = RE.mid(P[L.L_HIP], P[L.R_HIP]);
       const T = RE.dist(sm, hm);
       this.arrivals.push(t);

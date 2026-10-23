@@ -13,7 +13,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee', 'weave']) RE.detectors.add(name);
+  for (const name of ['strike', 'punch', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee', 'weave']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -405,6 +405,104 @@
       return null;
     }
   }
+  // Punches without classifying (0.14.0, Mark 10/23 PM: "when your hands are in guard they are part
+  // of your body; when your arms leave your guard they are strikes"). A hand at its guard (the
+  // guard shape, or the player's own guard from the gym) is home; a hand that leaves home by more
+  // than `dead` (about one and a half fists) fast is a punch, landed on its way out: 'punch' when
+  // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
+  // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
+  // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
+  // Payload { hand, shape, speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
+  // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
+  // with the hands dropped, or from a fist that never reaches in front of its shoulder.
+  class PunchDetector {
+    constructor(cfg) {
+      this.c = cfg.combat.punch;
+      this.s = cfg.combat.strike;
+      this.gt = cfg.combat.teach.guardTol;
+      const hand = () => ({ home: null, nearAt: -Infinity, move: null, away: false, prev: null, tmp: null, lastFar: 0 });
+      this.hands = { left: hand(), right: hand() };
+    }
+    update(ctx, out) {
+      const t = ctx.t, arms = out.arms;
+      if (!arms) return;
+      const k = out.armScale || 1, c = this.c, S = this.s, sw = arms.unitM;
+      const hm = ctx.sig && ctx.sig.body && ctx.sig.body.hMid;
+      if (hm) {
+        if (this.hipPrev && t > this.hipPrev.t && Math.abs(hm.x - this.hipPrev.x) / ((t - this.hipPrev.t) / 1000) > S.hipSpeed) this.hipQuiet = t + S.hipQuietMs;
+        this.hipPrev = { t, x: hm.x };
+      }
+      const bodyMoving = t < (this.hipQuiet || 0);
+      for (const hand of ['left', 'right']) {
+        const h = this.hands[hand], a = arms[hand], q = arms.torso[hand];
+        // from its own shoulder, meters: x the player's right, y up, z toward the camera; tx in the torso's frame
+        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw };
+        s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
+        h.prev = s;
+        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; continue; }
+        const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
+        if (h.move) {
+          const m = h.move;
+          m.path.push(s);
+          if (s.v > m.peakV) m.peakV = s.v;
+          if (d > m.far) { m.far = d; m.farAt = s; }
+          const done = t - m.from >= c.minMs && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
+          continue;
+        }
+        // home: the guard shape held still, or the player's own guard from the gym (0.10.0)
+        const gp = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+        const gs = { x: (a.wrist.x) * sw, y: s.y, z: s.z };
+        const shape = s.y >= -S.setBelow * k && Math.abs(gs.x) <= S.setWide * k && s.angle <= S.setAngle && s.ey <= -S.elbowDown * k;
+        const taught = !!gp && Math.hypot(gs.x - gp.x, gs.y - gp.y, gs.z - gp.z) <= this.gt;
+        if (s.v < S.stillSpeed * k) { if (h.stillAt == null) h.stillAt = t; } else h.stillAt = null;
+        // (after a punch, a new home somewhere else needs the hand held still a moment)
+        const settled = !h.away || t - h.stillAt >= c.rehomeMs;
+        if (s.v < S.stillSpeed * k && ((settled && (shape || taught)) || (h.home && d <= c.dead * k * 0.5))) {
+          // follows the hand while it rests (a guard drifts lower through a tired round)
+          h.home = h.home && d <= c.dead * k ? { x: h.home.x + (s.x - h.home.x) * 0.2, y: h.home.y + (s.y - h.home.y) * 0.2, z: h.home.z + (s.z - h.home.z) * 0.2, angle: s.angle } : s;
+          h.away = false;
+        }
+        if (!h.home) continue;
+        // re-armed: back near home, or most of the way back and slowing (a combination rests short of
+        // home, and the depth the camera reads for a fist coming back lags); from there the spot it
+        // came back to is home for the next punch
+        if (d <= c.dead * k) h.tmp = null;
+        if (h.away && (d <= c.rearm * k || (d <= c.rearmFrac * h.lastFar && s.v < 2 * S.stillSpeed * k))) { h.away = false; h.tmp = d > c.dead * k ? Object.assign({ d }, s) : null; }
+        const dr = h.tmp ? Math.hypot(s.x - h.tmp.x, s.y - h.tmp.y, s.z - h.tmp.z) : d;
+        if (dr <= c.dead * k) {
+          if (!h.away) { h.nearAt = t; h.rest = s; }
+          continue;
+        }
+        // out past the dead zone: a punch if it just left home fast, else the hand drifted away
+        // (from a spot short of home it has to head farther out, not on home to the guard)
+        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp };
+        else { h.away = true; h.tmp = null; }
+      }
+    }
+    land(hand, h, out, k) {
+      const m = h.move, c = this.c;
+      h.move = null;
+      h.away = true;
+      h.tmp = null;
+      h.lastFar = m.far;
+      h.landAt = m.path[m.path.length - 1].t;
+      const p = m.path, s0 = p[0];
+      const maxZ = Math.max(...p.map((x) => x.z));
+      if (m.peakV < c.minSpeed * k || maxZ < c.frontMin * k || m.far < c.minFar * k) return;
+      // the arm reaches out (the fist farther from its shoulder) or the elbow travels with it: a
+      // forearm wiping in front of the face, pivoting on a still elbow, is not a punch; from a spot
+      // short of home (a combination) the arm has to reach out again
+      const ext = Math.max(...p.map((x) => x.ext)) - s0.ext;
+      const elbow = Math.max(...p.map((x) => Math.hypot(x.ex - s0.ex, x.ey - s0.ey, x.ez - s0.ez)));
+      if (!(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
+      // straight or round: a straight neither dips first (an uppercut) nor swings its elbow out to the
+      // side (a hook, an overhand)
+      const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
+      const straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+    }
+  }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
   // smaller thresholds); angles and times stay as they are
   const METERS = ['setBelow', 'setWide', 'setReturn', 'elbowDown', 'stillSpeed', 'setTravel', 'minSpeed', 'frontMin', 'fwdGain', 'straightBelow', 'fwdGuess', 'upperRise', 'upperDip', 'upperLowest', 'upperTo', 'hookTravel', 'hookHeight', 'hookFront', 'downBelow', 'downTravel', 'downSpeed'];
@@ -744,7 +842,7 @@
     }
   }
 
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg), new WeaveDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new PunchDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg), new WeaveDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all

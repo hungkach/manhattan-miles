@@ -176,6 +176,29 @@
           refSpeed: 5,       // m/s of fist speed that is power 1
           overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
         },
+        punch: {
+          // 0.14.0: a hand out of its guard is a punch (PunchDetector in combat.js), landed on the
+          // way out. Meters and m/s scale with arm length (armScale).
+          dead: 0.15,        // m: the dead zone around home, about one and a half fists
+          rearm: 0.1,        // m: back this near home re-arms the hand after a punch
+          rearmFrac: 0.5,    // or back to this share of the last punch's farthest, and slowing
+          leaveMs: 120,      // the fist crosses the dead zone within this long of being in it
+          startSpeed: 1.0,   // m/s as it crosses
+          minSpeed: 1.6,     // m/s peak
+          minFar: 0.2,       // m from home at its farthest
+          frontMin: 0.1,     // m: somewhere in front of its shoulder
+          lowest: 0.45,      // m: a hand lower than this under its shoulder is down, not punching
+          minMs: 60,         // it lands no sooner than this after leaving
+          maxMs: 450,        // and no later than this
+          stopFrac: 0.4,     // when the fist slows under this share of its peak speed
+          backFrac: 0.8,     // or is back to this share of its farthest
+          rehomeMs: 250,     // after a punch, held still this long somewhere new makes that home
+          extend: 0.14,      // m: the fist gets this much farther from its shoulder
+          elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
+          straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
+          straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          refractoryMs: 250, // per hand after a punch lands (a fist settling back into the guard is not another)
+        },
         // kicks and knees (0.11.0, KickDetector in combat.js), from the thigh and the knee
         kick: {
           onPitch: 30,      // degrees of thigh angle: a leg is up
@@ -295,7 +318,10 @@
       // standPitch, standMs, standFrames (0.12.1): the side's standing hip height and thigh angle
       // come from frames with both thighs within standPitch degrees of straight down, the last
       // standMs, at least standFrames of them
-      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
+      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null,
+        // the zone the player should stand in, in picture fractions (RE.sideZone, 0.14.1): head to
+        // knees at least minH of the height (about 2.5 m away on a phone's front camera)
+        zone: { x0: 0.12, x1: 0.88, y0: 0.04, y1: 0.96, minH: 0.25, cy0: 0.32, cy1: 0.68, minVis: 0.5 } },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };

@@ -8,7 +8,7 @@
   const L = RE.LM;
 
   RE.detectors = RE.detectors || new Set();
-  for (const name of ['step', 'run_start', 'run_end', 'turn_left', 'turn_right', 'lean_left', 'lean_right', 'point', 'turn_around', 'wave']) {
+  for (const name of ['step', 'high_step', 'run_start', 'run_end', 'turn_left', 'turn_right', 'lean_left', 'lean_right', 'point', 'turn_around', 'wave']) {
     RE.detectors.add(name);
   }
 
@@ -188,6 +188,9 @@
       // (0.8.4): judge the pace from half the gap
       const fast = (leg.sameLeg ? leg.interval / 2 : leg.interval) <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }
+      // 0.14.2 (Mark: knee height sets the stride, the pace sets how often; a high knee at any pace
+      // is a high knee): each high step on its own, judged as the knee comes back down
+      out.events.push(['high_step', { leg: name, lift: leg.peakLift, pitch: leg.peakPitch }]);
       this.highCount++;
       if (this.running) {
         if (fast) this.lastHighAt = t;

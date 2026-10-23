@@ -56,9 +56,14 @@
   .screen[hidden] { display: none; }
   .sidecode { font: 900 40px ui-monospace, monospace; letter-spacing: 6px; text-align: center; margin: 6px 0; color: var(--accent); }
   #sideQr { display: block; margin: 8px auto; width: 232px; height: 232px; image-rendering: pixelated; border-radius: 8px; }
-  #sideVideo { width: 100%; max-height: 46vh; border-radius: 12px; background: #000; transform: scaleX(-1); object-fit: cover; }
+  #sideView { position: relative; }
+  #sideVideo { width: 100%; max-height: 46vh; border-radius: 12px; background: #000; transform: scaleX(-1); object-fit: cover; display: block; }
+  #sideZone { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); pointer-events: none; }
+  #sideZoneText { font: 800 clamp(22px, 7vw, 40px) system-ui, sans-serif; text-align: center; margin: 10px 0 0; color: #ffcf3f; }
+  #sideZoneText.ok { color: #5be37c; }
   #sideChip { position: fixed; top: calc(6px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%) scale(var(--ui, 1)); transform-origin: 50% 0; z-index: 4; background: rgba(30, 140, 80, .85); color: #fff; font: 700 12px system-ui, sans-serif; padding: 3px 10px; border-radius: 10px; pointer-events: none; }
   #sideChip[hidden] { display: none; }
+  #sideChip.off { background: rgba(170, 120, 20, .9); }
   .card { width: min(440px, 100%); background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 22px 20px; text-align: center; }
   .card h1 { margin: 0 0 4px; font-size: 32px; color: var(--accent); }
   .card h2 { margin: 0 0 8px; font-size: 24px; }
@@ -109,7 +114,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.13.1 from hungkach/body-arcade@394c610, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.14.2 from hungkach/body-arcade@b7a2099, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -397,6 +402,29 @@
           refSpeed: 5,       // m/s of fist speed that is power 1
           overhand: true,    // a hook from the rear hand is 'overhand' (0.8.0)
         },
+        punch: {
+          // 0.14.0: a hand out of its guard is a punch (PunchDetector in combat.js), landed on the
+          // way out. Meters and m/s scale with arm length (armScale).
+          dead: 0.15,        // m: the dead zone around home, about one and a half fists
+          rearm: 0.1,        // m: back this near home re-arms the hand after a punch
+          rearmFrac: 0.5,    // or back to this share of the last punch's farthest, and slowing
+          leaveMs: 120,      // the fist crosses the dead zone within this long of being in it
+          startSpeed: 1.0,   // m/s as it crosses
+          minSpeed: 1.6,     // m/s peak
+          minFar: 0.2,       // m from home at its farthest
+          frontMin: 0.1,     // m: somewhere in front of its shoulder
+          lowest: 0.45,      // m: a hand lower than this under its shoulder is down, not punching
+          minMs: 60,         // it lands no sooner than this after leaving
+          maxMs: 450,        // and no later than this
+          stopFrac: 0.4,     // when the fist slows under this share of its peak speed
+          backFrac: 0.8,     // or is back to this share of its farthest
+          rehomeMs: 250,     // after a punch, held still this long somewhere new makes that home
+          extend: 0.14,      // m: the fist gets this much farther from its shoulder
+          elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
+          straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
+          straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          refractoryMs: 250, // per hand after a punch lands (a fist settling back into the guard is not another)
+        },
         // kicks and knees (0.11.0, KickDetector in combat.js), from the thigh and the knee
         kick: {
           onPitch: 30,      // degrees of thigh angle: a leg is up
@@ -516,7 +544,10 @@
       // standPitch, standMs, standFrames (0.12.1): the side's standing hip height and thigh angle
       // come from frames with both thighs within standPitch degrees of straight down, the last
       // standMs, at least standFrames of them
-      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null },
+      side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null,
+        // the zone the player should stand in, in picture fractions (RE.sideZone, 0.14.1): head to
+        // knees at least minH of the height (about 2.5 m away on a phone's front camera)
+        zone: { x0: 0.12, x1: 0.88, y0: 0.04, y1: 0.96, minH: 0.25, cy0: 0.32, cy1: 0.68, minVis: 0.5 } },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };
@@ -842,7 +873,7 @@
   const L = RE.LM;
 
   RE.detectors = RE.detectors || new Set();
-  for (const name of ['step', 'run_start', 'run_end', 'turn_left', 'turn_right', 'lean_left', 'lean_right', 'point', 'turn_around', 'wave']) {
+  for (const name of ['step', 'high_step', 'run_start', 'run_end', 'turn_left', 'turn_right', 'lean_left', 'lean_right', 'point', 'turn_around', 'wave']) {
     RE.detectors.add(name);
   }
 
@@ -1022,6 +1053,9 @@
       // (0.8.4): judge the pace from half the gap
       const fast = (leg.sameLeg ? leg.interval / 2 : leg.interval) <= 60000 / this.r.cadence;
       if (!high) { this.highCount = 0; return; }
+      // 0.14.2 (Mark: knee height sets the stride, the pace sets how often; a high knee at any pace
+      // is a high knee): each high step on its own, judged as the knee comes back down
+      out.events.push(['high_step', { leg: name, lift: leg.peakLift, pitch: leg.peakPitch }]);
       this.highCount++;
       if (this.running) {
         if (fast) this.lastHighAt = t;
@@ -1491,7 +1525,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee', 'weave']) RE.detectors.add(name);
+  for (const name of ['strike', 'punch', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee', 'weave']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -1883,6 +1917,104 @@
       return null;
     }
   }
+  // Punches without classifying (0.14.0, Mark 10/23 PM: "when your hands are in guard they are part
+  // of your body; when your arms leave your guard they are strikes"). A hand at its guard (the
+  // guard shape, or the player's own guard from the gym) is home; a hand that leaves home by more
+  // than `dead` (about one and a half fists) fast is a punch, landed on its way out: 'punch' when
+  // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
+  // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
+  // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
+  // Payload { hand, shape, speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
+  // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
+  // with the hands dropped, or from a fist that never reaches in front of its shoulder.
+  class PunchDetector {
+    constructor(cfg) {
+      this.c = cfg.combat.punch;
+      this.s = cfg.combat.strike;
+      this.gt = cfg.combat.teach.guardTol;
+      const hand = () => ({ home: null, nearAt: -Infinity, move: null, away: false, prev: null, tmp: null, lastFar: 0 });
+      this.hands = { left: hand(), right: hand() };
+    }
+    update(ctx, out) {
+      const t = ctx.t, arms = out.arms;
+      if (!arms) return;
+      const k = out.armScale || 1, c = this.c, S = this.s, sw = arms.unitM;
+      const hm = ctx.sig && ctx.sig.body && ctx.sig.body.hMid;
+      if (hm) {
+        if (this.hipPrev && t > this.hipPrev.t && Math.abs(hm.x - this.hipPrev.x) / ((t - this.hipPrev.t) / 1000) > S.hipSpeed) this.hipQuiet = t + S.hipQuietMs;
+        this.hipPrev = { t, x: hm.x };
+      }
+      const bodyMoving = t < (this.hipQuiet || 0);
+      for (const hand of ['left', 'right']) {
+        const h = this.hands[hand], a = arms[hand], q = arms.torso[hand];
+        // from its own shoulder, meters: x the player's right, y up, z toward the camera; tx in the torso's frame
+        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw };
+        s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
+        h.prev = s;
+        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; continue; }
+        const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
+        if (h.move) {
+          const m = h.move;
+          m.path.push(s);
+          if (s.v > m.peakV) m.peakV = s.v;
+          if (d > m.far) { m.far = d; m.farAt = s; }
+          const done = t - m.from >= c.minMs && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
+          continue;
+        }
+        // home: the guard shape held still, or the player's own guard from the gym (0.10.0)
+        const gp = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+        const gs = { x: (a.wrist.x) * sw, y: s.y, z: s.z };
+        const shape = s.y >= -S.setBelow * k && Math.abs(gs.x) <= S.setWide * k && s.angle <= S.setAngle && s.ey <= -S.elbowDown * k;
+        const taught = !!gp && Math.hypot(gs.x - gp.x, gs.y - gp.y, gs.z - gp.z) <= this.gt;
+        if (s.v < S.stillSpeed * k) { if (h.stillAt == null) h.stillAt = t; } else h.stillAt = null;
+        // (after a punch, a new home somewhere else needs the hand held still a moment)
+        const settled = !h.away || t - h.stillAt >= c.rehomeMs;
+        if (s.v < S.stillSpeed * k && ((settled && (shape || taught)) || (h.home && d <= c.dead * k * 0.5))) {
+          // follows the hand while it rests (a guard drifts lower through a tired round)
+          h.home = h.home && d <= c.dead * k ? { x: h.home.x + (s.x - h.home.x) * 0.2, y: h.home.y + (s.y - h.home.y) * 0.2, z: h.home.z + (s.z - h.home.z) * 0.2, angle: s.angle } : s;
+          h.away = false;
+        }
+        if (!h.home) continue;
+        // re-armed: back near home, or most of the way back and slowing (a combination rests short of
+        // home, and the depth the camera reads for a fist coming back lags); from there the spot it
+        // came back to is home for the next punch
+        if (d <= c.dead * k) h.tmp = null;
+        if (h.away && (d <= c.rearm * k || (d <= c.rearmFrac * h.lastFar && s.v < 2 * S.stillSpeed * k))) { h.away = false; h.tmp = d > c.dead * k ? Object.assign({ d }, s) : null; }
+        const dr = h.tmp ? Math.hypot(s.x - h.tmp.x, s.y - h.tmp.y, s.z - h.tmp.z) : d;
+        if (dr <= c.dead * k) {
+          if (!h.away) { h.nearAt = t; h.rest = s; }
+          continue;
+        }
+        // out past the dead zone: a punch if it just left home fast, else the hand drifted away
+        // (from a spot short of home it has to head farther out, not on home to the guard)
+        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp };
+        else { h.away = true; h.tmp = null; }
+      }
+    }
+    land(hand, h, out, k) {
+      const m = h.move, c = this.c;
+      h.move = null;
+      h.away = true;
+      h.tmp = null;
+      h.lastFar = m.far;
+      h.landAt = m.path[m.path.length - 1].t;
+      const p = m.path, s0 = p[0];
+      const maxZ = Math.max(...p.map((x) => x.z));
+      if (m.peakV < c.minSpeed * k || maxZ < c.frontMin * k || m.far < c.minFar * k) return;
+      // the arm reaches out (the fist farther from its shoulder) or the elbow travels with it: a
+      // forearm wiping in front of the face, pivoting on a still elbow, is not a punch; from a spot
+      // short of home (a combination) the arm has to reach out again
+      const ext = Math.max(...p.map((x) => x.ext)) - s0.ext;
+      const elbow = Math.max(...p.map((x) => Math.hypot(x.ex - s0.ex, x.ey - s0.ey, x.ez - s0.ez)));
+      if (!(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
+      // straight or round: a straight neither dips first (an uppercut) nor swings its elbow out to the
+      // side (a hook, an overhand)
+      const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
+      const straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+    }
+  }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
   // smaller thresholds); angles and times stay as they are
   const METERS = ['setBelow', 'setWide', 'setReturn', 'elbowDown', 'stillSpeed', 'setTravel', 'minSpeed', 'frontMin', 'fwdGain', 'straightBelow', 'fwdGuess', 'upperRise', 'upperDip', 'upperLowest', 'upperTo', 'hookTravel', 'hookHeight', 'hookFront', 'downBelow', 'downTravel', 'downSpeed'];
@@ -2222,7 +2354,7 @@
     }
   }
 
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg), new WeaveDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new PunchDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg), new WeaveDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all
@@ -2367,6 +2499,34 @@
     return { t: raw.t, w: raw.w, h: raw.h, p: RE.SIDE_LM.map((i) => [round(raw.lm[i][0], 1e4), round(raw.lm[i][1], 1e4), round(raw.lm[i][3] == null ? 1 : raw.lm[i][3], 100)]) };
   };
 
+  // The side camera's zone (0.14.1, Mark: "a zone visible to the user that is ideal for picking
+  // up"): the picture's middle with a margin all round (side.zone, picture fractions). The player
+  // is in it with the nose, the shoulders, the hips and both knees seen inside it, head to knees
+  // at least minH of the picture's height, centered between cy0 and cy1. get(i) gives landmark i as { x, y, v } in picture
+  // fractions. Returns { ok, hint, box, top, bottom, cx } (hint: what to change, plain words; the
+  // phone's preview is mirrored, so it never says left or right).
+  RE.sideZone = function (get, zone) {
+    const Z = zone || RE.defaultConfig().side.zone;
+    const box = { x0: Z.x0, x1: Z.x1, y0: Z.y0, y1: Z.y1 };
+    const seen = (i) => { const p = get(i); return p && p.v >= Z.minVis ? p : null; };
+    const core = [L.NOSE, L.L_SHOULDER, L.R_SHOULDER, L.L_HIP, L.R_HIP].map(seen);
+    // part of them seen (a shoulder, a hip): too close; nothing: not in the picture
+    if (core.some((p) => !p)) return { ok: false, hint: core.some(Boolean) ? 'Move the phone back' : 'Step into the picture', box };
+    const knees = [L.L_KNEE, L.R_KNEE].map(seen);
+    const top = core[0].y, cx = (core[3].x + core[4].x) / 2;
+    const bottom = knees.every(Boolean) ? Math.max(knees[0].y, knees[1].y) : 1.01;
+    const xs = core.concat(knees.filter(Boolean)).map((p) => p.x);
+    const out = { box, top, bottom, cx };
+    if (top < Z.y0 || bottom > Z.y1) return Object.assign(out, { ok: false, hint: top < Z.y0 && bottom <= Z.y1 ? 'Tilt the phone up a little, or move it back' : bottom > Z.y1 && top >= Z.y0 ? 'Tilt the phone down a little, or move it back' : 'Move the phone back' });
+    if (Math.min(...xs) < Z.x0 || Math.max(...xs) > Z.x1) return Object.assign(out, { ok: false, hint: 'Turn the phone to put the player in the middle' });
+    if (bottom - top < Z.minH) return Object.assign(out, { ok: false, hint: 'Move the phone closer' });
+    // at hip height the player stands in the middle; a phone low on the floor sees them high up
+    const cy = (top + bottom) / 2;
+    if (cy < Z.cy0) return Object.assign(out, { ok: false, hint: 'Raise the phone to hip height' });
+    if (cy > Z.cy1) return Object.assign(out, { ok: false, hint: 'Lower the phone to hip height' });
+    return Object.assign(out, { ok: true, hint: 'In the zone' });
+  };
+
   class SideView {
     constructor(cfg) { this.c = cfg.side; this.sm = cfg.smoothing; this.offset = null; this.reset(); }
     reset() { this.samples = []; this.face = 0; this.swap = false; this.ev = 0; this.lastRaw = null; this.legSwap = false; this.legEv = 0; this.lastKnees = null; this.stand = []; this.arrivals = []; this.spreads = []; this.f = {}; }
@@ -2378,6 +2538,7 @@
       if (!frame || !frame.p || frame.p.length < RE.SIDE_LM.length) return;
       const P = {};
       RE.SIDE_LM.forEach((i, k) => { const q = frame.p[k]; P[i] = { x: q[0] * frame.w, y: q[1] * frame.h, v: q[2] }; });
+      this.zone = RE.sideZone((i) => { const q = frame.p[RE.SIDE_LM.indexOf(i)]; return q && { x: q[0], y: q[1], v: q[2] }; }, this.c.zone);
       const sm = RE.mid(P[L.L_SHOULDER], P[L.R_SHOULDER]), hm = RE.mid(P[L.L_HIP], P[L.R_HIP]);
       const T = RE.dist(sm, hm);
       this.arrivals.push(t);
@@ -3243,6 +3404,7 @@
       this.steps.push(now);
       if (this.steps.length > 40) this.steps.shift();
       this.emit('step', { leg: this.leg });
+      if (this.running) this.emit('high_step', { leg: this.leg, lift: 0.4, pitch: 70 }); // a run is high knees
       this.leg = this.leg === 'left' ? 'right' : 'left';
     }
     leftDown(now) {
@@ -3273,7 +3435,7 @@
     }
     setTurn(v) { this.turn = RE.clamp(v, -1, 1); }
     press(action, now) {
-      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); };
+      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); this.emit('punch', { hand, shape: type === 'jab' || type === 'cross' ? 'straight' : 'round', power: 1, speed: 5, reach: 0.7, ms: 150 }); };
       switch (action) {
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
@@ -4084,7 +4246,8 @@
       //   engine.side_feed(frame[, t])   a frame from RE.sidePack, arriving now (or at t, tests)
       //   engine.side_sync(offset)       the phone's clock to this one (main = side + offset, ms)
       //   engine.side_status()           { connected, fps, tilt (degrees from a true profile), synced,
-      //                                    using (fresh enough to read the arms) }
+      //                                    using (fresh enough to read the arms), zone { ok, hint }
+      //                                    (the player in the side picture's zone, RE.sideZone) }
       side_feed(frame, t) {
         const at = t == null ? RE.now() : t;
         st.side.push(frame, at, st.cal);
@@ -4094,7 +4257,8 @@
       side_sync(offset) { st.side.sync(offset); },
       side_status() {
         const t = st.raw ? st.raw.t : RE.now(), s = st.side.samples[st.side.samples.length - 1];
-        return { connected: st.side.connected(t), fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null };
+        const connected = st.side.connected(t), z = connected && st.side.zone;
+        return { connected, fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null, zone: z ? { ok: z.ok, hint: z.hint } : null };
       },
       // Which camera is running: {facing, lens, fallback, label} or null.
       camera() { return st.sourceObj && st.sourceObj.info ? Object.assign({}, st.sourceObj.info) : null; },
@@ -5553,7 +5717,7 @@ void main() {
     <h1>Manhattan Miles</h1>
     <p>All of Manhattan, street by street: the real streets, buildings, parks, businesses and subway. Walk it for real.</p>
     <ul>
-      <li>March in place to walk; march faster to walk faster, high knees to run</li>
+      <li>March in place to walk. Your knee height sets your stride and your pace how often: fast low knees jog, fast high knees run</li>
       <li>Point left or right for a quick turn onto the cross street</li>
       <li>Turn your shoulders to steer, like a steering wheel; face front to go straight</li>
       <li>Both hands overhead to turn around</li>
@@ -5611,7 +5775,8 @@ void main() {
   <div class="card">
     <h2>Side camera</h2>
     <p>Code <b id="sideCamCode"></b>. Prop this phone upright at hip height about 2.5 m from the player's open side, square to it, their whole body from head to knees in view. Keep this page open; the screen stays on.</p>
-    <video id="sideVideo" playsinline muted></video>
+    <div id="sideView"><video id="sideVideo" playsinline muted></video><canvas id="sideZone"></canvas></div>
+    <p id="sideZoneText" hidden></p>
     <p class="hint" id="sideCamStatus">Tap Start, then allow the camera.</p>
     <div class="btns"><button id="sideStart" class="main">Start</button></div>
   </div>
@@ -6727,6 +6892,7 @@ void main() {
     sidestep: { ms: 1600, bonus: 2 },
     upperLowHit: 2, // an uppercut that catches you level changing counts double
     coverFactor: 0.3, counterMs: 900, counterBonus: 1.5, openBonus: 1.3,
+    intoBonus: 1.4, // a punch into their wind-up or shot: their head is coming at it (10/23 PM)
     // punches: standing ones are the engine's strike events (engine 0.9.0 reads them from a set
     // guard; 10/21 the glove hitbox stopped landing standing punches: waving read as hooks).
     // Power from the fist's speed (shoulder widths a second, floor `speed`, cap `capSpeed`, the
@@ -6813,7 +6979,8 @@ void main() {
   // a punch landing: a burst and sparks where the glove met them, the damage and the punch's name
   // floating up, a combo count, their head or body snapping back, the screen shaking with the
   // weight of it, and a layered smack (a crowd "ooh" on a big one)
-  const KIND_NAME = { jab: 'Jab', cross: 'Cross', hook: 'Hook', overhand: 'Overhand', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
+  // 10/23 PM (Mark): punches are only straight or round now (engine 'punch')
+  const KIND_NAME = { jab: 'Straight', cross: 'Straight', hook: 'Round', overhand: 'Round', uppercut: 'Round', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
   const comboBonus = (n) => Math.min(FT.combo.cap, FT.combo.step * Math.max(0, n - 1));
   function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
@@ -7417,20 +7584,16 @@ void main() {
       }
       return;
     }
-    // a boxer slips some of your straights into a set guard
-    const A = archOf(foe);
-    if (A.dodge && (kind === 'jab' || kind === 'cross') && !clean && foe.state === 'guard' && Math.random() < A.dodge) {
-      const hd = foe.hit && foe.hit.head;
-      if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: 'Slipped it', big: false });
-      foe.slipUntil = now + 350;
-      return;
-    }
+    // 10/23 PM (Mark): in range, every punch lands; the guard bar and the bonuses decide what it does
     if (outOf && !shifted) { dmg *= FT.guard.cleanBonus; fightMsg('Clean shot!', 700); }
     // a hook from the side you sidestepped to
     if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side hook!', 1000); Fight.sidestep = null; }
     // an uppercut catches them changing levels: shooting at you, or braced for your shot
-    const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
+    // (10/23 PM: any round punch, the uppercut is one)
+    const caughtLow = (kind === 'uppercut' || kind === 'hook' || kind === 'overhand') && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
+    // their head coming at the punch: into their wind-up or their shot
+    else if (foe.state === 'windup' || foe.state === 'shoot') { dmg *= FT.intoBonus; fightMsg('Into it!', 800); }
     else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
     else if (now < Fight.openUntil) dmg *= FT.openBonus;
     const cn = now - Fight.combo.last < FT.fx.comboMs ? Fight.combo.n + 1 : 1;
@@ -7512,11 +7675,13 @@ void main() {
     h.last = now; h.armed = false;
     return true;
   };
+  // the gym still reads each punch by kind (the pads say what it read); fights use 'punch' below
   engine.on('strike', (e) => {
     if (!Fight.active) return;
     const now = performance.now();
     Fight.fistFlash[e.hand] = now + 180;
     if (engine.combat().phase === 'top') return; // it comes back as a down_strike
+    if (!Fight.active.tutor) return;
     if (gated(e.type, e.hand, now)) return;
     if (!claim(e.hand, now)) return;
     // the fist's own top speed through the punch when the arm is tracked (the engine reports it as
@@ -7524,6 +7689,24 @@ void main() {
     const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
     recNote('punch', v);
     landed(e.type, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, (e.power - 0.5) / 1.0)), now, e.hand, null);
+  });
+  // 10/23 PM (Mark: "when your hands are in guard they are part of your body; when your arms leave
+  // your guard they are strikes"): engine 0.14.0's 'punch', once per trip out of the guard, landed on
+  // the way out. Only its shape matters: straights (jab, cross) hit softer, round punches (hooks,
+  // uppercuts, overhands) harder. Head movement no longer holds a punch back (the engine reads the
+  // arms against the shoulders); only a fight's first second does.
+  engine.on('punch', (e) => {
+    const a = Fight.active;
+    if (!a || a.tutor || engine.combat().phase !== 'standing') return;
+    const now = performance.now();
+    Fight.fistFlash[e.hand] = now + 180;
+    if (!isDemo() && now - a.start < FT.gate.startQuietMs) return;
+    if (!claim(e.hand, now)) return;
+    const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
+    const kind = e.shape === 'straight' ? (e.hand === lead ? 'jab' : 'cross') : (e.hand === lead ? 'hook' : 'overhand');
+    const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
+    recNote('punch', v);
+    landed(kind, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, ((e.power || 1) - 0.5) / 1.0)), now, e.hand, null);
   });
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
   engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
@@ -10372,7 +10555,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 head clock (engine 0.13.1)';
+  const BUILD = '2026-10-25 \u00b7 punches out of the guard, side zone, high knees any pace (engine 0.14.2)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -10600,7 +10783,10 @@ void main() {
   // turn right, two rounds
   const MOVES = {
     march: { big: 'Low knees', small: 'March in place, easy knees.', say: 'Low knees. March in place.', event: 'step', need: 4, secs: 8 },
-    high: { big: 'High knees', small: 'Fast, knees up to hip height.', say: 'High knees! Fast.', event: 'run_start', need: 1, secs: 7 },
+    // 10/23 PM (Mark): any pace. Knee height sets your stride and the pace how often, so fast low
+    // knees jog and fast high knees run; the warm-up only needs to see the knees come up high
+    // (engine 0.14.2 'high_step')
+    high: { big: 'High knees', small: 'Knees up to hip height, any pace.', say: 'High knees. Knees up to hip height, any pace.', event: 'high_step', need: 3, secs: 7 },
     waveL: { big: 'Wave left', small: 'Left hand up above your head, wave.', say: 'Wave your left hand.', event: 'wave', hand: 'left', need: 1, secs: 3.5 },
     waveR: { big: 'Wave right', small: 'Right hand up above your head, wave.', say: 'Wave your right hand.', event: 'wave', hand: 'right', need: 1, secs: 3.5 },
     turnL: { big: 'Turn left', small: 'Feet still. Turn your shoulders left, then back.', say: 'Turn your shoulders left.', event: 'turn_left', need: 1, side: -1, secs: 4 },
@@ -11005,7 +11191,7 @@ void main() {
 
   // count steps aloud up to "got it", so you hear right away whether marching registers
   const COUNT = ['', 'One', 'Two', 'Three'];
-  for (const ev of ['step', 'turn_left', 'turn_right', 'run_start', 'wave', 'squat', 'bound', 'jump']) {
+  for (const ev of ['step', 'turn_left', 'turn_right', 'high_step', 'wave', 'squat', 'bound', 'jump']) {
     engine.on(ev, (e) => {
       const c = Warm.plan[Warm.i];
       if (G.state !== 'setup' || !c || c.event !== ev) return;
@@ -11230,7 +11416,7 @@ void main() {
       try { if (marched) localStorage.setItem(WARMED_KEY(Warm.setup.key), '1'); else localStorage.removeItem(WARMED_KEY(Warm.setup.key)); } catch (_) {}
       const lines = [marched ? (Warm.quick ? 'You are in. Marching works.' : 'Warm-up done. Marching works.') : 'Warm-up done. The camera did not pick up your marching.'];
       if (planMoves().includes('turnL')) lines.push(turned ? 'Turns work.' : Warm.seen.turnL || Warm.seen.turnR ? 'One of your turns was missed.' : 'Turns were missed.');
-      if (planMoves().includes('high')) lines.push(Warm.seen.high ? 'High knees work.' : 'High knees were missed: faster, and higher.');
+      if (planMoves().includes('high')) lines.push(Warm.seen.high ? 'High knees work.' : 'High knees were missed: knees higher, up to hip height.');
       if (planMoves().includes('waveL')) lines.push(Warm.seen.waveL && Warm.seen.waveR ? 'Waves work.' : 'A wave was missed: hand above your head.');
       if (Warm.lowCount) lines.push('The camera lost your knees at times. Stand a little farther back.');
       lines.push(marched ? 'Start marching to walk.' : 'Walk anyway, and when you finish, tap save warm-up clip and send it to Claude.');
@@ -11489,6 +11675,33 @@ void main() {
     try { if (navigator.share) { await navigator.share({ title: 'Manhattan Miles side camera', url }); return; } } catch (_) { return; }
     try { await navigator.clipboard.writeText(url); sideText('Link copied', Side.state); } catch (_) { sideText(url, Side.state); }
   });
+  // the zone on the side phone (engine 0.14.1, Mark: "a zone visible to the user, ideal for picking
+  // up"): the box the player should stand in over the camera preview, their head, shoulders, hips
+  // and knees as dots, green in the zone, gold with what to change (big enough to read from 2.5 m)
+  function drawSideZone(raw) {
+    const v = $('sideVideo'), c = $('sideZone'), txt = $('sideZoneText');
+    if (!raw || !raw.lm || !v.videoWidth) return;
+    const lm = raw.lm, z = RE.sideZone((i) => lm[i] && { x: lm[i][0], y: lm[i][1], v: lm[i][3] == null ? 1 : lm[i][3] });
+    const cw = v.clientWidth, ch = v.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) { c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, cw, ch);
+    // the preview is object-fit: cover, so map picture fractions the same way
+    const k = Math.max(cw / v.videoWidth, ch / v.videoHeight), ox = (cw - v.videoWidth * k) / 2, oy = (ch - v.videoHeight * k) / 2;
+    const X = (x) => ox + x * v.videoWidth * k, Y = (y) => oy + y * v.videoHeight * k;
+    const col = z.ok ? '#5be37c' : '#ffcf3f', b = z.box;
+    g.lineWidth = 4; g.strokeStyle = col; g.setLineDash(z.ok ? [] : [14, 10]);
+    g.strokeRect(X(b.x0), Y(b.y0), X(b.x1) - X(b.x0), Y(b.y1) - Y(b.y0));
+    g.setLineDash([]);
+    // the band where the middle of the body belongs (hip height)
+    const Z = RE.defaultConfig().side.zone;
+    g.fillStyle = z.ok ? 'rgba(91,227,124,.12)' : 'rgba(255,207,63,.12)';
+    g.fillRect(X(b.x0), Y(Z.cy0), X(b.x1) - X(b.x0), Y(Z.cy1) - Y(Z.cy0));
+    g.fillStyle = col;
+    for (const i of [0, 11, 12, 23, 24, 25, 26]) { const p = lm[i]; if (p && (p[3] == null || p[3] >= 0.5)) { g.beginPath(); g.arc(X(p[0]), Y(p[1]), 7, 0, Math.PI * 2); g.fill(); } }
+    txt.hidden = false; txt.textContent = z.hint; txt.classList.toggle('ok', z.ok);
+  }
   {
     const code = new URLSearchParams(location.search).get('side');
     if (code) {
@@ -11498,7 +11711,7 @@ void main() {
       $('sideStart').addEventListener('click', async () => {
         $('sideStart').hidden = true;
         try {
-          Side.cam = await RE.sideCamera({ code, config: sidePeer(), video: $('sideVideo'), onStatus: (t) => { $('sideCamStatus').textContent = t; }, onFrame: () => { Side.frames++; } });
+          Side.cam = await RE.sideCamera({ code, config: sidePeer(), video: $('sideVideo'), onStatus: (t) => { $('sideCamStatus').textContent = t; }, onFrame: (raw) => { Side.frames++; try { drawSideZone(raw); } catch (_) {} } }); // the zone never stops the frames going out
           setInterval(() => { $('sideCamStatus').textContent = `Sending, ${Side.frames} frames a second. Keep this page open.`; Side.frames = 0; }, 1000);
         } catch (e) { $('sideCamStatus').textContent = e.message; $('sideStart').hidden = false; }
       });
@@ -11506,9 +11719,13 @@ void main() {
   }
   // the chip while it sends, and the title's line
   setInterval(() => {
-    const on = !!engine.side_status().connected;
+    const ss = engine.side_status(), on = !!ss.connected, z = ss.zone;
     $('sideChip').hidden = !on || Side.phone || G.state === 'title';
-    const line = Side.phone || !Side.host ? '' : on ? `Side camera connected, ${engine.side_status().fps} frames a second` : 'Side camera: waiting for the phone';
+    // the side camera's zone (engine 0.14.1): the chip says what to change until the player is in it
+    const chip = !z || z.ok ? 'Side cam' : 'Side cam: ' + z.hint.toLowerCase();
+    if ($('sideChip').textContent !== chip) $('sideChip').textContent = chip;
+    $('sideChip').classList.toggle('off', !!z && !z.ok);
+    const line = Side.phone || !Side.host ? '' : on ? `Side camera connected, ${ss.fps} frames a second${z ? (z.ok ? ', you are in its zone' : '. ' + z.hint) : ''}` : 'Side camera: waiting for the phone';
     if ($('sideLine').textContent !== line) $('sideLine').textContent = line;
   }, 500);
 

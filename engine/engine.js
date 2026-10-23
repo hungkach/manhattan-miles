@@ -438,7 +438,8 @@
       //   engine.side_feed(frame[, t])   a frame from RE.sidePack, arriving now (or at t, tests)
       //   engine.side_sync(offset)       the phone's clock to this one (main = side + offset, ms)
       //   engine.side_status()           { connected, fps, tilt (degrees from a true profile), synced,
-      //                                    using (fresh enough to read the arms) }
+      //                                    using (fresh enough to read the arms), zone { ok, hint }
+      //                                    (the player in the side picture's zone, RE.sideZone) }
       side_feed(frame, t) {
         const at = t == null ? RE.now() : t;
         st.side.push(frame, at, st.cal);
@@ -448,7 +449,8 @@
       side_sync(offset) { st.side.sync(offset); },
       side_status() {
         const t = st.raw ? st.raw.t : RE.now(), s = st.side.samples[st.side.samples.length - 1];
-        return { connected: st.side.connected(t), fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null };
+        const connected = st.side.connected(t), z = connected && st.side.zone;
+        return { connected, fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null, zone: z ? { ok: z.ok, hint: z.hint } : null };
       },
       // Which camera is running: {facing, lens, fallback, label} or null.
       camera() { return st.sourceObj && st.sourceObj.info ? Object.assign({}, st.sourceObj.info) : null; },
