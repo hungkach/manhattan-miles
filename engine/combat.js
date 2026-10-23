@@ -766,7 +766,7 @@
   // Anywhere: running (high knees) for escapeMs: 'escape' (the engine then
   // leaves combat mode).
   class Combat {
-    constructor(cfg) { this.c = cfg.combat.fight; this.reset(); }
+    constructor(cfg) { this.c = cfg.combat.fight; this.headLow = cfg.combat.weave.low; this.reset(); }
     reset() { this.phase = 'standing'; this.drive = null; this.topUntil = 0; this.runSince = null; this.target = null; this.sprawled = false; this.weaveUntil = -Infinity; }
     enter(target) { this.reset(); this.target = target || null; }
     gnpMs(power) {
@@ -825,7 +825,9 @@
       const out = [];
       const tg = this.target || {};
       const shooting = !!(tg.shooting && tg.shooting());
-      if (sig.weaving) this.weaveUntil = t + this.c.weaveJumpMs;
+      // 0.13.1 (Mark's clock: the head low, 4 to 8 o'clock, is a level change): weaving, or the
+      // head down past weave.low, opens the jump for the double
+      if (sig.weaving || (sig.head_drop || 0) >= this.headLow) this.weaveUntil = t + this.c.weaveJumpMs;
       if (!shooting) this.sprawled = false;
       else if (this.phase === 'standing' && sig.level_low && !this.sprawled) { this.sprawled = true; out.push(['sprawl', { held: true }]); }
       if (this.phase === 'drive' && this.c.requireJump && t - this.drive.t >= this.c.requireJumpWaitMs) {
