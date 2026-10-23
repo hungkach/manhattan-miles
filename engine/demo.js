@@ -99,6 +99,13 @@
           this.emit('slip', { side });
           break;
         }
+        // 0.13.0: a weave under to one side: a level change in motion (a jump in it is the shot)
+        case 'weave_left': case 'weave_right': {
+          const to = action === 'weave_left' ? 'left' : 'right';
+          this.weaveUntil = now + this.cfg.weaveMs;
+          this.emit('weave', { from: to === 'left' ? 'right' : 'left', to, depth: 0.25, width: 1, ms: 700 });
+          break;
+        }
         case 'stance':
           this.stance = this.stance === 'orthodox' ? 'southpaw' : 'orthodox';
           this.emit('stance', { stance: this.stance });
@@ -132,6 +139,9 @@
         lean: 0,
         squat_depth: now < this.squatUntil ? 1 : 0,
         level_low: now < this.squatUntil,
+        weaving: now < (this.weaveUntil || 0),
+        head_drop: now < (this.weaveUntil || 0) ? 0.25 : now < this.squatUntil ? 0.4 : 0,
+        head_x: now < this.slipUntil ? this.slip * 0.5 : 0,
         guard_up: this.guard,
         guard_left: this.guard,
         guard_right: this.guard,
@@ -147,7 +157,7 @@
 
   const BUTTONS = [
     ['point_left', 'Point L'], ['point_right', 'Point R'], ['turn_around', 'Turn 180'], ['wave_left', 'Wave L'], ['wave_right', 'Wave'],
-    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['overhand', 'Overhand'], ['uppercut', 'Upper'], ['bound_left', 'Bound L'], ['bound_right', 'Bound R'],
+    ['jab', 'Jab'], ['cross', 'Cross'], ['hook', 'Hook'], ['overhand', 'Overhand'], ['uppercut', 'Upper'], ['bound_left', 'Bound L'], ['bound_right', 'Bound R'], ['weave_left', 'Weave L'], ['weave_right', 'Weave R'],
     ['guard', 'Guard'], ['slip_left', 'Slip L'], ['slip_right', 'Slip R'], ['stance', 'Stance'],
     ['squat', 'Squat'], ['drive_up', 'Drive up'], ['jump', 'Jump'], ['stomp', 'Stomp'],
     ['teep', 'Teep'], ['low_kick', 'Low kick'], ['knee', 'Knee'],

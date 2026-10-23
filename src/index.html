@@ -24,7 +24,7 @@
   @media (orientation: landscape) {
     body.fighting #demo .re-demo-zone { display: none; }
     body.fighting #demo .re-demo { top: auto; height: auto; grid-template-rows: auto; }
-    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(6, 1fr) !important; }
+    body.fighting #demo .re-demo-buttons, body.sticks.fighting #demo .re-demo-buttons { grid-template-columns: repeat(7, 1fr) !important; }
     body.fighting #demo .re-demo-buttons button { min-height: 38px; }
     body.fighting #endBtn, body.fighting #phoneBtn { display: none; }
   }
@@ -1326,6 +1326,12 @@
     // than bodySlip a second, squat depth faster than bodyLevel a second, and bodyQuietMs after)
     // or in the first startQuietMs of a fight
     gate: { bodySlip: 2, bodyLevel: 1, bodyQuietMs: 220, startQuietMs: 1000 },
+    // head movement (10/24, engine 0.13.0, Mark: Fight Night Champion): your head off center
+    // (side S, the nose across from the hips) slips straights and uppercuts; low (low T, the
+    // shoulders below standing) or weaving ducks hooks (and an uppercut still catches you low);
+    // a weave opens a counter and tops up your guard bar by its depth (deep T is full); a jump
+    // out of a weave is the double, its quality from the weave's depth
+    head: { side: 0.3, low: 0.15, deep: 0.4, dial: 0.6 },
     hit: { capSpeed: 10, speed: 2.5, speedMs: 450, pairMs: 450, body: 0.8, gnpSpeed: 1.4, gnpRearm: 0.9, gnpExtend: 0.6, gnpPairMs: 200 },
     // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
@@ -1541,7 +1547,8 @@
     { id: 'rearUpper', big: 'Rear uppercut', small: 'Dip the rear hand to your chest, drive it up.', say: 'Rear uppercut.', kind: 'uppercut', hand: 'rear' },
     { id: 'slip', big: 'Slip', small: 'Move your head off the line, to either side.', say: 'Slip. Move your head off the line, left or right.', event: 'slip' },
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
-    { id: 'shot', big: 'Takedown', small: 'Level change, then jump up out of it.', say: 'Takedown. Level change, then jump up out of it.', event: 'shot' },
+    { id: 'weave', big: 'Weave', small: 'Head to one side, dip under in a U, come up on the other side.', say: 'Weave. Head to one side, dip under, and come up on the other side.', event: 'weave' },
+    { id: 'shot', big: 'Takedown', small: 'Level change or weave, then jump up out of it.', say: 'Takedown. Level change or weave, then jump up out of it.', event: 'shot' },
     { id: 'shift', big: 'Shift', small: 'Bound out to one side and back.', say: 'Shift. Bound out to one side, and straight back.', event: 'bound' },
   ].concat(FT.kick.on ? [
     { id: 'teep', big: 'Teep', small: 'Lead knee up, push the foot out at them, back down.', say: 'Teep. Lead knee up, push the foot out.', event: 'teep' },
@@ -1653,6 +1660,19 @@
   engine.on('slip', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'slip' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('shot', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'shot' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  engine.on('weave', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'weave' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
+  // a weave in a fight: a level change in motion. A counter window, your guard bar topped up by
+  // how deep it went, and their hook ducked (Fight.lastLowAt)
+  engine.on('weave', (e) => {
+    const a = Fight.active;
+    if (!a || a.tutor) return;
+    const now = performance.now();
+    Fight.stats.weaves = (Fight.stats.weaves || 0) + 1;
+    Fight.counterUntil = now + counterMs(a.foe);
+    Fight.lastLowAt = now;
+    guardBonus('duck', effort(isDemo() ? FT.head.deep : e.depth || 0, FT.head.low, FT.head.deep));
+    fightMsg('Weave', 700);
+  });
   engine.on('bound', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'bound' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   for (const k of ['teep', 'low_kick', 'knee']) engine.on(k, () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === k && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('bound', (e) => recNote('bound', e.dist || 0));
@@ -2116,6 +2136,12 @@
     const depthQ = dr ? effort(dr.depth, sq.squat, FT.td.fullDepth, 0, 1) : 0;
     const riseQ = effort(power - (jp ? 0.5 : 0), 0.3, 1.2, 0, 1);
     const jumpQ = jp ? effort(jp.height, sq.jump, FT.td.fullJump, 0, 1) : 0;
+    // out of a weave (10/24): the weave's own depth in place of a squat's, on its own scale
+    const wv = Fight.weave && now - Fight.weave.t < 800 ? Fight.weave : null;
+    if (wv && !dr) {
+      const wq = isDemo() ? 1 : effort(wv.depth, FT.head.low, FT.head.deep, 0, 1);
+      return { q: 0.35 * wq + 0.35 * riseQ + 0.3 * jumpQ, depth: wv.depth, jump: jp ? jp.height : 0, weave: true };
+    }
     return { q: 0.35 * depthQ + 0.35 * riseQ + 0.3 * jumpQ, depth: dr ? dr.depth : 0, jump: jp ? jp.height : 0 };
   }
   function resolveShot({ power }) {
@@ -2224,15 +2250,17 @@
       const yours = foe.hookSide === 'R' ? 'left' : 'right';
       // 10/16 (Mark: smoothness first) only the full two-hand guard blocks; FT.oneHand brings back
       // the hand-by-the-ear block for hooks. A broken guard blocks nothing for a moment.
-      const slipped = Math.abs(s.slip) >= 0.5 || now - Fight.lastSlipAt < FT.graceMs + 300;
+      const slipped = Math.abs(s.slip) >= 0.5 || Math.abs(s.head_x || 0) >= FT.head.side || now - Fight.lastSlipAt < FT.graceMs + 300;
       // 10/18 (Mark): a level change ducks a hook, but an uppercut catches you low for double
       const low = now - Fight.lastLowAt < FT.graceMs + 150;
       // 10/18 (Mark): no more reading a held guard. Slip a straight, duck a hook under a level
       // change (both top up your guard bar and open a counter); an uppercut that catches you low
       // lands double; anything else the guard bar blocks by itself while it has enough left
       const cost = FT.myGuard[foe.kind] || 1;
-      if (foe.kind === 'straight' && slipped) { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', effort(Math.abs(s.slip), 0.5, 1)); fightMsg('Slipped: counter!'); }
+      if (foe.kind === 'straight' && (slipped || s.weaving)) { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', effort(Math.abs(s.slip), 0.5, 1)); fightMsg('Slipped: counter!'); }
       else if (foe.kind === 'hook' && low) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + counterMs(foe); guardBonus('duck', effort(s.squat_depth || 0, LEVEL_SHOT * 0.7, Math.min(1, LEVEL_SHOT * 1.8))); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
+      // 10/24 (Mark): off center slips the uppercut too (low, it still catches you)
+      else if (foe.kind === 'uppercut' && slipped && !low) { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', effort(Math.abs(s.head_x || s.slip || 0), FT.head.side, FT.head.dial)); fightMsg('Slipped the uppercut: counter!'); }
       else if (foe.kind === 'uppercut' && !low && now - Fight.lastLowAt < 1600) { Fight.counterUntil = now + counterMs(foe); guardBonus('duck', 1); fightMsg('Baited it: counter!', 1100); tone(520, 0.1, 0.12, 'triangle'); }
       else if (foe.kind === 'uppercut' && low) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
       else if (Fight.guardHp >= cost * 0.5) {
@@ -2333,9 +2361,11 @@
     if (s.guard_up) Fight.lastGuardAt = now;
     if (now - (Fight.lastBlockAt || -Infinity) > FT.myGuard.pauseMs) Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + FT.myGuard.regen * dt);
     for (const side of ['left', 'right']) if (s['guard_' + side]) Fight.lastGuardSide[side] = now;
-    if (Math.abs(s.slip) >= 0.5) Fight.lastSlipAt = now;
+    if (Math.abs(s.slip) >= 0.5 || Math.abs(s.head_x || 0) >= FT.head.side) Fight.lastSlipAt = now;
     bodyMoveTick(s, now);
-    if (s.level_low || (s.squat_depth || 0) >= LEVEL_SHOT * 0.7) Fight.lastLowAt = now;
+    if (s.level_low || (s.squat_depth || 0) >= LEVEL_SHOT * 0.7 || (s.head_drop || 0) >= FT.head.low || s.weaving) Fight.lastLowAt = now;
+    // a weave in progress: its deepest point, for a double out of it
+    if (s.weaving) { if (!Fight.weave || now - Fight.weave.t > 600) Fight.weave = { depth: 0, t: now }; Fight.weave.depth = Math.max(Fight.weave.depth, s.head_drop || 0); Fight.weave.t = now; }
     P.speed = 0;
     P.yaw = (m.facing * Math.PI) / 180;
     if (Fight.recording && engine.recording_ms() > 28000) stopFightClip();
@@ -3783,7 +3813,31 @@
     ctx.fillStyle = '#fff'; ctx.fillRect(lx - 3, ly + 2 + (lh - 4) * mark, 20, 2);
     ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText('Level', lx - 2, ly - 3); ctx.fillText('Level', lx - 2, ly - 3);
+    headDial(s, lx + 30, ly + lh * 0.2, now);
     if (now < Fight.hurtUntil) { ctx.fillStyle = 'rgba(220, 40, 30, .28)'; ctx.fillRect(0, 0, W, H); }
+  }
+  // Where your head is (10/24, Fight Night head movement): a dial with the slip zones left and
+  // right, the duck zone below, and your head as a dot; it glows while you weave
+  function headDial(s, x0, y0, now) {
+    const R = 30, cx = x0 + R, cy = y0 + R * 0.6, H = FT.head;
+    const hx = isDemo() ? (s.head_x || 0) : s.head_x || 0, hy = s.head_drop || 0;
+    ctx.save();
+    ctx.lineWidth = 7; ctx.lineCap = 'round';
+    // the U: left and right for slips, the bottom for ducks
+    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI); ctx.stroke();
+    const side = Math.abs(hx) >= H.side, low = hy >= H.low;
+    ctx.strokeStyle = side && !low && hx < 0 ? '#5be37c' : 'rgba(91,227,124,.35)'; ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI * 0.72, Math.PI); ctx.stroke();
+    ctx.strokeStyle = side && !low && hx > 0 ? '#5be37c' : 'rgba(91,227,124,.35)'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 0.28); ctx.stroke();
+    ctx.strokeStyle = low ? '#ffcf3f' : 'rgba(255,207,63,.35)'; ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI * 0.36, Math.PI * 0.64); ctx.stroke();
+    // your head: your right is to the right, first person
+    const dx = Math.max(-1.2, Math.min(1.2, hx / H.dial)) * R, dy = Math.max(-0.3, Math.min(1.2, hy / H.deep)) * R;
+    ctx.fillStyle = s.weaving ? '#ffcf3f' : '#fff';
+    ctx.beginPath(); ctx.arc(cx + dx, cy + dy, s.weaving ? 7 : 5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = '#fff';
+    const label = s.weaving ? 'Weave' : low ? 'Duck' : side ? 'Slip' : 'Head';
+    ctx.strokeText(label, x0 - 2, cy + R + 4); ctx.fillText(label, x0 - 2, cy + R + 4);
+    ctx.restore();
   }
   // Your guard, felt rather than read (Mark 10/16: hands covering the face): with both hands up
   // two big gloves rise into the bottom of the view and the edges darken, peek-a-boo; a block
@@ -4854,7 +4908,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 no strays from head movement (engine 0.12.2), kicks off';
+  const BUILD = '2026-10-24 late \u00b7 weaves and head movement (engine 0.13.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -4873,7 +4927,7 @@
   $('progLine').textContent = progLine();
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
-    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', ...(FT.kick.on ? ['teep', 'low_kick', 'knee'] : []), 'slip_left', 'slip_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
+    fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', ...(FT.kick.on ? ['teep', 'low_kick', 'knee'] : []), 'slip_left', 'slip_right', 'weave_left', 'weave_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
     chase: ['bound_left', 'bound_right', 'jump', 'squat'],
   };
   function enableTouch() {

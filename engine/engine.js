@@ -166,6 +166,10 @@
           stance: det ? det.stance : 'square',
           slip: det ? det.slip : 0,
           level_low: det ? !!det.levelLow : false,
+          // head movement (0.13.0): where the head is (x S across, + right; y T below standing) and a weave in progress
+          head_x: det && det.head ? det.head.x : 0,
+          head_drop: det && det.head ? det.head.y : 0,
+          weaving: det ? !!det.weaving : false,
           side_cam: st.side.connected(raw.t), // a side camera is sending (0.12.0)
           confidence: sig.confidence,
         });
@@ -531,6 +535,6 @@
   };
 
   function emptySnapshot() {
-    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, side_cam: false, stride: 1, knee_lift: 0, confidence: 0 };
+    return { cadence_spm: 0, effort: 0, speed: 0, turn: 0, lean: 0, squat_depth: 0, guard_up: false, guard_left: false, guard_right: false, stance: 'square', slip: 0, level_low: false, head_x: 0, head_drop: 0, weaving: false, side_cam: false, stride: 1, knee_lift: 0, confidence: 0 };
   }
 })(globalThis);

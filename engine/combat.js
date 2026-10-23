@@ -13,7 +13,7 @@
   const RE = g.RepEngine;
   const L = RE.LM;
 
-  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee']) RE.detectors.add(name);
+  for (const name of ['strike', 'squat', 'drive_up', 'jump', 'slip', 'stance', 'bound', 'teep', 'low_kick', 'knee', 'weave']) RE.detectors.add(name);
 
   const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
   const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -444,6 +444,49 @@
     }
   }
 
+  // Head movement (0.13.0, Mark: "like Fight Night Champion: the head moves in an arc; left and
+  // right are slips, straight down is a duck, a U is a weave. While weaving it is a level change
+  // and you can jump at any time for a double"). The head is the nose across from the hip
+  // midpoint (S, + the player's right, as the slip reads it) and the shoulders' drop below
+  // standing (T; the hips when the shoulders are hidden). out.head { x, y } every frame.
+  //   zones    side: |x| at least weave.side and y under weave.low; low: y at least weave.low
+  //   'weave'  from one side, down through low (within legMs of leaving that side), up to the
+  //            other side (within legMs of the bottom), all within maxMs: { from, to, depth (T,
+  //            the lowest point), width (S, side to side), ms }
+  //   out.weaving  from the dip out of a side until holdMs after the other side is reached:
+  //            the fight machine counts it as a level change (a jump in it is the shot)
+  class WeaveDetector {
+    constructor(cfg) { this.c = cfg.combat.weave; this.side = null; this.dip = null; this.until = -Infinity; }
+    update(ctx, out) {
+      const t = ctx.t, c = this.c, sig = ctx.sig, b = sig.body;
+      out.weaving = t < this.until;
+      if (ctx.upperLow || !b) { out.head = null; this.dip = null; return; }
+      const x = b.nose.x - b.hMid.x;
+      const y = sig.shoulderDrop != null && sig.upperSeen ? sig.shoulderDrop : sig.levelDrop != null ? sig.levelDrop : 0;
+      out.head = { x, y };
+      const low = y >= c.low, at = !low && Math.abs(x) >= c.side ? (x < 0 ? 'left' : 'right') : null;
+      if (at) {
+        const d = this.dip;
+        // reaching the other side out of a dip: the weave
+        if (d && at !== d.from && t - d.bottomAt <= c.legMs && t - d.fromAt <= c.maxMs) {
+          out.events.push(['weave', { from: d.from, to: at, depth: d.depth, width: Math.abs(x - d.fromX), ms: Math.round(t - d.fromAt) }]);
+          this.until = t + c.holdMs;
+          out.weaving = true;
+        }
+        this.dip = null;
+        this.side = { at, t, x };
+      } else if (low) {
+        if (!this.dip && this.side && t - this.side.t <= c.legMs) this.dip = { from: this.side.at, fromAt: this.side.t, fromX: this.side.x, depth: y, bottomAt: t };
+        if (this.dip) {
+          if (y > this.dip.depth) this.dip.depth = y;
+          this.dip.bottomAt = t;
+          this.until = Math.max(this.until, t + c.holdMs);
+          out.weaving = true;
+        }
+      } else if (this.dip && t - this.dip.bottomAt > c.legMs) this.dip = null;
+    }
+  }
+
   // Level changes, from sig.levelDrop (the hips, or the shoulders when the
   // hips are hidden; knees are not needed, a squat in knees-up framing pushes
   // them out of the frame):
@@ -701,7 +744,7 @@
     }
   }
 
-  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg)];
+  RE.makeCombatDetectors = (cfg) => [new ArmPose(cfg), new GuardDetector(cfg), new StanceDetector(cfg), new StrikeDetector(cfg), new SlipDetector(cfg), new LevelDetector(cfg), new BoundDetector(cfg), new KickDetector(cfg), new WeaveDetector(cfg)];
 
   // Fight state machine (spec update_combat; reworked in 0.5.0 after Mark's
   // camera test). Runs only in combat mode. target, from enter_combat, all
@@ -724,7 +767,7 @@
   // leaves combat mode).
   class Combat {
     constructor(cfg) { this.c = cfg.combat.fight; this.reset(); }
-    reset() { this.phase = 'standing'; this.drive = null; this.topUntil = 0; this.runSince = null; this.target = null; this.sprawled = false; }
+    reset() { this.phase = 'standing'; this.drive = null; this.topUntil = 0; this.runSince = null; this.target = null; this.sprawled = false; this.weaveUntil = -Infinity; }
     enter(target) { this.reset(); this.target = target || null; }
     gnpMs(power) {
       const [lo, hi] = this.c.gnpMs;
@@ -755,10 +798,18 @@
           this.drive = { t, speed: payload.speed || 0, jumped: false };
           if (!this.c.requireJump) out.push(['shot', { speed: payload.speed || 0 }]);
         }
+      } else if (name === 'jump' && this.phase === 'standing' && t <= this.weaveUntil && !(tg.shooting && tg.shooting()) && (!tg.open || tg.open())) {
+        // 0.13.0: out of a weave (a level change in motion) a jump is the double, at full drive
+        this.drive = { t, speed: this.c.refRise, jumped: true, weave: true };
+        out.push(['shot', { speed: this.c.refRise, weave: true }]);
+        out.push(...this.resolve(t));
       } else if (name === 'jump' && this.phase === 'drive') {
         this.drive.jumped = true;
         if (this.c.requireJump) out.push(['shot', { speed: this.drive.speed }]);
         out.push(...this.resolve(t));
+      } else if (name === 'weave') {
+        // a finished weave keeps the jump window open a little past its end (touch weaves too)
+        this.weaveUntil = Math.max(this.weaveUntil, t + this.c.weaveJumpMs + 400);
       } else if (name === 'strike' && this.phase === 'top') {
         out.push(['down_strike', { hand: payload.hand, power: payload.power }]);
       } else if (name === 'run_start') {
@@ -774,6 +825,7 @@
       const out = [];
       const tg = this.target || {};
       const shooting = !!(tg.shooting && tg.shooting());
+      if (sig.weaving) this.weaveUntil = t + this.c.weaveJumpMs;
       if (!shooting) this.sprawled = false;
       else if (this.phase === 'standing' && sig.level_low && !this.sprawled) { this.sprawled = true; out.push(['sprawl', { held: true }]); }
       if (this.phase === 'drive' && this.c.requireJump && t - this.drive.t >= this.c.requireJumpWaitMs) {

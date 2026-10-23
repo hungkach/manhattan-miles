@@ -234,6 +234,11 @@
           back: 0.4,     // S: and comes back within this of the middle
           backMs: 900,   // within this long of its furthest point
         },
+        // head movement (0.13.0): a weave is a U from one side, down, up to the other side.
+        // side (S): the nose this far across from the hips (a slip reads from 0.25); low (T):
+        // the shoulders this far below standing; legMs: each half of the U; maxMs: the whole;
+        // holdMs: still weaving this long after it ends
+        weave: { side: 0.3, low: 0.15, legMs: 700, maxMs: 1600, holdMs: 400 },
         level: {
           squat: 0.3,      // T level drop that is a squat (spec 0.35; 0.4.2 eased for a fighting crouch)
           reset: 0.15,     // T: re-arms above this (spec)
@@ -245,6 +250,7 @@
         },
         fight: {
           jumpWaitMs: 300,   // after a drive up, how long a jump can still add to the shot
+          weaveJumpMs: 300,  // 0.13.0: a jump while weaving, or this long after, is the shot
           // 0.7.0 (Mark: the squat is the level change, the jump is the takedown): with
           // requireJump only a jump off the drive up shoots; a drive up with no jump inside
           // requireJumpWaitMs is just a 'level_change'
@@ -276,6 +282,7 @@
         runCadence: 170,
         cadenceWindowMs: 3000,
         squatHoldMs: 1500, // the demo squat button holds a squat this long (touch cannot hold a crouch)
+        weaveMs: 900,      // 0.13.0: a demo weave counts as weaving this long (a jump in it is the shot)
       },
       // a second camera at the side (0.12.0, side.js): a sample is fresh for maxAgeMs; without
       // a clock sync it is taken to be leadMs older than its arrival (the link's delay); landmarks below
