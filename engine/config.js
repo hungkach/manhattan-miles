@@ -197,6 +197,9 @@
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
           straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          pathPoints: 8,     // points in a punch's path (0.16.0)
+          wideOut: 0.35,     // S: a fist this far out to the side of where it left, elbow swung out, is a hook winding up
+          sweepIn: 0.12,     // S: it lands once it has swept back in this far from its widest
           upRise: 0.06,      // m: a round punch that rises this far from its lowest point, elbow in, is an uppercut ('up')
           refractoryMs: 250, // per hand after a punch lands (a fist settling back into the guard is not another)
         },

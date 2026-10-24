@@ -114,7 +114,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.15.0 from hungkach/body-arcade@4c626d6, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.16.0 from hungkach/body-arcade@219ecf3, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -423,6 +423,9 @@
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
           straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          pathPoints: 8,     // points in a punch's path (0.16.0)
+          wideOut: 0.35,     // S: a fist this far out to the side of where it left, elbow swung out, is a hook winding up
+          sweepIn: 0.12,     // S: it lands once it has swept back in this far from its widest
           upRise: 0.06,      // m: a round punch that rises this far from its lowest point, elbow in, is an uppercut ('up')
           refractoryMs: 250, // per hand after a punch lands (a fist settling back into the guard is not another)
         },
@@ -1925,7 +1928,8 @@
   // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
   // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
   // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
-  // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
+  // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), path (the fist's
+  // [x, y] in S from the shoulder midpoint, from leaving to landing, 0.16.0), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
   // with the hands dropped, or from a fist that never reaches in front of its shoulder.
   class PunchDetector {
@@ -1949,7 +1953,7 @@
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand], a = arms[hand], q = arms.torso[hand];
         // from its own shoulder, meters: x the player's right, y up, z toward the camera; tx in the torso's frame
-        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw };
+        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw, px: a.wrist.x, py: a.wrist.y };
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
         if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; continue; }
@@ -1962,7 +1966,11 @@
           // (a fist that dipped and has not risen upRise yet is an uppercut about to rise: it lands on the way up)
           if (s.y < m.low) m.low = s.y;
           const atBottom = m.home.y - m.low > c.straightDip * k && s.y - m.low < c.upRise * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k;
-          const done = t - m.from >= c.minMs && !atBottom && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          // (and a fist out wide with the elbow swung out is a hook winding up: it lands on the sweep in, 0.16.0)
+          const wx = Math.abs(s.px - m.path[0].px);
+          if (wx > m.wide) m.wide = wx;
+          const atWide = m.wide > c.wideOut && wx > m.wide - c.sweepIn && Math.abs(s.ex - m.path[0].ex) > c.straightFlare * k;
+          const done = t - m.from >= c.minMs && !atBottom && !atWide && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
           if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
           continue;
         }
@@ -1992,7 +2000,7 @@
         }
         // out past the dead zone: a punch if it just left home fast, else the hand drifted away
         // (from a spot short of home it has to head farther out, not on home to the guard)
-        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp, low: Math.min(s.y, (h.rest || s).y) };
+        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp, low: Math.min(s.y, (h.rest || s).y), wide: 0 };
         else { h.away = true; h.tmp = null; }
       }
     }
@@ -2022,7 +2030,12 @@
       let rise = 0, low = p[0].y;
       for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
       const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
-      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      // the fist's path across the picture (0.16.0, Mark: punches traverse the clock): pathPoints
+      // points from where it left to where it landed, [x, y] in S from the shoulder midpoint in the
+      // camera-facing frame (x the player's right, y up); a game lays it on its opponent's clock
+      const n = c.pathPoints, path = [];
+      for (let i = 0; i < n; i++) { const q = p[Math.round((i * (p.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, path, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
@@ -7001,7 +7014,7 @@ void main() {
       Fight.impacts.push({ x: at.x, y: at.y, t: now, power: Math.max(power, dmg / 1.2) });
       const n = big ? 18 : 10;
       for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = rand(120, big ? 520 : 340); Fight.sparks.push({ x: at.x, y: at.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, t: now, life: rand(220, 420), hot: Math.random() < 0.5 }); }
-      const pop = { x: at.x, y: at.y, t: now, text: `${KIND_NAME[kind] || 'Hit'} ${Math.max(1, Math.round(dmg * 10))}`, big };
+      const pop = { x: at.x, y: at.y, t: now, text: `${(Fight.read && Fight.read.name) || KIND_NAME[kind] || 'Hit'} ${Math.max(1, Math.round(dmg * 10))}`, big };
       Fight.pops.push(pop);
       if (h) h.pop = pop;
     }
@@ -7543,7 +7556,6 @@ void main() {
     // 10/21 (Mark: hit detection felt way off): a hook or uppercut thrown from mid range steps you
     // in behind it and lands, the way aiming is automatic; you cannot step in yourself in a fight
     if (FT.reach[kind] && foeDist(foe) > FT.reach[kind]) a.range = 'close';
-    if (kind === 'uppercut') where = 'body'; // uppercuts dig into the body
     if (kind === 'down_strike' && foe.state !== 'down') return;
     if (kind !== 'down_strike' && (foe.state === 'down' || foe.state === 'ko')) return;
     let dmg = (FT.damage[kind] || 1) * power;
@@ -7556,15 +7568,18 @@ void main() {
     // everything lands). A head that moves into the punch takes it double, past the guard.
     let into = false;
     if (kind !== 'down_strike' && !shifted) {
-      const key = punchZone(kind, hand), hr = foeHour(foe);
-      if (!inZone(key, hr)) {
+      // the hours the punch swept (from its path; a punch with none, a touch button, by its kind)
+      const rd = Fight.read || { name: KIND_NAME[kind], cover: [FT.head.clock.zones[punchZone(kind, hand)]], into: ZONE_DIR[punchZone(kind, hand)] };
+      const hr = foeHour(foe), hit = covers(rd, hr);
+      Fight.sweepShow = { cover: rd.cover, hit, t: now };
+      if (!hit) {
         const hd = foe.hit && foe.hit.head;
-        const what = hr >= 4 && hr <= 8 ? 'Under it' : 'Slipped it';
-        if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: what, big: false });
+        if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: `${rd.name}: ${hr >= 4 && hr <= 8 ? 'under it' : 'slipped'}`, big: false });
         fightMsg(hr >= 4 && hr <= 8 ? 'They ducked: uppercut' : 'They slipped: hook that side', 800);
         return;
       }
-      into = movedInto(foe, key, now);
+      const m = foe.hMove;
+      into = !!m && foe.state === 'guard' && now - m.t < FT.foeHead.intoMs && m.dx * rd.into[0] + m.dy * rd.into[1] > 0.3;
     }
     // their guard bar: it takes the punch unless you came in clean (out of a slip or a level
     // change, from an angle, or into their wind-up, shot, brace or stuffed shot)
@@ -7698,10 +7713,12 @@ void main() {
     if (!isDemo() && !a.tutor && now - a.start < FT.gate.startQuietMs) return;
     if (!claim(e.hand, now)) return;
     const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
-    const kind = e.shape === 'straight' ? (e.hand === lead ? 'jab' : 'cross') : e.arc === 'up' ? 'uppercut' : (e.hand === lead ? 'hook' : 'overhand');
+    const rd = readPunch(e, lead);
     const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
     recNote('punch', v);
-    landed(kind, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, ((e.power || 1) - 0.5) / 1.0)), now, e.hand, null);
+    Fight.read = rd; // landed() and impact() read it: its hours, its name
+    landed(rd.kind, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, ((e.power || 1) - 0.5) / 1.0)), now, e.hand, rd.body ? 'body' : null);
+    Fight.read = null;
   });
   engine.on('down_strike', (e) => { const now = performance.now(); if (Fight.active && claim(e.hand, now)) landed('down_strike', e.power, now, e.hand, null); });
   engine.on('shot', () => { if (Fight.active) { Fight.stats.shots++; fightMsg('Shot!', 700); } });
@@ -7814,6 +7831,43 @@ void main() {
     const m = f.hMove, d = ZONE_DIR[key];
     return !!m && f.state === 'guard' && now - m.t < FT.foeHead.intoMs && m.dx * d[0] + m.dy * d[1] > 0.3;
   }
+  // ---------- punches traverse the clock (10/24, engine 0.16.0, Mark: "to the devs these are the
+  // clock system punches, but to the user the app can declare it") ----------
+  // From the fist's path (relative to where it left the guard, S; x your right, y up): which side it
+  // swung out to, whether it dipped, rose over the top or drove low. That names the punch and gives
+  // the hours of their clock it sweeps (as you see them), and the way their head would have to be
+  // moving to walk into it. The shape still sets the damage kind.
+  //   straight         Jab / Cross at 12 (10:45 to 1:15); low: Body jab / cross at 6
+  //   up (elbow in)    Uppercut, 6 and 12 (4:30 to 7:30 and 11 to 1)
+  //   side, rises over the guard  Overhand, from its side over 12 and down to the far side (1 to 10, or 11 to 2)
+  //   side, swung out low         Body hook, 3:30 to 5:30 on the right or 6:30 to 8:30 on the left
+  //   side                        Hook, its side to 12 (11:30 to 3:30, or 8:30 to 12:30)
+  // thresholds in S: heights are where the fist is against the shoulder line (0), movements from
+  // where it left the guard
+  const PR = { wide: 0.1, low: -0.3, lowSwing: -0.4, over: 0.1 };
+  function readPunch(e, lead) {
+    const hand = e.hand, L = hand === lead ? 'Lead' : 'Rear';
+    const p = e.path && e.path.length > 1 ? e.path : [[0, 0], [0, 0]];
+    const [x0, y0] = p[0], end = p[p.length - 1];
+    let wide = p[0], minY = y0, maxY = y0;
+    for (const q of p) { if (Math.abs(q[0] - x0) > Math.abs(wide[0] - x0)) wide = q; if (q[1] < minY) minY = q[1]; if (q[1] > maxY) maxY = q[1]; }
+    // the side it came from: where it swung out to, else the hand's own side
+    const wdx = wide[0] - x0, right = Math.abs(wdx) >= PR.wide ? wdx > 0 : hand === 'right';
+    const s = right ? 1 : -1;
+    if (e.shape === 'straight') {
+      const body = end[1] < PR.low;
+      return { name: body ? `Body ${hand === lead ? 'jab' : 'cross'}` : hand === lead ? 'Jab' : 'Cross', kind: hand === lead ? 'jab' : 'cross', body, cover: body ? [[5, 7]] : [[10.75, 1.25]], into: body ? [0, 1] : [0, -1] };
+    }
+    // the engine's 'up' arc kept the elbow in: an uppercut (a straight driven low reads as one too:
+    // the picture cannot tell them apart, and both reach 6)
+    if (e.arc === 'up') return { name: `${L} uppercut`, kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
+    // elbow out from here on
+    if (maxY - y0 > PR.over) return { name: 'Overhand', kind: 'overhand', cover: [right ? [10, 1.5] : [10.5, 2]], into: [-0.7 * s, 0.7] };
+    // swung out low (a shovel hook reads as one: the picture cannot tell them apart)
+    if (Math.min(wide[1], minY) < PR.lowSwing) return { name: `${L} body hook`, kind: hand === lead ? 'hook' : 'overhand', body: true, cover: [right ? [3.5, 5.5] : [6.5, 8.5]], into: [0.7 * s, 0.7] };
+    return { name: `${L} hook`, kind: hand === lead ? 'hook' : 'overhand', cover: [right ? [11.5, 3.5] : [8.5, 0.5]], into: [s, 0] };
+  }
+  const covers = (rd, hour) => rd.cover.some((z) => inHours(hour, z));
   function takedownQuality(power) {
     const now = performance.now(), dr = Fight.lastDrive && now - Fight.lastDrive.t < 1500 ? Fight.lastDrive : null, jp = Fight.lastJump && now - Fight.lastJump.t < 800 ? Fight.lastJump : null;
     const sq = RE.defaultConfig().combat.level;
@@ -9554,6 +9608,13 @@ void main() {
     arc(1.25, 4, inZone('hookR', hr) && !inZone('straight', hr) ? '#7fc4ff' : 'rgba(127,196,255,.3)');
     arc(8, 10.75, inZone('hookL', hr) && !inZone('straight', hr) ? '#7fc4ff' : 'rgba(127,196,255,.3)');
     arc(Z.straight[0], Z.straight[1], inZone('straight', hr) ? '#fff' : 'rgba(255,255,255,.3)');
+    // the hours your last punch swept, for a moment: green if it met their head, red if not
+    const sw = Fight.sweepShow;
+    if (sw && now - sw.t < 700) {
+      ctx.globalAlpha = 1 - (now - sw.t) / 700;
+      for (const z of sw.cover) { ctx.strokeStyle = sw.hit ? '#5be37c' : '#ff4a3a'; ctx.lineWidth = 9 * U; ctx.beginPath(); ctx.arc(cx, cy, R + 7 * U, ang(z[0]), ang(z[1] < z[0] ? z[1] + 12 : z[1])); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    }
     const v = f.state === 'shoot' || f.state === 'brace' ? { x: 0, y: 1 } : f.hv || { x: 0, y: -1 }, rr = Math.max(1, Math.hypot(v.x, v.y));
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx + (v.x / rr) * R, cy + (v.y / rr) * R, 5 * U, 0, Math.PI * 2); ctx.fill();
     const what = inZone('straight', hr) ? '' : inZone('uppercut', hr) ? (inZone('hookL', hr) || inZone('hookR', hr) ? 'Uppercut or hook' : 'Uppercut') : inZone('hookL', hr) ? 'Left hook' : 'Right hook';
@@ -10633,7 +10694,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 PM \u00b7 their head clock, uppercuts read (engine 0.15.0)';
+  const BUILD = '2026-10-24 late \u00b7 punches sweep the clock and get their names (engine 0.16.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;

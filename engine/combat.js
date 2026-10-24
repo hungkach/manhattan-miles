@@ -412,7 +412,8 @@
   // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
   // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
   // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
-  // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
+  // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), path (the fist's
+  // [x, y] in S from the shoulder midpoint, from leaving to landing, 0.16.0), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
   // with the hands dropped, or from a fist that never reaches in front of its shoulder.
   class PunchDetector {
@@ -436,7 +437,7 @@
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand], a = arms[hand], q = arms.torso[hand];
         // from its own shoulder, meters: x the player's right, y up, z toward the camera; tx in the torso's frame
-        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw };
+        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw, px: a.wrist.x, py: a.wrist.y };
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
         if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; continue; }
@@ -449,7 +450,11 @@
           // (a fist that dipped and has not risen upRise yet is an uppercut about to rise: it lands on the way up)
           if (s.y < m.low) m.low = s.y;
           const atBottom = m.home.y - m.low > c.straightDip * k && s.y - m.low < c.upRise * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k;
-          const done = t - m.from >= c.minMs && !atBottom && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          // (and a fist out wide with the elbow swung out is a hook winding up: it lands on the sweep in, 0.16.0)
+          const wx = Math.abs(s.px - m.path[0].px);
+          if (wx > m.wide) m.wide = wx;
+          const atWide = m.wide > c.wideOut && wx > m.wide - c.sweepIn && Math.abs(s.ex - m.path[0].ex) > c.straightFlare * k;
+          const done = t - m.from >= c.minMs && !atBottom && !atWide && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
           if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
           continue;
         }
@@ -479,7 +484,7 @@
         }
         // out past the dead zone: a punch if it just left home fast, else the hand drifted away
         // (from a spot short of home it has to head farther out, not on home to the guard)
-        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp, low: Math.min(s.y, (h.rest || s).y) };
+        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp, low: Math.min(s.y, (h.rest || s).y), wide: 0 };
         else { h.away = true; h.tmp = null; }
       }
     }
@@ -509,7 +514,12 @@
       let rise = 0, low = p[0].y;
       for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
       const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
-      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      // the fist's path across the picture (0.16.0, Mark: punches traverse the clock): pathPoints
+      // points from where it left to where it landed, [x, y] in S from the shoulder midpoint in the
+      // camera-facing frame (x the player's right, y up); a game lays it on its opponent's clock
+      const n = c.pathPoints, path = [];
+      for (let i = 0; i < n; i++) { const q = p[Math.round((i * (p.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, path, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
