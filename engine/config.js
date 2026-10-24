@@ -60,19 +60,20 @@
         // tired player's lower knees still count, they just step shorter): each
         // step's peak thigh angle over refPitch, or peak knee lift over refLift,
         // averaged over the last `steps` steps, maps to a stride of min to max
-        stride: { refPitch: 50, refLift: 0.3, min: 0.7, max: 1.3, steps: 4 },
+        stride: { refPitch: 50, refLift: 0.3, gain: 1.5, min: 0.7, max: 2.2, steps: 4 }, // 0.18.0: 1 at a march, up to max for high knees
         squatPauseDrop: 0.2, // squat beats march: hip drop (T) past this pauses stepping
         liftSource: 'auto',  // 'auto' uses world landmarks when the profile has them, 'image' forces 2D
         cadenceWindowMs: 3000,
       },
       run: {
-        lift: 0.35,     // peak knee lift (T) of a high-knee step
+        lift: 0.5,      // peak knee lift (T) of a high-knee step (0.18.0: was 0.35, which a long-legged march reached; high knees lift about 0.8)
         pitch: 65,      // or peak thigh angle (degrees) of a high-knee step
         // 0.8.4 (Mark 10/19: high knees intervals read as 1 or 2 s of running): tired high knees
         // run 130 to 150 steps a minute, under the old 150; knee height is what makes it a run
-        cadence: 120,   // steps per minute between high-knee steps
+        cadence: 100,   // steps per minute between high-knee steps to start a run (0.18.0, was 120)
         startSteps: 2,  // consecutive high-knee steps that start a run
         exitMs: 800,    // run ends after this long with no high-knee step (was 600)
+        exitIntervals: 1.6, // or this many of its own step gaps, at a slower pace (0.18.0)
       },
       // Torso turn steering: yaw from (shoulder width / torso length) against
       // the calibrated ratio, direction from shoulder depth and the nose.
@@ -299,12 +300,13 @@
       },
       // Speeds are in world units per second; games scale them to their world.
       locomotion: {
+        // 0.18.0 (Mark: speed is stride times how often): one speed from walk to run, walkSpeed times
+        // cadence over refCadence (within walkScale) times the stride (march.stride: 1 at a march, up
+        // to 2.2 for high knees); 'run' is the state while the knees stay high
         walkSpeed: 1.4,
-        runSpeed: 3.5,
         walkCadence: 70,       // below this cadence the player stops
         refCadence: 110,       // cadence that gives exactly walkSpeed
-        walkScale: [0.8, 1.2], // walk speed range as a multiple of walkSpeed
-        strideMax: 1.3,        // high knees on a run can lengthen the stride this far
+        walkScale: [0.8, 1.6], // the cadence part of speed, as a multiple of walkSpeed (1.6 at 176 a minute)
         rampMs: 300,           // speed reaches its target over this long
         stopMs: 400,           // coast to a stop over this long
         stopAfterMs: 600,      // no step for this long (or 1.5 step intervals, if longer) stops you

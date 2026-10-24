@@ -110,9 +110,11 @@
     update(ctx, out) {
       const t = ctx.t;
       const s = ctx.sig;
-      if (this.running && t - this.lastHighAt > this.r.exitMs) {
+      // (a run holds for exitMs, or exitIntervals of its own step gap at a slower pace)
+      if (this.running && t - this.lastHighAt > Math.max(this.r.exitMs, this.r.exitIntervals * (this.highGap || 0))) {
         this.running = false;
         this.highCount = 0;
+        this.highGap = 0;
         out.events.push(['run_end', {}]);
       }
       // squat beats march: a deep hip drop holds both legs
@@ -126,7 +128,9 @@
       // stride: 1 at a reference step, shorter for low knees, longer for high ones
       const sc = this.m.stride;
       const hAvg = this.heights.length ? this.heights.reduce((a, b) => a + b, 0) / this.heights.length : 1;
-      out.stride = RE.clamp(0.5 + 0.5 * hAvg, sc.min, sc.max);
+      // 0.18.0 (Mark: knee height is the stride, the pace is how often): a march's knees are 1, high
+      // knees reach sc.max, so fast high knees run and fast low knees jog
+      out.stride = RE.clamp(hAvg < 1 ? 0.5 + 0.5 * hAvg : 1 + (hAvg - 1) * sc.gain, sc.min, sc.max); // lower knees shorter as before
       const active = out.cadence > 0;
       out.effort = active
         ? RE.clamp(0.7 * RE.clamp(out.cadence / this.e.fullCadence, 0, 1) + 0.3 * RE.clamp(out.kneeLift / this.e.fullLift, 0, 1), 0, 1)
@@ -193,7 +197,8 @@
       out.events.push(['high_step', { leg: name, lift: leg.peakLift, pitch: leg.peakPitch }]);
       this.highCount++;
       if (this.running) {
-        if (fast) this.lastHighAt = t;
+        this.highGap = t - this.lastHighAt; // 0.18.0: a run keeps going at any pace while the knees stay high
+        this.lastHighAt = t;
       } else if (this.highCount >= this.r.startSteps && fast) {
         this.running = true;
         this.lastHighAt = t;

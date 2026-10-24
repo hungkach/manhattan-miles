@@ -99,9 +99,7 @@
         // step longer (sig.stride, from the knee height of the last few steps)
         const stride = sig.stride || 1;
         this.runTarget = this.running && !quiet;
-        if (this.runTarget) {
-          this.targetSpeed = c.runSpeed * RE.clamp(stride, 1, c.strideMax);
-        } else if (cadence >= c.walkCadence && !quiet) {
+        if (cadence >= c.walkCadence && !quiet) {
           this.targetSpeed = c.walkSpeed * RE.clamp(cadence / c.refCadence, c.walkScale[0], c.walkScale[1]) * stride;
         } else {
           this.targetSpeed = 0;

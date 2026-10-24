@@ -1376,7 +1376,7 @@
     // 10/21 (Mark: runners too fast, the moves need time and should not cost your speed): while a
     // prompt is up the chase runs in slow motion (slowK), your speed holds through the move, and a
     // clean move keeps it boostK faster for boostMs after.
-    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: [1.08, 1.35], boost: { bound: [0.9, 1.8], jump: [0.2, 0.45] }, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
+    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: [1.08, 1.35], boost: { bound: [0.9, 1.8] }, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
     // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
     // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
     // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
@@ -2533,10 +2533,11 @@
   // offer: they run; wave your right hand within FT.run.offerMs to go after them, or let them go
   const OBSTACLES = {
     juke: { big: 'Juke!', small: 'Bound left or right', ev: 'bound', done: 'Juked' },
-    jump: { big: 'Jump!', small: 'Hop the dog', ev: 'jump', done: 'Cleared' },
+    // 10/25 (Mark: the hurdle picked up the movement at random): someone down on the sidewalk, cleared
+    // automatically with a hop of the view; no prompt, no move (the jump stays for takedowns)
+    down: { big: 'Hurdled', small: 'Someone on the ground', auto: true, done: 'Hurdled' },
     duck: { big: 'Duck!', small: 'Squat under the pipe', ev: 'squat', done: 'Ducked' },
   };
-  const DOG_COLS = [[150, 110, 70], [60, 50, 44], [210, 196, 170], [120, 90, 60]];
   function offerChase(foe, now, why, car) {
     foe.state = 'flee'; foe.walk = 0; foe.fleeChecked = true;
     Fight.chase = { mode: 'offer', foe, why, car, start: now, until: now + FT.run.offerMs, v: FT.run.v[0], dir: null };
@@ -2548,7 +2549,7 @@
     Object.assign(c, { mode: 'run', start: now, sp: 0, trail: [{ x: P.x, z: P.z, s: 0 }], obs: [], nextObs: FT.run.firstM, stumbleUntil: 0, missed: 0, dodged: 0, prompt: null });
     trailPush(c, f.x, f.z);
     if (isDemo()) setTouchButtons('chase');
-    say('Chase! High knees. Juke, jump and duck what is in the way.', 'confirm');
+    say('Chase! High knees. Juke and duck what is in the way.', 'confirm');
     banner('Chase!', 1500, now);
   }
   function trailPush(c, x, z) {
@@ -2629,9 +2630,9 @@
     // obstacles land on the trail behind them, never on top of you
     while (c.nextObs < len - 3) {
       if (c.nextObs > c.sp + 12) {
-        const kind = pick(['juke', 'jump', 'duck']), p = trailAt(c, c.nextObs), q = trailAt(c, c.nextObs + 1);
+        const kind = pick(['juke', 'down', 'duck']), p = trailAt(c, c.nextObs), q = trailAt(c, c.nextObs + 1);
         const dl = Math.hypot(q.x - p.x, q.z - p.z) || 1;
-        c.obs.push({ kind, s: c.nextObs, x: p.x, z: p.z, dx: (q.x - p.x) / dl, dz: (q.z - p.z) / dl, seed: Math.random(), col: kind === 'jump' ? pick(DOG_COLS) : pick(CROWD_COLS) });
+        c.obs.push({ kind, s: c.nextObs, x: p.x, z: p.z, dx: (q.x - p.x) / dl, dz: (q.z - p.z) / dl, seed: Math.random(), col: pick(CROWD_COLS) });
       }
       c.nextObs += rand(R.gapM[0], R.gapM[1]);
     }
@@ -2654,11 +2655,14 @@
     const o = c.obs.find((q) => !q.passed);
     if (o) {
       const d = o.s - c.sp, pace = Math.max(v, 4);
-      if (!o.promptAt && d <= pace * R.promptS) { o.promptAt = now; o.v0 = v; c.prompt = o; say(OBSTACLES[o.kind].big, 'confirm'); }
-      if (d <= -pace * R.graceS || (o.done && d <= 0)) {
+      if (OBSTACLES[o.kind].auto) {
+        // over them without breaking stride
+        if (d <= 0) { o.done = true; o.passed = true; c.dodged++; c.hopAt = now; banner(OBSTACLES[o.kind].done, 700, now); }
+      } else if (!o.promptAt && d <= pace * R.promptS) { o.promptAt = now; o.v0 = v; c.prompt = o; say(OBSTACLES[o.kind].big, 'confirm'); }
+      if (!o.passed && (d <= -pace * R.graceS || (o.done && d <= 0))) {
         o.passed = true; c.prompt = null;
         if (o.done) c.dodged++;
-        else { c.missed++; c.stumbleUntil = now + R.stumbleMs; banner(o.kind === 'jump' ? 'Tripped over the dog' : o.kind === 'duck' ? 'Clipped the pipe' : 'Ran into him', 1200, now); thud(); }
+        else { c.missed++; c.stumbleUntil = now + R.stumbleMs; banner(o.kind === 'duck' ? 'Clipped the pipe' : 'Ran into him', 1200, now); thud(); }
       }
     }
     c.obs = c.obs.filter((q) => q.s > c.sp - 20);
@@ -2692,12 +2696,11 @@
     if (OBSTACLES[c.prompt.kind].ev !== ev) return;
     c.prompt.done = true;
     const B = FT.run.boost, [lo, hi] = FT.run.boostK;
-    const k = ev === 'bound' ? effort(out, B.bound[0], B.bound[1], lo, hi) : ev === 'jump' ? effort(out, B.jump[0], B.jump[1], lo, hi) : effort(out, duckFloor(), Math.min(1, LEVEL_SHOT * 1.8), lo, hi);
+    const k = ev === 'bound' ? effort(out, B.bound[0], B.bound[1], lo, hi) : effort(out, duckFloor(), Math.min(1, LEVEL_SHOT * 1.8), lo, hi);
     c.boostUntil = performance.now() + FT.run.boostMs; c.boostV = (c.prompt.v0 || 0) * k; c.boostK = k;
     clack(); // the prompt turns green and says so
   }
   engine.on('bound', (e) => chaseMove('bound', (e && e.dist) || 0));
-  engine.on('jump', (e) => chaseMove('jump', (e && e.height) || 0));
   engine.on('squat', () => chaseMove('squat', engine.signals().squat_depth || 0));
   function thud() { burst(160, 0.8, 0.25, 0.5, 'lowpass'); }
 
@@ -3848,6 +3851,9 @@
       if (phase === 'drive') { fwd = 0.6; dy = Math.min(dy, -0.55); }
       if (phase === 'top') dy = Math.min(dy, -0.45);
     }
+    // a chase hurdle: a quick hop of the view
+    const ch = Fight.chase;
+    if (ch && ch.hopAt && performance.now() - ch.hopAt < 450) dy = 0.35 * Math.sin((Math.PI * (performance.now() - ch.hopAt)) / 450);
     pv.lat += (lat - pv.lat) * 0.3; pv.dy += (dy - pv.dy) * 0.3; pv.fwd += (fwd - pv.fwd) * 0.3; pv.roll += (roll - pv.roll) * 0.3;
     return pv;
   }
@@ -4641,7 +4647,7 @@
     return out;
   }
   const POLE = [46, 54, 52], BARK = [96, 70, 48], LEAVES = [[72, 112, 56], [86, 126, 62], [62, 100, 52]], HYDRANT = [196, 44, 34], RAIL = [34, 70, 50], GLOBE = [96, 230, 140];
-  // chase obstacles on the trail: a bystander (juke), a dog (jump), a scaffold pipe (duck)
+  // chase obstacles on the trail: a bystander (juke), someone on the ground (hurdled by itself), a scaffold pipe (duck)
   function drawObstacle(o, now) {
     if (o.kind === 'juke') {
       if (!o.person) o.person = { kind: 'ped', x: o.x, z: o.z, col: o.col, seed: o.seed, walking: false, stand: true, look: P, phone: true };
@@ -4649,18 +4655,14 @@
       return;
     }
     const list = [], at = (x, y, z) => toCam(x, y, z), rx = o.dz, rz = -o.dx;
-    if (o.kind === 'jump') {
-      // a dog across the sidewalk, side on, on a leash to nobody in particular
-      const c = o.col, L2 = 0.38, t = now / 140;
-      const hx = o.x + rx * L2, hz = o.z + rz * L2, tx = o.x - rx * L2, tz = o.z - rz * L2;
-      capsule(list, at(tx, 0.42, tz), at(hx, 0.44, hz), 0.15, c, F);
-      ball(list, at(hx + rx * 0.2, 0.62, hz + rz * 0.2), 0.13, c, F);
-      ball(list, at(hx + rx * 0.33, 0.58, hz + rz * 0.33), 0.06, c.map((v) => v * 0.6), F);
-      for (const [px, pz, ph] of [[hx, hz, 0], [tx, tz, Math.PI]]) for (const side of [-1, 1]) {
-        const lx = px + o.dx * 0.1 * side, lz = pz + o.dz * 0.1 * side, sw = Math.sin(t + ph + side) * 0.05;
-        capsule(list, at(lx, 0.4, lz), at(lx + rx * sw, 0.02, lz + rz * sw), 0.045, c, F);
-      }
-      capsule(list, at(tx, 0.48, tz), at(tx - rx * 0.25, 0.7 + Math.sin(t * 2) * 0.05, tz - rz * 0.25), 0.035, c, F);
+    if (o.kind === 'down') {
+      // someone lying across the sidewalk (the last one who tried to stop them)
+      const c = o.col, skin = [196, 150, 120], pants = [52, 56, 70];
+      const P0 = (k, y) => at(o.x + rx * k, y, o.z + rz * k);
+      capsule(list, P0(-0.05, 0.16), P0(0.45, 0.16), 0.17, c, F);   // torso
+      ball(list, P0(0.68, 0.14), 0.12, skin, F);                     // head
+      capsule(list, P0(-0.05, 0.12), P0(-0.85, 0.1), 0.09, pants, F); // legs
+      capsule(list, P0(0.4, 0.12), at(o.x + rx * 0.25 + o.dx * 0.35, 0.06, o.z + rz * 0.25 + o.dz * 0.35), 0.05, c, F); // an arm out
     } else {
       // a scaffold pipe at head height across the way, two uprights and an orange flag
       const half = 1.6, y = 1.25;
@@ -5071,7 +5073,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 night \u00b7 straights and rounds, punches land leaving the guard (engine 0.18.0)';
+  const BUILD = '2026-10-25 \u00b7 high knees run at any pace, auto hurdles in chases (engine 0.19.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5091,7 +5093,7 @@
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
     fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', ...(FT.kick.on ? ['teep', 'low_kick', 'knee'] : []), 'slip_left', 'slip_right', 'weave_left', 'weave_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
-    chase: ['bound_left', 'bound_right', 'jump', 'squat'],
+    chase: ['bound_left', 'bound_right', 'squat'],
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
@@ -5641,8 +5643,8 @@
     'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall when it comes up the middle.', 'Knockout! March on.',
     'You got dropped. Shake it off and march on.', 'You got away.', 'They ran off. March on.', 'Next one!', 'His friend jumps in!', 'Tag! The other one steps in.', 'They switch!',
     'Sidestep. Throw the round.', 'Jump out of the level change to take them down.', 'Ten more seconds.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
-    'He got away. Into the subway, probably.', 'Chase! High knees. Juke, jump and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
-    'Juke!', 'Jump!', 'Duck!', 'Got it.', 'One.', 'Two.', 'Three.', 'Again.', 'Moving on.', 'Car alarm up ahead. Someone is breaking in.', 'A street fight up ahead. Go break it up.',
+    'He got away. Into the subway, probably.', 'Chase! High knees. Juke and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
+    'Juke!', 'Duck!', 'Got it.', 'One.', 'Two.', 'Three.', 'Again.', 'Moving on.', 'Car alarm up ahead. Someone is breaking in.', 'A street fight up ahead. Go break it up.',
     'Corner deal going down ahead.', 'Someone is tagging a wall up ahead.', 'Someone is getting hassled up ahead. Go help.', 'Two of them hassling someone up ahead. Go help.'];
   // One queue, never talking over itself. Kinds:
   //   instruction  waits its turn, then starts 2 s after the last line ended (time to move the phone)
