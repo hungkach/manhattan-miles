@@ -1002,13 +1002,6 @@
     }
     BM.t = now; BM.slip = s.slip || 0; BM.sq = s.squat_depth || 0;
   }
-  // a punch that should not count (camera play only): mid head movement or level change, or in the first second
-  // 10/24 (Mark, side camera test: stray punches during head movement): straights too
-  function gated(kind, hand, now) {
-    if (isDemo()) return false;
-    const a = Fight.active;
-    return now < BM.until || (a && now - a.start < FT.gate.startQuietMs);
-  }
   // records in body units, kept across sessions (camera play only; touch buttons have no output)
   const REC = {
     cadence: { name: 'Best cadence (30 s)', unit: 'steps a minute', fmt: (v) => Math.round(v) },
@@ -1546,21 +1539,16 @@
   const TUTOR_KEY = 'manhattan-miles-tutor-done';
   // 10/18: each move gets up to `tries` attempts of tryMs in a row, then the tutorial moves on
   // (Mark: repeat until it registers, at most three times so it never locks you in)
-  // 10/21 (Mark: "the coach teaches you how to throw a strike, the system captures it, and that's
-  // how it reads it"): with the camera, the stance hold teaches the engine your guard and each
-  // punch step keeps teachReps of your own reps as that punch (engine 0.10.0, teach_strike);
-  // from then on your punches are read against your own samples
-  const TUTOR = { reps: 2, teachReps: 3, tryMs: 9000, tries: 3, holdMs: 2000 };
-  const TEACH_ROLE = { straight: 'straight', hook: 'hook', overhand: 'hook', uppercut: 'uppercut' };
-  const repsOf = (st) => (st && st.kind && !isDemo() ? TUTOR.teachReps : TUTOR.reps);
+  // 10/24 (Mark: "is learning the strikes appropriate for this build?"): no. Punches are any fast
+  // trip out of the guard, straight or round (engine 0.14.0 'punch'), so the gym learns only your
+  // guard while you hold the stance (engine.teach_guard: home, so a low, tired guard works), then
+  // drills straights and round punches from either hand, punchReps of each with the camera
+  const TUTOR = { reps: 2, punchReps: 3, tryMs: 9000, tries: 3, holdMs: 2000 };
+  const repsOf = (st) => (st && st.shape && !isDemo() ? TUTOR.punchReps : TUTOR.reps);
   const tutorSteps = () => [
-    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, a shoulder toward the screen, hands up in your guard. Hold it.', say: 'Fighting stance. One foot forward, a shoulder toward the screen, hands up in your guard. Hold it.' },
-    { id: 'jab', big: 'Jab', small: 'Lead hand, straight out and back.', say: 'Jab. Lead hand, straight out and back.', kind: 'straight', hand: 'lead' },
-    { id: 'cross', big: 'Cross', small: 'Rear hand, straight out, turn the hip.', say: 'Cross. Rear hand, straight out.', kind: 'straight', hand: 'rear' },
-    { id: 'leadHook', big: 'Lead hook', small: 'Lead elbow up, swing across.', say: 'Lead hook. Elbow up, swing it across.', kind: 'hook', hand: 'lead' },
-    { id: 'overhand', big: 'Overhand', small: 'Rear hand loops up and over, down onto them.', say: 'Overhand. Rear hand loops over the top.', kind: 'overhand', hand: 'rear' },
-    { id: 'leadUpper', big: 'Lead uppercut', small: 'Dip the lead hand to your chest, drive it up.', say: 'Lead uppercut. Dip the hand, then drive it up.', kind: 'uppercut', hand: 'lead' },
-    { id: 'rearUpper', big: 'Rear uppercut', small: 'Dip the rear hand to your chest, drive it up.', say: 'Rear uppercut.', kind: 'uppercut', hand: 'rear' },
+    { id: 'stance', big: 'Fighting stance', small: 'One foot forward, a shoulder toward the screen, hands up in your guard. Hold it.', say: 'Fighting stance. One foot forward, a shoulder toward the screen, hands up in your guard. Hold it. Your hands in the guard are part of your body; anything that leaves it fast is a punch.' },
+    { id: 'straight', big: 'Straights', small: 'From your guard, straight out at them and back. Either hand.', say: 'Straights. From your guard, straight out and back, either hand.', shape: 'straight' },
+    { id: 'round', big: 'Round punches', small: 'Hooks, uppercuts, overhands: any punch that curves. Either hand. They hit harder.', say: 'Round punches. Hooks, uppercuts or overhands, either hand. They hit harder.', shape: 'round' },
     { id: 'slip', big: 'Slip', small: 'Move your head off the line, to either side.', say: 'Slip. Move your head off the line, left or right.', event: 'slip' },
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'weave', big: 'Weave', small: 'Head to one side, dip under in a U, come up on the other side.', say: 'Weave. Head to one side, dip under, and come up on the other side.', event: 'weave' },
@@ -1574,7 +1562,8 @@
   const Tutor = { steps: [], i: 0, n: 0, since: 0, holdSince: null, lead: 'left', stance: 'orthodox', log: [], results: [], clip: null, recording: false, lastRead: '', saved: null };
   const tutorDoneBefore = () => { try { return localStorage.getItem(TUTOR_KEY) === '1'; } catch (_) { return false; } };
   const rearOf = (h) => (h === 'left' ? 'right' : 'left');
-  const tutorName = (kind, hand) => `${hand === Tutor.lead ? 'Lead' : 'Rear'} ${kind === 'jab' || kind === 'cross' ? 'straight' : kind}`;
+  const shapeOf = (kind) => (kind === 'jab' || kind === 'cross' ? 'straight' : 'round');
+  const tutorName = (kind, hand) => `${hand === Tutor.lead ? 'Lead' : 'Rear'} ${shapeOf(kind)}`;
   function startTutor(now) {
     if (G.state !== 'walk' || Fight.active || Fight.chase || Phone.open || Subway.ride) return false;
     Tutor.saved = { foes: Fight.foes, people: Fight.people };
@@ -1600,22 +1589,19 @@
     else if (!engine.is_recording()) { engine.start_recording({ game: 'manhattan-miles', tutorial: true, camera: engine.camera() }); Tutor.recording = true; }
     document.body.classList.add('fighting');
     Voice.q.length = 0; // nothing from the street follows you into the gym
-    say(isDemo() ? 'The gym. Every move twice.' : engine.side_status().connected ? 'The gym, with the side camera. Three of each punch, your way. The game learns them as both cameras see them.' : 'The gym. Three of each punch, your way. The game learns them.', 'instruction');
+    say(isDemo() ? 'The gym. Every move twice.' : 'The gym. It learns your guard, then straights and round punches.', 'instruction');
     tutorNext(now);
     return true;
   }
   function tutorNext(now) {
     const cur = Tutor.steps[Tutor.i];
-    if (cur) Tutor.results.push({ id: cur.id, big: cur.big, ok: Tutor.n >= (cur.kind || cur.event ? repsOf(cur) : 1), got: Tutor.n, read: Tutor.log.filter((l) => l.step === cur.id && !l.ok).map((l) => l.read) });
+    if (cur) Tutor.results.push({ id: cur.id, big: cur.big, ok: Tutor.n >= (cur.shape || cur.event ? repsOf(cur) : 1), got: Tutor.n, read: Tutor.log.filter((l) => l.step === cur.id && !l.ok).map((l) => l.read) });
     if (!isDemo()) engine.teach_stop();
     Tutor.i++; Tutor.n = 0; Tutor.since = now; Tutor.holdSince = now; Tutor.lastRead = ''; Tutor.try = 1;
     const st = Tutor.steps[Tutor.i];
     if (!st) { endTutor(now); return; }
-    // the engine learns: your guard while you hold the stance, then each punch as you throw it
-    if (!isDemo()) {
-      if (st.id === 'stance') engine.teach_guard();
-      else if (st.kind) engine.teach_strike(TEACH_ROLE[st.kind], st.hand === 'lead' ? Tutor.lead : rearOf(Tutor.lead));
-    }
+    // the engine learns your guard while you hold the stance
+    if (!isDemo() && st.id === 'stance') engine.teach_guard();
     say(st.say, 'instruction');
   }
   function tutorCount(now) {
@@ -1626,10 +1612,8 @@
   }
   function tutorHit(kind, hand, now) {
     const st = Tutor.steps[Tutor.i];
-    if (!st || !st.kind || Tutor.n >= repsOf(st)) return;
-    const want = st.hand === 'lead' ? Tutor.lead : rearOf(Tutor.lead);
-    const k = kind === 'jab' || kind === 'cross' ? 'straight' : kind;
-    const ok = k === st.kind && (hand === want || isDemo()); // touch buttons cannot pick the hand
+    if (!st || !st.shape || Tutor.n >= repsOf(st)) return;
+    const ok = shapeOf(kind) === st.shape; // either hand
     Tutor.lastRead = tutorName(kind, hand);
     Tutor.log.push({ step: st.id, ok, read: Tutor.lastRead, t: now, hand });
     if (ok) tutorCount(now);
@@ -1661,17 +1645,6 @@
       else { say('Moving on.', 'confirm'); tutorNext(now); }
     }
   }
-  // a rep the engine kept as your sample of the punch asked for: it lands on the pads and counts
-  engine.on('strike_taught', (e) => {
-    const a = Fight.active, st = a && a.tutor && Tutor.steps[Tutor.i], now = performance.now();
-    if (!st || !st.kind || Tutor.n >= repsOf(st)) return;
-    const name = st.kind === 'overhand' ? 'overhand' : st.kind === 'straight' ? (e.hand === Tutor.lead ? 'jab' : 'cross') : st.kind;
-    impact(a.foe, e.hand, 'head', 1, now, name, 1);
-    const h = Fight.hand[e.hand];
-    if (h && h.pop) h.pop.text = `Learned: ${st.big.toLowerCase()} ${Tutor.n + 1}`;
-    Tutor.log.push({ step: st.id, ok: true, read: st.big, t: now, hand: e.hand });
-    tutorCount(now);
-  });
   engine.on('slip', () => { if (Fight.active && !Fight.active.tutor) { Fight.slips = (Fight.slips || []).concat(performance.now()).slice(-5); } });
   engine.on('slip', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'slip' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
   engine.on('level_change', () => { const st = Fight.active && Fight.active.tutor && Tutor.steps[Tutor.i]; if (st && st.event === 'level_change' && Tutor.n < TUTOR.reps) tutorCount(performance.now()); });
@@ -1745,7 +1718,7 @@
     const st = Tutor.steps[Tutor.i];
     if (!st) return;
     const line = (txt, y, font, color) => { ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.fillStyle = color; ctx.strokeText(txt, W / 2, y); ctx.fillText(txt, W / 2, y); };
-    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.kind || st.event ? ` · ${Tutor.n} of ${repsOf(st)}` : ''}${Tutor.try > 1 ? ` · try ${Tutor.try} of ${TUTOR.tries}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
+    line(`Tutorial ${Tutor.i + 1} of ${Tutor.steps.length}${st.shape || st.event ? ` · ${Tutor.n} of ${repsOf(st)}` : ''}${Tutor.try > 1 ? ` · try ${Tutor.try} of ${TUTOR.tries}` : ''}`, 12, '700 13px system-ui, sans-serif', '#c9d1dd');
     line(st.big, 30, '900 32px system-ui, sans-serif', '#ffcf3f');
     line(st.small, 70, '700 14px system-ui, sans-serif', '#fff');
     if (Tutor.i > 0) line(`${Tutor.stance === 'southpaw' ? 'Southpaw' : 'Orthodox'}: ${Tutor.lead} hand leads`, 92, '600 12px system-ui, sans-serif', '#c9d1dd');
@@ -2104,20 +2077,11 @@
     h.last = now; h.armed = false;
     return true;
   };
-  // the gym still reads each punch by kind (the pads say what it read); fights use 'punch' below
   engine.on('strike', (e) => {
     if (!Fight.active) return;
     const now = performance.now();
     Fight.fistFlash[e.hand] = now + 180;
-    if (engine.combat().phase === 'top') return; // it comes back as a down_strike
-    if (!Fight.active.tutor) return;
-    if (gated(e.type, e.hand, now)) return;
-    if (!claim(e.hand, now)) return;
-    // the fist's own top speed through the punch when the arm is tracked (the engine reports it as
-    // the fist slows); touch buttons fall back to the engine's power
-    const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
-    recNote('punch', v);
-    landed(e.type, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, (e.power - 0.5) / 1.0)), now, e.hand, null);
+    // (standing punches, the gym's too, come from 'punch' below; on top it comes back as a down_strike)
   });
   // 10/23 PM (Mark: "when your hands are in guard they are part of your body; when your arms leave
   // your guard they are strikes"): engine 0.14.0's 'punch', once per trip out of the guard, landed on
@@ -2126,10 +2090,10 @@
   // arms against the shoulders); only a fight's first second does.
   engine.on('punch', (e) => {
     const a = Fight.active;
-    if (!a || a.tutor || engine.combat().phase !== 'standing') return;
+    if (!a || engine.combat().phase !== 'standing') return;
     const now = performance.now();
     Fight.fistFlash[e.hand] = now + 180;
-    if (!isDemo() && now - a.start < FT.gate.startQuietMs) return;
+    if (!isDemo() && !a.tutor && now - a.start < FT.gate.startQuietMs) return;
     if (!claim(e.hand, now)) return;
     const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
     const kind = e.shape === 'straight' ? (e.hand === lead ? 'jab' : 'cross') : (e.hand === lead ? 'hook' : 'overhand');
@@ -4984,7 +4948,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-25 \u00b7 punches out of the guard, side zone, high knees any pace (engine 0.14.2)';
+  const BUILD = '2026-10-24 \u00b7 gym learns your guard, drills straight and round (engine 0.14.2)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5803,7 +5767,7 @@
     // nothing registered halfway through a move: one spoken nudge
     if (c.event && !Warm.coached && Warm.hits === 0 && Warm.left < Warm.len * 0.5) {
       Warm.coached = true;
-      say({ march: 'Knees higher.', high: 'Faster! Knees up.', waveL: 'Hand higher, above your head.', waveR: 'Hand higher, above your head.', squat: 'Lower. Sit back.', bound: 'Hop out to the side, then back.', hop: 'Both feet off the floor.' }[c.id] || 'Turn further.', 'feedback');
+      say({ march: 'Knees higher.', high: 'Knees higher, up to hip height.', waveL: 'Hand higher, above your head.', waveR: 'Hand higher, above your head.', squat: 'Lower. Sit back.', bound: 'Hop out to the side, then back.', hop: 'Both feet off the floor.' }[c.id] || 'Turn further.', 'feedback');
     }
     if (Warm.left > 0) return;
     // let the closing line finish before the walk starts
