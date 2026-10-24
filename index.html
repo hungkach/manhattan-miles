@@ -10902,7 +10902,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-25 \u00b7 the body is a pillar, body rounds land (engine 0.21.0)';
+  const BUILD = '2026-10-25 \u00b7 side phone box: + and - widen it, shows with a hidden fist (engine 0.21.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -11901,7 +11901,7 @@ void main() {
   try { const v = +localStorage.getItem(SIDE_BOX_KEY); if (v > 0) Side.fists = v; } catch (_) {}
   function setSideFists(v) {
     const B = RE.defaultConfig().side.box;
-    Side.fists = Math.round(Math.max(B.minFists, Math.min(B.maxFists, v)) * 4) / 4;
+    Side.fists = Math.round(Math.max(B.minFists, Math.min(B.maxFists, v)) * 2) / 2;
     try { localStorage.setItem(SIDE_BOX_KEY, String(Side.fists)); } catch (_) {}
     $('sideBoxVal').textContent = `${Side.fists} fist${Side.fists === 1 ? '' : 's'}`;
   }
@@ -12065,7 +12065,8 @@ void main() {
     const k = Math.max(cw / v.videoWidth, ch / v.videoHeight), ox = (cw - v.videoWidth * k) / 2, oy = (ch - v.videoHeight * k) / 2;
     const X = (x) => ox + x * v.videoWidth * k, Y = (y) => oy + y * v.videoHeight * k;
     const col = z.ok ? '#5be37c' : '#ffcf3f', b = z.box;
-    g.lineWidth = 4; g.strokeStyle = col; g.setLineDash(z.ok ? [] : [14, 10]);
+    // (once you are placed it goes faint, so the blue stance box, the one + and - size, stands out)
+    g.lineWidth = z.ok ? 2 : 4; g.strokeStyle = z.ok ? 'rgba(91,227,124,.45)' : col; g.setLineDash(z.ok ? [] : [14, 10]);
     g.strokeRect(X(b.x0), Y(b.y0), X(b.x1) - X(b.x0), Y(b.y1) - Y(b.y0));
     g.setLineDash([]);
     // the band where the middle of the body belongs (hip height)
@@ -12076,9 +12077,26 @@ void main() {
     for (const i of [0, 11, 12, 23, 24, 25, 26]) { const p = lm[i]; if (p && (p[3] == null || p[3] >= 0.5)) { g.beginPath(); g.arc(X(p[0]), Y(p[1]), 7, 0, Math.PI * 2); g.fill(); } }
     // the stance box: the punch zone from the side, room in front of the lead fist and behind the rear
     // one; a fist out the front flashes it (that is a punch on the tablet)
-    const sb = (Side.box = Side.box || new RE.SideBox()).update((i) => lm[i] && { x: lm[i][0], y: lm[i][1], v: lm[i][3] == null ? 1 : lm[i][3] }, Side.fists);
+    // 10/25 (Mark: the + and - should widen and narrow the rectangle): from the side the far fist is
+    // often hidden behind the body, and the box needs both, so it never showed; a hidden fist stands in
+    // at where it was last seen (3 s), else at the near fist. The box works in pixels so its room is the
+    // same across as up and down, then comes back to picture fractions to draw.
+    const vw = v.videoWidth, vh = v.videoHeight, nowMs = performance.now();
+    Side.wseen = Side.wseen || {};
+    for (const i of [15, 16]) { const p = lm[i]; if (p && (p[3] == null || p[3] >= 0.5)) Side.wseen[i] = { x: p[0], y: p[1], t: nowMs }; }
+    const getPx = (i) => {
+      const p = lm[i];
+      if (!p) return null;
+      let q = { x: p[0], y: p[1], v: p[3] == null ? 1 : p[3] };
+      if ((i === 15 || i === 16) && q.v < 0.5) {
+        const s = [Side.wseen[i], Side.wseen[i === 15 ? 16 : 15]].find((w) => w && nowMs - w.t < 3000);
+        if (s) q = { x: s.x, y: s.y, v: 1 };
+      }
+      return { x: q.x * vw, y: q.y * vh, v: q.v };
+    };
+    const sb = (Side.box = Side.box || new RE.SideBox()).update(getPx, Side.fists);
     if (sb.ok) {
-      const out = sb.out.l || sb.out.r, B = sb.box;
+      const out = sb.out.l || sb.out.r, B = { x0: sb.box.x0 / vw, x1: sb.box.x1 / vw, y0: sb.box.y0 / vh, y1: sb.box.y1 / vh };
       g.lineWidth = out ? 6 : 4; g.strokeStyle = out ? '#ffffff' : '#36b9ff';
       g.strokeRect(X(B.x0), Y(B.y0), X(B.x1) - X(B.x0), Y(B.y1) - Y(B.y0));
       for (const i of [15, 16]) { const p = lm[i]; if (p && (p[3] == null || p[3] >= 0.5)) { g.fillStyle = '#36b9ff'; g.beginPath(); g.arc(X(p[0]), Y(p[1]), 9, 0, Math.PI * 2); g.fill(); } }
@@ -12092,8 +12110,9 @@ void main() {
       Side.phone = true;
       $('sideCamCode').textContent = code.toUpperCase();
       setSideFists(Side.fists);
-      $('sideBoxLess').addEventListener('click', () => setSideFists(Side.fists - 0.25));
-      $('sideBoxMore').addEventListener('click', () => setSideFists(Side.fists + 0.25));
+      // half a fist a tap, so the box visibly widens and narrows
+      $('sideBoxLess').addEventListener('click', () => setSideFists(Side.fists - 0.5));
+      $('sideBoxMore').addEventListener('click', () => setSideFists(Side.fists + 0.5));
       $('sideBoxReset').addEventListener('click', () => setSideFists(RE.defaultConfig().side.box.fists));
       show('sideCam');
       $('sideStart').addEventListener('click', async () => {
