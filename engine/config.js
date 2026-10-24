@@ -179,12 +179,20 @@
         punch: {
           // 0.14.0: a hand out of its guard is a punch (PunchDetector in combat.js), landed on the
           // way out. Meters and m/s scale with arm length (armScale).
-          dead: 0.15,        // m: the dead zone around home, about one and a half fists
+          // 0.18.0 (Mark 10/24: "the middle zone should be just enough for the fighting stance, any fist
+          // that comes out of it is a strike, narrow enough that it detects first from leaving"): the zone
+          // is one fist around each fist's guard spot, and a punch lands as it leaves (exitMs), not at full reach
+          dead: 0.1,         // m: the zone around home, about one fist (was 0.15)
+          fireOnExit: true,  // land a punch as it leaves the zone (an uppercut still waits to rise)
+          exitMs: 50,        // out of the zone this long first
+          dropK: 1.0,        // and leaving it more down than out (not rising as an uppercut) is the guard dropping
+          exitElbow: 0.06,   // m: the elbow travels this far as the fist leaves (straights 0.12 and up, hooks 0.11 and up),
+          exitExtend: 0.3,   // m: or the arm reaches this much farther; else a forearm swung out on a still elbow
           rearm: 0.1,        // m: back this near home re-arms the hand after a punch
           rearmFrac: 0.5,    // or back to this share of the last punch's farthest, and slowing
           leaveMs: 120,      // the fist crosses the dead zone within this long of being in it
           startSpeed: 1.0,   // m/s as it crosses
-          minSpeed: 1.6,     // m/s peak
+          minSpeed: 1.2,     // m/s peak (0.18.0: was 1.6; a tired punch out of the zone still counts)
           minFar: 0.2,       // m from home at its farthest
           frontMin: 0.1,     // m: somewhere in front of its shoulder
           lowest: 0.45,      // m: a hand lower than this under its shoulder is down, not punching

@@ -408,14 +408,19 @@
   // Punches without classifying (0.14.0, Mark 10/23 PM: "when your hands are in guard they are part
   // of your body; when your arms leave your guard they are strikes"). A hand at its guard (the
   // guard shape, or the player's own guard from the gym) is home; a hand that leaves home by more
-  // than `dead` (about one and a half fists) fast is a punch, landed on its way out: 'punch' when
-  // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
-  // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
+  // than `dead` fast is a punch. 0.18.0 (Mark 10/24: "the middle zone should be just enough for the
+  // fighting stance; any fist that comes out of this zone is a strike, detected as it leaves"): the
+  // zone is one fist around each guard spot (`dead` 0.1 m, was 0.15) and 'punch' lands as the fist
+  // leaves it (`fireOnExit`, `exitMs`), an uppercut once it rises; a fist heading mostly down (the
+  // guard dropping) or swung out on a still elbow is not one. The punch is then followed to its end
+  // for 'punch_path' { hand, path, reach, ms }, the whole sweep (0.16.0's path, now that 'punch'
+  // carries only its start). Without fireOnExit it lands as the fist slows at the end of its reach,
+  // or turns back. It re-arms back near home, so it lands once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
   // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
   // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), path (the fist's
   // [x, y] in S from the shoulder midpoint, from leaving to landing, 0.16.0), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
-  // with the hands dropped, or from a fist that never reaches in front of its shoulder.
+  // with the hands dropped, or (without fireOnExit) from a fist that never reaches in front of its shoulder.
   class PunchDetector {
     constructor(cfg) {
       this.c = cfg.combat.punch;
@@ -440,7 +445,21 @@
         const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw, px: a.wrist.x, py: a.wrist.y };
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
-        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; continue; }
+        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; h.trail = null; continue; }
+        // 0.18.0: a punch landed as it left the zone is followed to its end for 'punch_path' (the whole sweep)
+        if (h.trail) {
+          const tr = h.trail, dh = Math.hypot(s.x - tr.home.x, s.y - tr.home.y, s.z - tr.home.z);
+          tr.path.push(s); if (s.v > tr.peakV) tr.peakV = s.v; if (dh > tr.far) tr.far = dh;
+          if (s.y < tr.low) tr.low = s.y;
+          const wx = Math.abs(s.px - tr.path[0].px); if (wx > tr.wide) tr.wide = wx;
+          const atWide = tr.wide > c.wideOut && wx > tr.wide - c.sweepIn && Math.abs(s.ex - tr.path[0].ex) > c.straightFlare * k;
+          if ((t - tr.from >= c.minMs && !atWide && (s.v <= c.stopFrac * tr.peakV || dh < c.backFrac * tr.far)) || t - tr.from > c.maxMs) {
+            h.trail = null;
+            const n = c.pathPoints, P = tr.path, path = [];
+            for (let i = 0; i < n; i++) { const q = P[Math.round((i * (P.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
+            out.events.push(['punch_path', { hand, path, reach: tr.far / (0.6 * k), ms: Math.round(P[P.length - 1].t - tr.from) }]);
+          }
+        }
         const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
         if (h.move) {
           const m = h.move;
@@ -454,7 +473,10 @@
           const wx = Math.abs(s.px - m.path[0].px);
           if (wx > m.wide) m.wide = wx;
           const atWide = m.wide > c.wideOut && wx > m.wide - c.sweepIn && Math.abs(s.ex - m.path[0].ex) > c.straightFlare * k;
-          const done = t - m.from >= c.minMs && !atBottom && !atWide && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          const done = c.fireOnExit
+            // 0.18.0: as it leaves the zone (an uppercut's dip still waits to rise, so it reads as one)
+            ? t - m.from >= c.exitMs && !atBottom
+            : t - m.from >= c.minMs && !atBottom && !atWide && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
           if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
           continue;
         }
@@ -497,13 +519,13 @@
       h.landAt = m.path[m.path.length - 1].t;
       const p = m.path, s0 = p[0];
       const maxZ = Math.max(...p.map((x) => x.z));
-      if (m.peakV < c.minSpeed * k || maxZ < c.frontMin * k || m.far < c.minFar * k) return;
+      if (m.peakV < c.minSpeed * k || (!c.fireOnExit && maxZ < c.frontMin * k) || m.far < c.minFar * k) return;
       // the arm reaches out (the fist farther from its shoulder) or the elbow travels with it: a
       // forearm wiping in front of the face, pivoting on a still elbow, is not a punch; from a spot
       // short of home (a combination) the arm has to reach out again
       const ext = Math.max(...p.map((x) => x.ext)) - s0.ext;
       const elbow = Math.max(...p.map((x) => Math.hypot(x.ex - s0.ex, x.ey - s0.ey, x.ez - s0.ez)));
-      if (!(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
+      if (!c.fireOnExit && !(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
       // straight or round: a straight neither dips first (an uppercut) nor swings its elbow out to the
       // side (a hook, an overhand)
       const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
@@ -514,12 +536,22 @@
       let rise = 0, low = p[0].y;
       for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
       const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
+      // (0.18.0: landed as it leaves, a fist may not be in front of its shoulder yet, so instead of that a
+      // fist heading mostly down, and not rising out of it as an uppercut, is a guard dropping, not a punch)
+      if (c.fireOnExit) {
+        const L = p[p.length - 1], H = m.home, dy = L.y - H.y, out = Math.hypot(L.x - H.x, L.z - H.z);
+        if (arc !== 'up' && dy < 0 && -dy > c.dropK * out) return;
+        // and a fist leaving on a still elbow (a forearm swinging out) is not a punch unless the arm
+        // reaches well out or it rises as an uppercut: straights and hooks move the elbow from the start
+        if (arc !== 'up' && elbow < c.exitElbow * k && ext < c.exitExtend * k) return;
+      }
       // the fist's path across the picture (0.16.0, Mark: punches traverse the clock): pathPoints
       // points from where it left to where it landed, [x, y] in S from the shoulder midpoint in the
       // camera-facing frame (x the player's right, y up); a game lays it on its opponent's clock
       const n = c.pathPoints, path = [];
       for (let i = 0; i < n; i++) { const q = p[Math.round((i * (p.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
       out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, path, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      if (c.fireOnExit) h.trail = { from: m.from, path: p.slice(), peakV: m.peakV, far: m.far, home: m.home, low: m.low, wide: m.wide };
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,

@@ -114,7 +114,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.17.0 from hungkach/body-arcade@7293f53, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.18.0 from hungkach/body-arcade@aa3f281, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -405,12 +405,20 @@
         punch: {
           // 0.14.0: a hand out of its guard is a punch (PunchDetector in combat.js), landed on the
           // way out. Meters and m/s scale with arm length (armScale).
-          dead: 0.15,        // m: the dead zone around home, about one and a half fists
+          // 0.18.0 (Mark 10/24: "the middle zone should be just enough for the fighting stance, any fist
+          // that comes out of it is a strike, narrow enough that it detects first from leaving"): the zone
+          // is one fist around each fist's guard spot, and a punch lands as it leaves (exitMs), not at full reach
+          dead: 0.1,         // m: the zone around home, about one fist (was 0.15)
+          fireOnExit: true,  // land a punch as it leaves the zone (an uppercut still waits to rise)
+          exitMs: 50,        // out of the zone this long first
+          dropK: 1.0,        // and leaving it more down than out (not rising as an uppercut) is the guard dropping
+          exitElbow: 0.06,   // m: the elbow travels this far as the fist leaves (straights 0.12 and up, hooks 0.11 and up),
+          exitExtend: 0.3,   // m: or the arm reaches this much farther; else a forearm swung out on a still elbow
           rearm: 0.1,        // m: back this near home re-arms the hand after a punch
           rearmFrac: 0.5,    // or back to this share of the last punch's farthest, and slowing
           leaveMs: 120,      // the fist crosses the dead zone within this long of being in it
           startSpeed: 1.0,   // m/s as it crosses
-          minSpeed: 1.6,     // m/s peak
+          minSpeed: 1.2,     // m/s peak (0.18.0: was 1.6; a tired punch out of the zone still counts)
           minFar: 0.2,       // m from home at its farthest
           frontMin: 0.1,     // m: somewhere in front of its shoulder
           lowest: 0.45,      // m: a hand lower than this under its shoulder is down, not punching
@@ -1927,14 +1935,19 @@
   // Punches without classifying (0.14.0, Mark 10/23 PM: "when your hands are in guard they are part
   // of your body; when your arms leave your guard they are strikes"). A hand at its guard (the
   // guard shape, or the player's own guard from the gym) is home; a hand that leaves home by more
-  // than `dead` (about one and a half fists) fast is a punch, landed on its way out: 'punch' when
-  // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
-  // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
+  // than `dead` fast is a punch. 0.18.0 (Mark 10/24: "the middle zone should be just enough for the
+  // fighting stance; any fist that comes out of this zone is a strike, detected as it leaves"): the
+  // zone is one fist around each guard spot (`dead` 0.1 m, was 0.15) and 'punch' lands as the fist
+  // leaves it (`fireOnExit`, `exitMs`), an uppercut once it rises; a fist heading mostly down (the
+  // guard dropping) or swung out on a still elbow is not one. The punch is then followed to its end
+  // for 'punch_path' { hand, path, reach, ms }, the whole sweep (0.16.0's path, now that 'punch'
+  // carries only its start). Without fireOnExit it lands as the fist slows at the end of its reach,
+  // or turns back. It re-arms back near home, so it lands once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
   // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
   // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), path (the fist's
   // [x, y] in S from the shoulder midpoint, from leaving to landing, 0.16.0), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
-  // with the hands dropped, or from a fist that never reaches in front of its shoulder.
+  // with the hands dropped, or (without fireOnExit) from a fist that never reaches in front of its shoulder.
   class PunchDetector {
     constructor(cfg) {
       this.c = cfg.combat.punch;
@@ -1959,7 +1972,21 @@
         const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw, px: a.wrist.x, py: a.wrist.y };
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
-        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; continue; }
+        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; h.trail = null; continue; }
+        // 0.18.0: a punch landed as it left the zone is followed to its end for 'punch_path' (the whole sweep)
+        if (h.trail) {
+          const tr = h.trail, dh = Math.hypot(s.x - tr.home.x, s.y - tr.home.y, s.z - tr.home.z);
+          tr.path.push(s); if (s.v > tr.peakV) tr.peakV = s.v; if (dh > tr.far) tr.far = dh;
+          if (s.y < tr.low) tr.low = s.y;
+          const wx = Math.abs(s.px - tr.path[0].px); if (wx > tr.wide) tr.wide = wx;
+          const atWide = tr.wide > c.wideOut && wx > tr.wide - c.sweepIn && Math.abs(s.ex - tr.path[0].ex) > c.straightFlare * k;
+          if ((t - tr.from >= c.minMs && !atWide && (s.v <= c.stopFrac * tr.peakV || dh < c.backFrac * tr.far)) || t - tr.from > c.maxMs) {
+            h.trail = null;
+            const n = c.pathPoints, P = tr.path, path = [];
+            for (let i = 0; i < n; i++) { const q = P[Math.round((i * (P.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
+            out.events.push(['punch_path', { hand, path, reach: tr.far / (0.6 * k), ms: Math.round(P[P.length - 1].t - tr.from) }]);
+          }
+        }
         const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
         if (h.move) {
           const m = h.move;
@@ -1973,7 +2000,10 @@
           const wx = Math.abs(s.px - m.path[0].px);
           if (wx > m.wide) m.wide = wx;
           const atWide = m.wide > c.wideOut && wx > m.wide - c.sweepIn && Math.abs(s.ex - m.path[0].ex) > c.straightFlare * k;
-          const done = t - m.from >= c.minMs && !atBottom && !atWide && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          const done = c.fireOnExit
+            // 0.18.0: as it leaves the zone (an uppercut's dip still waits to rise, so it reads as one)
+            ? t - m.from >= c.exitMs && !atBottom
+            : t - m.from >= c.minMs && !atBottom && !atWide && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
           if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
           continue;
         }
@@ -2016,13 +2046,13 @@
       h.landAt = m.path[m.path.length - 1].t;
       const p = m.path, s0 = p[0];
       const maxZ = Math.max(...p.map((x) => x.z));
-      if (m.peakV < c.minSpeed * k || maxZ < c.frontMin * k || m.far < c.minFar * k) return;
+      if (m.peakV < c.minSpeed * k || (!c.fireOnExit && maxZ < c.frontMin * k) || m.far < c.minFar * k) return;
       // the arm reaches out (the fist farther from its shoulder) or the elbow travels with it: a
       // forearm wiping in front of the face, pivoting on a still elbow, is not a punch; from a spot
       // short of home (a combination) the arm has to reach out again
       const ext = Math.max(...p.map((x) => x.ext)) - s0.ext;
       const elbow = Math.max(...p.map((x) => Math.hypot(x.ex - s0.ex, x.ey - s0.ey, x.ez - s0.ez)));
-      if (!(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
+      if (!c.fireOnExit && !(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
       // straight or round: a straight neither dips first (an uppercut) nor swings its elbow out to the
       // side (a hook, an overhand)
       const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
@@ -2033,12 +2063,22 @@
       let rise = 0, low = p[0].y;
       for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
       const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
+      // (0.18.0: landed as it leaves, a fist may not be in front of its shoulder yet, so instead of that a
+      // fist heading mostly down, and not rising out of it as an uppercut, is a guard dropping, not a punch)
+      if (c.fireOnExit) {
+        const L = p[p.length - 1], H = m.home, dy = L.y - H.y, out = Math.hypot(L.x - H.x, L.z - H.z);
+        if (arc !== 'up' && dy < 0 && -dy > c.dropK * out) return;
+        // and a fist leaving on a still elbow (a forearm swinging out) is not a punch unless the arm
+        // reaches well out or it rises as an uppercut: straights and hooks move the elbow from the start
+        if (arc !== 'up' && elbow < c.exitElbow * k && ext < c.exitExtend * k) return;
+      }
       // the fist's path across the picture (0.16.0, Mark: punches traverse the clock): pathPoints
       // points from where it left to where it landed, [x, y] in S from the shoulder midpoint in the
       // camera-facing frame (x the player's right, y up); a game lays it on its opponent's clock
       const n = c.pathPoints, path = [];
       for (let i = 0; i < n; i++) { const q = p[Math.round((i * (p.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
       out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, path, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      if (c.fireOnExit) h.trail = { from: m.from, path: p.slice(), peakV: m.peakV, far: m.far, home: m.home, low: m.low, wide: m.wide };
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
@@ -7016,7 +7056,7 @@ void main() {
   // floating up, a combo count, their head or body snapping back, the screen shaking with the
   // weight of it, and a layered smack (a crowd "ooh" on a big one)
   // 10/23 PM (Mark): punches are only straight or round now (engine 'punch')
-  const KIND_NAME = { jab: 'Straight', cross: 'Straight', hook: 'Hook', overhand: 'Hook', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
+  const KIND_NAME = { jab: 'Straight', cross: 'Straight', hook: 'Round', overhand: 'Round', uppercut: 'Round', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
   const comboBonus = (n) => Math.min(FT.combo.cap, FT.combo.step * Math.max(0, n - 1));
   function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
@@ -7162,7 +7202,7 @@ void main() {
   const tutorSteps = () => [
     { id: 'stance', big: 'Fighting stance', small: 'One foot forward, a shoulder toward the screen, hands up in your guard. Hold it.', say: 'Fighting stance. One foot forward, a shoulder toward the screen, hands up in your guard. Hold it. Your hands in the guard are part of your body; anything that leaves it fast is a punch.' },
     { id: 'straight', big: 'Straights', small: 'From your guard, straight out at them and back. Either hand.', say: 'Straights. From your guard, straight out and back, either hand.', shape: 'straight' },
-    { id: 'round', big: 'Round punches', small: 'Hooks, uppercuts, overhands: any punch that curves. Either hand. They hit harder.', say: 'Round punches. Hooks, uppercuts or overhands, either hand. They hit harder.', shape: 'round' },
+    { id: 'round', big: 'Round punches', small: 'Any punch that curves, around or up the middle. Either hand. They hit harder.', say: 'Round punches. Any punch that curves, either hand. They hit harder.', shape: 'round' },
     { id: 'slip', big: 'Slip', small: 'Move your head off the line, to either side.', say: 'Slip. Move your head off the line, left or right.', event: 'slip' },
     { id: 'level', big: 'Level change', small: 'Squat down, then stand back up.', say: 'Level change. Squat down, then stand back up.', event: 'level_change' },
     { id: 'weave', big: 'Weave', small: 'Head to one side, dip under in a U, come up on the other side.', say: 'Weave. Head to one side, dip under, and come up on the other side.', event: 'weave' },
@@ -7292,7 +7332,7 @@ void main() {
       Fight.sidestep = { side: e.side, until: now + FT.sidestep.ms };
       Fight.stats.sidesteps = (Fight.stats.sidesteps || 0) + 1;
       guardBonus('stuff');
-      fightMsg(`Sidestep! ${e.side === 'left' ? 'Left' : 'Right'} hook`, 1200); say('Sidestep. Hook him.', 'feedback');
+      fightMsg(`Sidestep! ${e.side === 'left' ? 'Left' : 'Right'} round`, 1200); say('Sidestep. Throw the round.', 'feedback');
       tone(660, 0.12, 0.15, 'triangle');
       return;
     }
@@ -7589,7 +7629,7 @@ void main() {
       if (!hit) {
         const hd = foe.hit && foe.hit.head;
         if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: `${rd.name}: ${hr >= 4 && hr <= 8 ? 'under it' : 'slipped'}`, big: false });
-        fightMsg(hr >= 4 && hr <= 8 ? 'They ducked: uppercut' : 'They slipped: hook that side', 800);
+        fightMsg(hr >= 4 && hr <= 8 ? 'They ducked: round up the middle' : 'They slipped: round from that side', 800);
         return;
       }
       const m = foe.hMove;
@@ -7620,11 +7660,11 @@ void main() {
     // 10/23 PM (Mark): in range, every punch lands; the guard bar and the bonuses decide what it does
     if (outOf && !shifted) { dmg *= FT.guard.cleanBonus; fightMsg('Clean shot!', 700); }
     // a hook from the side you sidestepped to
-    if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side hook!', 1000); Fight.sidestep = null; }
+    if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side round!', 1000); Fight.sidestep = null; }
     // an uppercut catches them changing levels: shooting at you, or braced for your shot
     const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
-    else if (into) { dmg *= FT.foeHead.intoK; Fight.stats.reads++; fightMsg(kind === 'uppercut' ? 'Ducked into it!' : punchZone(kind, hand) === 'straight' ? 'Caught coming back!' : 'Slipped into it!', 1000); }
+    else if (into) { dmg *= FT.foeHead.intoK; Fight.stats.reads++; fightMsg('Caught him!', 1000); }   // their head moved into it (Mark 10/24: one name for it)
     // their head coming at the punch: into their wind-up or their shot
     else if (foe.state === 'windup' || foe.state === 'shoot') { dmg *= FT.intoBonus; fightMsg('Into it!', 800); }
     else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
@@ -7845,41 +7885,17 @@ void main() {
     const m = f.hMove, d = ZONE_DIR[key];
     return !!m && f.state === 'guard' && now - m.t < FT.foeHead.intoMs && m.dx * d[0] + m.dy * d[1] > 0.3;
   }
-  // ---------- punches traverse the clock (10/24, engine 0.16.0, Mark: "to the devs these are the
-  // clock system punches, but to the user the app can declare it") ----------
-  // From the fist's path (relative to where it left the guard, S; x your right, y up): which side it
-  // swung out to, whether it dipped, rose over the top or drove low. That names the punch and gives
-  // the hours of their clock it sweeps (as you see them), and the way their head would have to be
-  // moving to walk into it. The shape still sets the damage kind.
-  //   straight         Jab / Cross at 12 (10:45 to 1:15); low: Body jab / cross at 6
-  //   up (elbow in)    Uppercut, 6 and 12 (4:30 to 7:30 and 11 to 1)
-  //   side, rises over the guard  Overhand, from its side over 12 and down to the far side (1 to 10, or 11 to 2)
-  //   side, swung out low         Body hook, 3:30 to 5:30 on the right or 6:30 to 8:30 on the left
-  //   side                        Hook, its side to 12 (11:30 to 3:30, or 8:30 to 12:30)
-  // thresholds in S: heights are where the fist is against the shoulder line (0), movements from
-  // where it left the guard
-  const PR = { wide: 0.1, low: -0.3, lowSwing: -0.4, over: 0.1 };
+  // ---------- punches on the clock (10/24, engine 0.16.0; names and covers simplified 10/24 night) ----------
+  // 10/24 night (Mark: "do away with the boxing terminology, just call things straights or rounds";
+  // engine 0.18.0 lands a punch as the fist leaves the guard, so its path is only the start): a
+  // Straight reaches 12; a Round comes from the side of the hand that throws it across to 12, or,
+  // rising out of a dip (the engine's 'up' arc), reaches 6 and 12. The hand still sets the damage
+  // kind (lead or rear), and `into` is the way a head walking into it moves.
   function readPunch(e, lead) {
-    const hand = e.hand, L = hand === lead ? 'Lead' : 'Rear';
-    const p = e.path && e.path.length > 1 ? e.path : [[0, 0], [0, 0]];
-    const [x0, y0] = p[0], end = p[p.length - 1];
-    let wide = p[0], minY = y0, maxY = y0;
-    for (const q of p) { if (Math.abs(q[0] - x0) > Math.abs(wide[0] - x0)) wide = q; if (q[1] < minY) minY = q[1]; if (q[1] > maxY) maxY = q[1]; }
-    // the side it came from: where it swung out to, else the hand's own side
-    const wdx = wide[0] - x0, right = Math.abs(wdx) >= PR.wide ? wdx > 0 : hand === 'right';
-    const s = right ? 1 : -1;
-    if (e.shape === 'straight') {
-      const body = end[1] < PR.low;
-      return { name: body ? `Body ${hand === lead ? 'jab' : 'cross'}` : hand === lead ? 'Jab' : 'Cross', kind: hand === lead ? 'jab' : 'cross', body, cover: body ? [[5, 7]] : [[10.75, 1.25]], into: body ? [0, 1] : [0, -1] };
-    }
-    // the engine's 'up' arc kept the elbow in: an uppercut (a straight driven low reads as one too:
-    // the picture cannot tell them apart, and both reach 6)
-    if (e.arc === 'up') return { name: `${L} uppercut`, kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
-    // elbow out from here on
-    if (maxY - y0 > PR.over) return { name: 'Overhand', kind: 'overhand', cover: [right ? [10, 1.5] : [10.5, 2]], into: [-0.7 * s, 0.7] };
-    // swung out low (a shovel hook reads as one: the picture cannot tell them apart)
-    if (Math.min(wide[1], minY) < PR.lowSwing) return { name: `${L} body hook`, kind: hand === lead ? 'hook' : 'overhand', body: true, cover: [right ? [3.5, 5.5] : [6.5, 8.5]], into: [0.7 * s, 0.7] };
-    return { name: `${L} hook`, kind: hand === lead ? 'hook' : 'overhand', cover: [right ? [11.5, 3.5] : [8.5, 0.5]], into: [s, 0] };
+    const hand = e.hand, right = hand === 'right', s = right ? 1 : -1;
+    if (e.shape === 'straight') return { name: 'Straight', kind: hand === lead ? 'jab' : 'cross', cover: [[10.75, 1.25]], into: [0, -1] };
+    if (e.arc === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
+    return { name: 'Round', kind: hand === lead ? 'hook' : 'overhand', cover: [right ? [11.5, 3.5] : [8.5, 0.5]], into: [s, 0] };
   }
   const covers = (rd, hour) => rd.cover.some((z) => inHours(hour, z));
   function takedownQuality(power) {
@@ -7935,7 +7951,7 @@ void main() {
     fightMsg('Stuffed');
     fightTalk('foe', 'stuffed', performance.now(), 0.7);
     const tq = Fight.lastTq;
-    if (a.foe.state === 'brace') say(tq ? `Stuffed. They were braced. Squat ${Math.round(tq.depth * 100)}, jump ${Math.round(tq.jump * 100)}: go deeper and higher, or uppercut.` : 'Stuffed. They were braced: go deeper and higher, or uppercut.', 'feedback');
+    if (a.foe.state === 'brace') say(tq ? `Stuffed. They were braced. Squat ${Math.round(tq.depth * 100)}, jump ${Math.round(tq.jump * 100)}: go deeper and higher, or a round up the middle.` : 'Stuffed. They were braced: go deeper and higher, or a round up the middle.', 'feedback');
     else say('Stuffed. Drive up faster.', 'feedback');
     a.foe.state = 'guard'; a.foe.until = performance.now() + 800;
   });
@@ -8011,15 +8027,15 @@ void main() {
       else if (evaded && foe.kind === 'hook' && lowNow) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + counterMs(foe); guardBonus('duck', effort(c.ny, 0.5, 1)); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
       else if (evaded && foe.kind === 'hook') { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', off); fightMsg('Rolled away: counter!'); }
       else if (evaded && foe.kind === 'uppercut' && now - Fight.lastLowAt < 1600 && !lowNow) { Fight.counterUntil = now + counterMs(foe); guardBonus('duck', 1); fightMsg('Baited it: counter!', 1100); tone(520, 0.1, 0.12, 'triangle'); }
-      else if (evaded && foe.kind === 'uppercut') { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', off); fightMsg('Slipped the uppercut: counter!'); }
-      else if (foe.kind === 'uppercut' && lowNow) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall for the uppercut.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
+      else if (evaded && foe.kind === 'uppercut') { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', off); fightMsg('Slipped the round: counter!'); }
+      else if (foe.kind === 'uppercut' && lowNow) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall when it comes up the middle.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
       else if (Fight.guardHp >= cost * 0.5) {
         Fight.guardHp = Math.max(0, Fight.guardHp - cost);
         Fight.lastBlockAt = now; Fight.stats.blocked++;
         Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
-      else { hurtPlayer(now, foe.boss ? STAGE.boss.hit : archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall for the uppercut!' }[foe.kind] || 'Hit', 1100); }
+      else { hurtPlayer(now, foe.boss ? STAGE.boss.hit : archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall when it comes up the middle!' }[foe.kind] || 'Hit', 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -10708,7 +10724,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 night \u00b7 no idle nudges, side cam quiet outside fights';
+  const BUILD = '2026-10-24 night \u00b7 straights and rounds, punches land leaving the guard (engine 0.18.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -10732,7 +10748,12 @@ void main() {
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
+    relabelTouch();
   }
+  // straights and rounds on the touch buttons too (Mark 10/24: no boxing terminology); the engine's
+  // demo names them after the punch it emits
+  const TOUCH_LABELS = { Jab: 'Lead straight', Cross: 'Rear straight', Hook: 'Lead round', Overhand: 'Rear round', Upper: 'Rising round' };
+  function relabelTouch() { for (const b of $('demo').querySelectorAll('button')) if (TOUCH_LABELS[b.textContent]) b.textContent = TOUCH_LABELS[b.textContent]; }
   const isDemo = () => engine.debug().source === 'demo';
   // swap the touch buttons between walking and fighting (rebuilding the touch
   // controls resets the engine's heading, so keep it)
@@ -10740,6 +10761,7 @@ void main() {
     const facing = engine.locomotion().facing;
     engine.disable_demo();
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS[mode] });
+    relabelTouch();
     engine.set_facing(facing);
     if (Sticks.on) requestAnimationFrame(layoutSticks);
   }
@@ -11269,9 +11291,9 @@ void main() {
   })();
   // the narrator's calls made ahead (fights and chases make none while they run)
   const NARRATOR_LINES = ['Fight! Guard up.', 'Running', 'Sprawl!', 'Sprawl! Now hit.', 'Knockdown!', 'Angle!', 'Guard broken! Let them have it.', 'Takedown. Ground and pound.',
-    'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall for the uppercut.', 'Knockout! March on.',
+    'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall when it comes up the middle.', 'Knockout! March on.',
     'You got dropped. Shake it off and march on.', 'You got away.', 'They ran off. March on.', 'Next one!', 'His friend jumps in!', 'Tag! The other one steps in.', 'They switch!',
-    'Sidestep. Hook him.', 'Jump out of the level change to take them down.', 'Ten more seconds.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
+    'Sidestep. Throw the round.', 'Jump out of the level change to take them down.', 'Ten more seconds.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
     'He got away. Into the subway, probably.', 'Chase! High knees. Juke, jump and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
     'Juke!', 'Jump!', 'Duck!', 'Got it.', 'One.', 'Two.', 'Three.', 'Again.', 'Moving on.', 'Car alarm up ahead. Someone is breaking in.', 'A street fight up ahead. Go break it up.',
     'Corner deal going down ahead.', 'Someone is tagging a wall up ahead.', 'Someone is getting hassled up ahead. Go help.', 'Two of them hassling someone up ahead. Go help.'];
