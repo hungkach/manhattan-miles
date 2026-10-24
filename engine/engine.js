@@ -450,7 +450,7 @@
       side_status() {
         const t = st.raw ? st.raw.t : RE.now(), s = st.side.samples[st.side.samples.length - 1];
         const connected = st.side.connected(t), z = connected && st.side.zone;
-        return { connected, fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null, zone: z ? { ok: z.ok, hint: z.hint } : null };
+        return { connected, fps: st.side.fps(t), tilt: s ? Math.round((s.tilt * 180) / Math.PI) : null, using: !!(st.det && st.det.sideUsed), synced: st.side.offset != null, zone: z ? { ok: z.ok, hint: z.hint } : null, zoneFists: connected ? st.side.zoneFists : null };
       },
       // Which camera is running: {facing, lens, fallback, label} or null.
       camera() { return st.sourceObj && st.sourceObj.info ? Object.assign({}, st.sourceObj.info) : null; },

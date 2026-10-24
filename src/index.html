@@ -61,6 +61,11 @@
   #sideZone { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); pointer-events: none; }
   #sideZoneText { font: 800 clamp(22px, 7vw, 40px) system-ui, sans-serif; text-align: center; margin: 10px 0 0; color: #ffcf3f; }
   #sideZoneText.ok { color: #5be37c; }
+  #sideBoxBar { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0 0; }
+  #sideBoxBar[hidden] { display: none; }
+  #sideBoxBar button { min-width: 64px; min-height: 48px; font: 800 22px system-ui, sans-serif; border-radius: 12px; }
+  #sideBoxBar span { font: 700 16px system-ui, sans-serif; min-width: 120px; text-align: center; }
+  #sideBoxTip { margin: 6px 0 0; text-align: center; font: 600 15px system-ui, sans-serif; color: #7fd8ff; }
   #sideChip { position: fixed; top: calc(6px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%) scale(var(--ui, 1)); transform-origin: 50% 0; z-index: 4; background: rgba(30, 140, 80, .85); color: #fff; font: 700 12px system-ui, sans-serif; padding: 3px 10px; border-radius: 10px; pointer-events: none; }
   #sideChip[hidden] { display: none; }
   #sideChip.off { background: rgba(170, 120, 20, .9); }
@@ -207,6 +212,8 @@
     <p>Code <b id="sideCamCode"></b>. Prop this phone upright at hip height about 2.5 m from the player's open side, square to it, their whole body from head to knees in view. Keep this page open; the screen stays on.</p>
     <div id="sideView"><video id="sideVideo" playsinline muted></video><canvas id="sideZone"></canvas></div>
     <p id="sideZoneText" hidden></p>
+    <p id="sideBoxTip" hidden>Get in your fighting stance and size the blue box so there's about 1.5 fists of room in front of your lead fist and behind your rear fist.</p>
+    <div id="sideBoxBar" hidden><button id="sideBoxLess" class="secondary" type="button">−</button><span id="sideBoxVal">1.5 fists</span><button id="sideBoxMore" class="secondary" type="button">+</button><button id="sideBoxReset" class="secondary" type="button" style="font-size:15px">Reset</button></div>
     <p class="hint" id="sideCamStatus">Tap Start, then allow the camera.</p>
     <div class="btns"><button id="sideStart" class="main">Start</button></div>
   </div>
@@ -5073,7 +5080,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-25 \u00b7 high knees run at any pace, auto hurdles in chases (engine 0.19.0)';
+  const BUILD = '2026-10-25 \u00b7 side phone stance box sets the punch zone (engine 0.20.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -6065,7 +6072,17 @@
   // only its camera page (RE.sideCamera: camera, tracker, the screen kept on) and sends its
   // landmarks. While it sends, the engine reads punch reach from it (side_cam) and a chip shows.
   const SIDE_KEY = 'manhattan-miles-side-code';
-  const Side = { host: null, state: '', text: '', code: '', cam: null, phone: false, frames: 0 };
+  const Side = { host: null, state: '', text: '', code: '', cam: null, phone: false, frames: 0, box: null, fists: 1.5 };
+  // the stance box's room on the side phone (engine 0.19.0, Mark 10/24): set with the buttons under
+  // the preview, kept on this phone, sent with every frame; the tablet's punch zone uses it
+  const SIDE_BOX_KEY = 'manhattan-miles-side-zone';
+  try { const v = +localStorage.getItem(SIDE_BOX_KEY); if (v > 0) Side.fists = v; } catch (_) {}
+  function setSideFists(v) {
+    const B = RE.defaultConfig().side.box;
+    Side.fists = Math.round(Math.max(B.minFists, Math.min(B.maxFists, v)) * 4) / 4;
+    try { localStorage.setItem(SIDE_BOX_KEY, String(Side.fists)); } catch (_) {}
+    $('sideBoxVal').textContent = `${Side.fists} fist${Side.fists === 1 ? '' : 's'}`;
+  }
   // A QR code for the side camera's link (10/24): byte mode, error correction level L, versions 1
   // to 5 (one block each, up to 106 bytes), the mask with the lowest penalty. Returns rows of
   // booleans (true is dark), or null when the text is too long.
@@ -6235,6 +6252,16 @@
     g.fillRect(X(b.x0), Y(Z.cy0), X(b.x1) - X(b.x0), Y(Z.cy1) - Y(Z.cy0));
     g.fillStyle = col;
     for (const i of [0, 11, 12, 23, 24, 25, 26]) { const p = lm[i]; if (p && (p[3] == null || p[3] >= 0.5)) { g.beginPath(); g.arc(X(p[0]), Y(p[1]), 7, 0, Math.PI * 2); g.fill(); } }
+    // the stance box: the punch zone from the side, room in front of the lead fist and behind the rear
+    // one; a fist out the front flashes it (that is a punch on the tablet)
+    const sb = (Side.box = Side.box || new RE.SideBox()).update((i) => lm[i] && { x: lm[i][0], y: lm[i][1], v: lm[i][3] == null ? 1 : lm[i][3] }, Side.fists);
+    if (sb.ok) {
+      const out = sb.out.l || sb.out.r, B = sb.box;
+      g.lineWidth = out ? 6 : 4; g.strokeStyle = out ? '#ffffff' : '#36b9ff';
+      g.strokeRect(X(B.x0), Y(B.y0), X(B.x1) - X(B.x0), Y(B.y1) - Y(B.y0));
+      for (const i of [15, 16]) { const p = lm[i]; if (p && (p[3] == null || p[3] >= 0.5)) { g.fillStyle = '#36b9ff'; g.beginPath(); g.arc(X(p[0]), Y(p[1]), 9, 0, Math.PI * 2); g.fill(); } }
+    }
+    $('sideBoxTip').hidden = $('sideBoxBar').hidden = false;
     txt.hidden = false; txt.textContent = z.hint; txt.classList.toggle('ok', z.ok);
   }
   {
@@ -6242,11 +6269,15 @@
     if (code) {
       Side.phone = true;
       $('sideCamCode').textContent = code.toUpperCase();
+      setSideFists(Side.fists);
+      $('sideBoxLess').addEventListener('click', () => setSideFists(Side.fists - 0.25));
+      $('sideBoxMore').addEventListener('click', () => setSideFists(Side.fists + 0.25));
+      $('sideBoxReset').addEventListener('click', () => setSideFists(RE.defaultConfig().side.box.fists));
       show('sideCam');
       $('sideStart').addEventListener('click', async () => {
         $('sideStart').hidden = true;
         try {
-          Side.cam = await RE.sideCamera({ code, config: sidePeer(), video: $('sideVideo'), onStatus: (t) => { $('sideCamStatus').textContent = t; }, onFrame: (raw) => { Side.frames++; try { drawSideZone(raw); } catch (_) {} } }); // the zone never stops the frames going out
+          Side.cam = await RE.sideCamera({ code, config: sidePeer(), video: $('sideVideo'), zone: () => Side.fists, onStatus: (t) => { $('sideCamStatus').textContent = t; }, onFrame: (raw) => { Side.frames++; try { drawSideZone(raw); } catch (_) {} } }); // the zone never stops the frames going out
           setInterval(() => { $('sideCamStatus').textContent = `Sending, ${Side.frames} frames a second. Keep this page open.`; Side.frames = 0; }, 1000);
         } catch (e) { $('sideCamStatus').textContent = e.message; $('sideStart').hidden = false; }
       });

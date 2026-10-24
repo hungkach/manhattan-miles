@@ -439,6 +439,9 @@
         this.hipPrev = { t, x: hm.x };
       }
       const bodyMoving = t < (this.hipQuiet || 0);
+      // the zone's size: one fist, or with a side camera the room the player set on the phone (0.20.0)
+      const sv = ctx.sideView, dead = ctx.sideOn && sv && sv.zoneFists > 0 ? sv.zoneFists * c.fistM : c.dead;
+      out.punchZoneM = dead;
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand], a = arms[hand], q = arms.torso[hand];
         // from its own shoulder, meters: x the player's right, y up, z toward the camera; tx in the torso's frame
@@ -488,19 +491,19 @@
         if (s.v < S.stillSpeed * k) { if (h.stillAt == null) h.stillAt = t; } else h.stillAt = null;
         // (after a punch, a new home somewhere else needs the hand held still a moment)
         const settled = !h.away || t - h.stillAt >= c.rehomeMs;
-        if (s.v < S.stillSpeed * k && ((settled && (shape || taught)) || (h.home && d <= c.dead * k * 0.5))) {
+        if (s.v < S.stillSpeed * k && ((settled && (shape || taught)) || (h.home && d <= dead * k * 0.5))) {
           // follows the hand while it rests (a guard drifts lower through a tired round)
-          h.home = h.home && d <= c.dead * k ? { x: h.home.x + (s.x - h.home.x) * 0.2, y: h.home.y + (s.y - h.home.y) * 0.2, z: h.home.z + (s.z - h.home.z) * 0.2, angle: s.angle } : s;
+          h.home = h.home && d <= dead * k ? { x: h.home.x + (s.x - h.home.x) * 0.2, y: h.home.y + (s.y - h.home.y) * 0.2, z: h.home.z + (s.z - h.home.z) * 0.2, angle: s.angle } : s;
           h.away = false;
         }
         if (!h.home) continue;
         // re-armed: back near home, or most of the way back and slowing (a combination rests short of
         // home, and the depth the camera reads for a fist coming back lags); from there the spot it
         // came back to is home for the next punch
-        if (d <= c.dead * k) h.tmp = null;
-        if (h.away && (d <= c.rearm * k || (d <= c.rearmFrac * h.lastFar && s.v < 2 * S.stillSpeed * k))) { h.away = false; h.tmp = d > c.dead * k ? Object.assign({ d }, s) : null; }
+        if (d <= dead * k) h.tmp = null;
+        if (h.away && (d <= Math.min(c.rearm, dead) * k || (d <= c.rearmFrac * h.lastFar && s.v < 2 * S.stillSpeed * k))) { h.away = false; h.tmp = d > dead * k ? Object.assign({ d }, s) : null; }
         const dr = h.tmp ? Math.hypot(s.x - h.tmp.x, s.y - h.tmp.y, s.z - h.tmp.z) : d;
-        if (dr <= c.dead * k) {
+        if (dr <= dead * k) {
           if (!h.away) { h.nearAt = t; h.rest = s; }
           continue;
         }

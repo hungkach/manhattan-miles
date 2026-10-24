@@ -68,15 +68,54 @@
     return Object.assign(out, { ok: true, hint: 'In the zone' });
   };
 
+  // The stance box on the side phone (0.20.0, Mark 10/24: "side camera zone should be adjustable on
+  // the side camera itself; get in fighting stance and make sure there is 1.5 fist width front and
+  // back"). From the side picture: which way the player faces, the torso length T, and where each
+  // fist rests (followed while it is slow, so a punch does not drag the box). The box runs from the
+  // rear fist minus the room to the lead fist plus the room (fists of fistT torso lengths), from
+  // above the head to the hips. update(get, fists) takes landmarks as { x, y, v } in picture
+  // fractions (get(i)) and returns { ok, box { x0, x1, y0, y1 }, front, back } in picture fractions,
+  // or { ok: false } until the body and both fists are seen. The engine's punch zone uses the same
+  // room (`punch.fistM` meters a fist) while the side camera sends it.
+  class SideBox {
+    constructor(cfg) { this.c = (cfg || RE.defaultConfig()).side.box; this.rest = null; this.last = null; this.face = 0; }
+    update(get, fists) {
+      const c = this.c, seen = (i) => { const p = get(i); return p && p.v >= 0.5 ? p : null; };
+      const sl = seen(L.L_SHOULDER), sr = seen(L.R_SHOULDER), hl = seen(L.L_HIP), hr = seen(L.R_HIP), n = seen(L.NOSE), wl = seen(L.L_WRIST), wr = seen(L.R_WRIST);
+      if (!sl || !sr || !hl || !hr || !wl || !wr) return { ok: false };
+      const sm = RE.mid(sl, sr), hm = RE.mid(hl, hr), T = RE.dist(sm, hm);
+      if (!(T > 0.02)) return { ok: false };
+      const el = seen(L.L_EAR), er = seen(L.R_EAR), ear = el && er ? RE.mid(el, er) : el || er;
+      if (n && ear) this.face += (Math.sign(n.x - ear.x) - this.face) * 0.1;
+      const dir = this.face >= 0 ? 1 : -1;
+      // each fist's forward reach from the shoulder midpoint, in T; its resting spot follows it while slow
+      const r = { l: (dir * (wl.x - sm.x)) / T, r: (dir * (wr.x - sm.x)) / T };
+      if (!this.rest) this.rest = { l: r.l, r: r.r };
+      for (const k of ['l', 'r']) {
+        const v = this.last ? Math.abs(r[k] - this.last[k]) * 30 : 0; // T a second at about 30 frames a second
+        if (v < c.restSpeed) this.rest[k] += (r[k] - this.rest[k]) * c.restK;
+      }
+      this.last = r;
+      const room = RE.clamp(fists == null ? c.fists : fists, c.minFists, c.maxFists) * c.fistT;
+      const front = Math.max(this.rest.l, this.rest.r) + room, back = Math.min(this.rest.l, this.rest.r) - room;
+      const xa = sm.x + dir * back * T, xb = sm.x + dir * front * T;
+      const top = (n ? n.y : sm.y - 0.3 * T) - c.headT * T;
+      return { ok: true, dir, box: { x0: Math.min(xa, xb), x1: Math.max(xa, xb), y0: top, y1: hm.y }, front: sm.x + dir * front * T, back: sm.x + dir * back * T, out: { l: r.l > front, r: r.r > front } };
+    }
+  }
+  RE.SideBox = SideBox;
+
   class SideView {
     constructor(cfg) { this.c = cfg.side; this.sm = cfg.smoothing; this.offset = null; this.reset(); }
-    reset() { this.samples = []; this.face = 0; this.swap = false; this.ev = 0; this.lastRaw = null; this.legSwap = false; this.legEv = 0; this.lastKnees = null; this.stand = []; this.arrivals = []; this.spreads = []; this.f = {}; }
+    reset() { this.zoneFists = null; this.samples = []; this.face = 0; this.swap = false; this.ev = 0; this.lastRaw = null; this.legSwap = false; this.legEv = 0; this.lastKnees = null; this.stand = []; this.arrivals = []; this.spreads = []; this.f = {}; }
     // the phone's clock to the main clock: main = side + offset (ms)
     sync(offset) { this.offset = offset; }
     filt(key, v, tSec) { const f = (this.f[key] = this.f[key] || new RE.OneEuroFilter(this.sm)); return f.filter(v, tSec); }
     // frame: from RE.sidePack; t: when it arrived, on the main clock
     push(frame, t, cal) {
       if (!frame || !frame.p || frame.p.length < RE.SIDE_LM.length) return;
+      // the stance box the player set on the phone, in fists (0.20.0): it sizes the punch zone
+      if (frame.zf > 0) this.zoneFists = frame.zf;
       const P = {};
       RE.SIDE_LM.forEach((i, k) => { const q = frame.p[k]; P[i] = { x: q[0] * frame.w, y: q[1] * frame.h, v: q[2] }; });
       this.zone = RE.sideZone((i) => { const q = frame.p[RE.SIDE_LM.indexOf(i)]; return q && { x: q[0], y: q[1], v: q[2] }; }, this.c.zone);

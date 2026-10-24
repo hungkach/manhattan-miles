@@ -184,6 +184,7 @@
           // that comes out of it is a strike, narrow enough that it detects first from leaving"): the zone
           // is one fist around each fist's guard spot, and a punch lands as it leaves (exitMs), not at full reach
           dead: 0.1,         // m: the zone around home, about one fist (was 0.15)
+          fistM: 0.095,      // m: a fist's width; with a side camera the player sets the zone in fists on the phone (0.20.0)
           fireOnExit: true,  // land a punch as it leaves the zone (an uppercut still waits to rise)
           exitMs: 50,        // out of the zone this long first
           dropK: 1.0,        // and leaving it more down than out (not rising as an uppercut) is the guard dropping
@@ -335,7 +336,10 @@
       side: { maxAgeMs: 180, leadMs: 40, minVis: 0.5, swapMargin: 0.12, swapFrames: 12, flipMargin: 0, alignMs: 25, standPitch: 12, standMs: 20000, standFrames: 15, peer: null,
         // the zone the player should stand in, in picture fractions (RE.sideZone, 0.14.1): head to
         // knees at least minH of the height (about 2.5 m away on a phone's front camera)
-        zone: { x0: 0.12, x1: 0.88, y0: 0.04, y1: 0.96, minH: 0.25, cy0: 0.32, cy1: 0.68, minVis: 0.5 } },
+        zone: { x0: 0.12, x1: 0.88, y0: 0.04, y1: 0.96, minH: 0.25, cy0: 0.32, cy1: 0.68, minVis: 0.5 },
+        // the stance box the side phone draws (0.20.0, RE.SideBox): the room in front of the lead fist
+        // and behind the rear one, in fists (the player sets it on the phone; it sizes the punch zone)
+        box: { fists: 1.5, minFists: 0.5, maxFists: 4, fistT: 0.2, restSpeed: 0.6, restK: 0.15, headT: 0.45 } },
       recorder: { maxMs: 30000, decimals: 4 },
       overlay: { eventLogSize: 10 },
     };
