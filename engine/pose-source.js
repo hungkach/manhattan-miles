@@ -12,8 +12,11 @@
   // Opens the preset's camera. Front camera presets ask for facingMode 'user'.
   // Back camera presets (TV) ask for the back camera, then with wideLens try
   // the ultra-wide lens by its label, else zoom the main lens all the way out;
-  // with no back camera they fall back to the front one. Resolves with
-  // {stream, info: {facing, lens: 'front' | 'main' | 'ultrawide' | 'wide_zoom', fallback, label}}.
+  // with no back camera they fall back to the front one. A front preset with wideLens (0.17.0,
+  // Mark: the iPad's front camera is an ultra-wide) asks for the sensor's whole 4:3 picture (a 16:9
+  // request crops its top and bottom), then zooms all the way out where the browser allows.
+  // Resolves with {stream, info: {facing, lens: 'front' | 'front_wide' | 'front_wide_zoom' | 'main' |
+  // 'ultrawide' | 'wide_zoom', fallback, label, width, height, zoom}}.
   RE.openCamera = async function (preset, cfg, md) {
     const get = (v) => md.getUserMedia({
       audio: false,
@@ -21,10 +24,23 @@
     });
     const stopStream = (st) => { if (st) st.getTracks().forEach((tr) => tr.stop()); };
     const track = (st) => st.getVideoTracks()[0];
+    // what actually opened: its size and zoom
+    const opened = (st, info) => { const set = track(st).getSettings ? track(st).getSettings() : {}; return { stream: st, info: Object.assign(info, { width: set.width || null, height: set.height || null, zoom: set.zoom == null ? null : set.zoom }) }; };
     const front = async (fallback, reason) => {
       const stream = await get({ facingMode: 'user' });
-      return { stream, info: { facing: 'user', lens: 'front', fallback, label: track(stream).label || '', reason } };
+      return opened(stream, { facing: 'user', lens: 'front', fallback, label: track(stream).label || '', reason });
     };
+    if (preset.facingMode !== 'environment' && preset.wideLens) {
+      let st = null;
+      try {
+        st = await get({ facingMode: 'user', width: { ideal: cfg.camera.wideWidth }, height: { ideal: cfg.camera.wideHeight }, aspectRatio: { ideal: 4 / 3 } });
+        const zoomed = await widestZoom(track(st));
+        return opened(st, { facing: 'user', lens: zoomed ? 'front_wide_zoom' : 'front_wide', fallback: false, label: track(st).label || '' });
+      } catch (err) {
+        stopStream(st);
+        return front(true, err.message);
+      }
+    }
     if (preset.facingMode !== 'environment') return front(false);
     let s = null;
     try {
@@ -50,7 +66,7 @@
           if (lens !== 'ultrawide' && (await widestZoom(tr))) lens = 'wide_zoom';
         }
       }
-      return { stream: s, info: { facing: 'environment', lens, fallback: false, label: tr.label || '' } };
+      return opened(s, { facing: 'environment', lens, fallback: false, label: tr.label || '' });
     } catch (err) {
       stopStream(s);
       return front(true, err.message);

@@ -17,7 +17,7 @@
         minPosePresenceConfidence: 0.5,
         minTrackingConfidence: 0.5,
       },
-      camera: { idealWidth: 1280, idealHeight: 720 },
+      camera: { idealWidth: 1280, idealHeight: 720, wideWidth: 1920, wideHeight: 1440 }, // wide: the front camera's whole 4:3 picture (0.17.0)
       // One Euro in body units (S per second). beta 2 keeps lag near 50 ms on a
       // marching knee with rest jitter about the same as beta 0.02 (which lagged
       // 100 to 140 ms); fast wrists get a higher cutoff still, so strikes lag less.
@@ -339,6 +339,9 @@
     custom: { id: 'custom', label: 'Custom', facingMode: 'user', mirrorDisplay: true, distanceFt: null },
     // Back camera, screen mirrored to a TV. Prefers the ultra-wide lens (or the
     // widest zoom), falls back to the main back camera, then the front camera.
+    // Front camera, its widest view (0.17.0): the whole 4:3 picture, zoomed all the way out where the
+    // browser allows (an iPad's front camera is an ultra-wide). Its own calibration profile.
+    front_wide: { id: 'front_wide', label: 'Front camera, widest', facingMode: 'user', wideLens: true, mirrorDisplay: true, distanceFt: 4 },
     tv: { id: 'tv', label: 'TV, back camera', facingMode: 'environment', wideLens: true, mirrorDisplay: true, distanceFt: 6 },
   });
 

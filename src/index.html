@@ -168,6 +168,7 @@
       <p id="modeHint" class="hint"></p>
       <label class="check"><input type="checkbox" id="fullWarm"> Full warm-up (returning players get a quick check)</label>
       <label class="check"><input type="checkbox" id="gymFirst" checked> Gym round first (pads with your partner)</label>
+      <label class="check"><input type="checkbox" id="wideFront"> Widest front camera (an iPad's ultra-wide)</label>
       <label class="check"><input type="checkbox" id="realNames" checked> Real business names</label>
       <label class="check"><input type="checkbox" id="studioOn"> Studio voices (natural voices for everyone in the city: a one-time download of up to about 190 MB, on Wi-Fi)</label>
       <p id="studioLine" class="hint"></p>
@@ -5100,7 +5101,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 punches sweep the clock and get their names (engine 0.16.0)';
+  const BUILD = '2026-10-24 late \u00b7 widest front camera option (engine 0.17.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5789,11 +5790,18 @@
     const m = SETUPS[$('mode').value] || SETUPS.phone_upright;
     if (m.device === 'tv') return Object.assign({ key: 'tv' }, m);
     const key = `${m.device}_${screenOrient() === 'landscape' ? 'sideways' : 'upright'}`;
-    return Object.assign({ key, preset: 'living_room' }, SETUPS[key]);
+    return Object.assign({ key, preset: $('wideFront').checked ? 'front_wide' : 'living_room' }, SETUPS[key]);
   }
   // after the camera opens: say which camera the TV setup actually got
   function cameraNote(m) {
     const cam = engine.camera();
+    // the widest front view: say what it got (a wider picture lets you stand a little closer)
+    if (m.preset === 'front_wide' && cam) {
+      if (cam.fallback) return 'The widest front view is not available here, so this uses the normal front camera.';
+      const size = cam.width && cam.height ? `${cam.width} by ${cam.height}` : '';
+      const zoom = cam.lens === 'front_wide_zoom' && cam.zoom ? `, zoomed out to ${cam.zoom}` : '';
+      return size ? `Front camera at its widest: ${size}${zoom}.` : '';
+    }
     if (m.device !== 'tv' || !cam) return '';
     if (cam.fallback) {
       Object.assign(m, { dist: 'about 4 feet', place: 'Stand the phone facing you and watch the phone screen.' });
@@ -6052,6 +6060,10 @@
   if ($('studioOn').checked) Studio.start();
   setInterval(() => { const t = Studio.status(), el = $('studioLine'); if (el.textContent !== t) el.textContent = t; }, 1000);
   $('gymFirst').addEventListener('change', () => { try { localStorage.setItem('manhattan-miles-gym-first', $('gymFirst').checked ? '1' : '0'); } catch (_) {} });
+  // engine 0.17.0 front_wide (Mark: why not the iPad's front ultra-wide?): the front camera's whole
+  // 4:3 picture, zoomed all the way out where Safari allows; its own calibration profile
+  try { $('wideFront').checked = localStorage.getItem('manhattan-miles-wide-front') === '1'; } catch (_) {}
+  $('wideFront').addEventListener('change', () => { try { localStorage.setItem('manhattan-miles-wide-front', $('wideFront').checked ? '1' : '0'); } catch (_) {} });
   $('playCamera').addEventListener('click', () => { primeVoice(); setSticks(false); runCamera((preset) => engine.start(preset)); });
   $('setupCancel').addEventListener('click', () => {
     engine.cancel_calibration();
