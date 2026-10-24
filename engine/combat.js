@@ -412,7 +412,7 @@
   // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
   // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
   // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
-  // Payload { hand, shape, speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
+  // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
   // with the hands dropped, or from a fist that never reaches in front of its shoulder.
   class PunchDetector {
@@ -446,7 +446,10 @@
           m.path.push(s);
           if (s.v > m.peakV) m.peakV = s.v;
           if (d > m.far) { m.far = d; m.farAt = s; }
-          const done = t - m.from >= c.minMs && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          // (a fist that dipped and has not risen upRise yet is an uppercut about to rise: it lands on the way up)
+          if (s.y < m.low) m.low = s.y;
+          const atBottom = m.home.y - m.low > c.straightDip * k && s.y - m.low < c.upRise * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k;
+          const done = t - m.from >= c.minMs && !atBottom && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
           if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
           continue;
         }
@@ -476,7 +479,7 @@
         }
         // out past the dead zone: a punch if it just left home fast, else the hand drifted away
         // (from a spot short of home it has to head farther out, not on home to the guard)
-        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp };
+        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp, low: Math.min(s.y, (h.rest || s).y) };
         else { h.away = true; h.tmp = null; }
       }
     }
@@ -500,7 +503,13 @@
       // side (a hook, an overhand)
       const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
       const straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
-      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      // a round one's arc (0.15.0, Mark: "the fist leaves the guard and travels upward in the conflict
+      // zone"): 'up' (an uppercut) rises from its lowest point with the elbow kept in, else 'side'
+      // (a hook or an overhand, the elbow swinging out)
+      let rise = 0, low = p[0].y;
+      for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
+      const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,

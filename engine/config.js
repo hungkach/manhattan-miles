@@ -197,6 +197,7 @@
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
           straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          upRise: 0.06,      // m: a round punch that rises this far from its lowest point, elbow in, is an uppercut ('up')
           refractoryMs: 250, // per hand after a punch lands (a fist settling back into the guard is not another)
         },
         // kicks and knees (0.11.0, KickDetector in combat.js), from the thigh and the knee

@@ -114,7 +114,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.14.2 from hungkach/body-arcade@b7a2099, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.15.0 from hungkach/body-arcade@4c626d6, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -423,6 +423,7 @@
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
           straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          upRise: 0.06,      // m: a round punch that rises this far from its lowest point, elbow in, is an uppercut ('up')
           refractoryMs: 250, // per hand after a punch lands (a fist settling back into the guard is not another)
         },
         // kicks and knees (0.11.0, KickDetector in combat.js), from the thigh and the knee
@@ -1924,7 +1925,7 @@
   // the fist slows at the end of its reach, or turns back. It re-arms back near home, so it lands
   // once per trip. The one call it makes is the shape, for damage: 'straight' (the elbow opens and
   // the fist goes mostly at the camera) or 'round' (hooks, uppercuts, overhands: anything else).
-  // Payload { hand, shape, speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
+  // Payload { hand, shape, arc ('up' | 'side' for a round one, null for a straight), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
   // with the hands dropped, or from a fist that never reaches in front of its shoulder.
   class PunchDetector {
@@ -1958,7 +1959,10 @@
           m.path.push(s);
           if (s.v > m.peakV) m.peakV = s.v;
           if (d > m.far) { m.far = d; m.farAt = s; }
-          const done = t - m.from >= c.minMs && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
+          // (a fist that dipped and has not risen upRise yet is an uppercut about to rise: it lands on the way up)
+          if (s.y < m.low) m.low = s.y;
+          const atBottom = m.home.y - m.low > c.straightDip * k && s.y - m.low < c.upRise * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k;
+          const done = t - m.from >= c.minMs && !atBottom && (s.v <= c.stopFrac * m.peakV || d < c.backFrac * m.far);
           if (done || t - m.from > c.maxMs) this.land(hand, h, out, k);
           continue;
         }
@@ -1988,7 +1992,7 @@
         }
         // out past the dead zone: a punch if it just left home fast, else the hand drifted away
         // (from a spot short of home it has to head farther out, not on home to the guard)
-        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp };
+        if (!h.away && t - h.nearAt <= c.leaveMs && s.v >= c.startSpeed * k && (!h.tmp || d > h.tmp.d) && t - (h.landAt || -Infinity) >= c.refractoryMs) h.move = { from: h.nearAt, path: [h.rest || s, s], peakV: s.v, far: d, farAt: s, home: h.home, short: !!h.tmp, low: Math.min(s.y, (h.rest || s).y) };
         else { h.away = true; h.tmp = null; }
       }
     }
@@ -2012,7 +2016,13 @@
       // side (a hook, an overhand)
       const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
       const straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
-      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      // a round one's arc (0.15.0, Mark: "the fist leaves the guard and travels upward in the conflict
+      // zone"): 'up' (an uppercut) rises from its lowest point with the elbow kept in, else 'side'
+      // (a hook or an overhand, the elbow swinging out)
+      let rise = 0, low = p[0].y;
+      for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
+      const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
     }
   }
   // strike thresholds in meters and m/s, scaled by armScale (shorter arms,
@@ -3435,7 +3445,7 @@
     }
     setTurn(v) { this.turn = RE.clamp(v, -1, 1); }
     press(action, now) {
-      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); this.emit('punch', { hand, shape: type === 'jab' || type === 'cross' ? 'straight' : 'round', power: 1, speed: 5, reach: 0.7, ms: 150 }); };
+      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); this.emit('punch', { hand, shape: type === 'jab' || type === 'cross' ? 'straight' : 'round', arc: type === 'uppercut' ? 'up' : type === 'jab' || type === 'cross' ? null : 'side', power: 1, speed: 5, reach: 0.7, ms: 150 }); };
       switch (action) {
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
@@ -6870,7 +6880,7 @@ void main() {
     hp: [12, 16], playerHp: 10,
     windupMs: 650, graceMs: 200, shootMs: 1300, stuffedMs: 1500, swingMs: 220,
     // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
-    damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.3, down: 1.0, down_strike: 0.8 }, // ground strikes all land (10/24), so a bit less each
+    damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.5, down: 1.0, down_strike: 0.8 }, // ground strikes all land (10/24), so a bit less each
     // kicks and knees (engine 0.11.0, Mark 10/22): damage by kind; a teep pushes them out for
     // teepOutMs; each low kick slows their wind-ups by slowPer (up to slowMax) and legsAt of them
     // take their legs (they cannot run); a knee into their shot lands td.levelBonus times
@@ -6911,6 +6921,12 @@ void main() {
       // where it was at impact; out of the zone within `graceMs` of that still counts.
       clock: { x: 0.45, y: 0.3, center: 0.3, lagMs: 120, graceMs: 150, edgeK: 0.7, lowMs: 1000,
         zones: { straight: [10.75, 1.25], hookR: [11.5, 4.5], hookL: [7.5, 0.5], uppercut: [4, 8] } } },
+    // their head clock (10/24, Mark: "giving opponents the same head clock"): the same zones as you
+    // see them, a right hand's hook from your right. A punch that misses their head misses; one
+    // their head moves into (within intoMs of a move toward it) lands intoK times, past the guard.
+    // Moves take about easeMs, holds and gaps in ms; each type's `head` says how often and what.
+    foeHead: { easeMs: 70, holdMs: [350, 700], gapMs: [600, 1600], intoMs: 450, intoK: 2, x: 0.2, drop: 0.34,
+      other: { rate: 0.12, amp: 0.7, moves: { slipL: 1, slipR: 1 } } },
     hit: { capSpeed: 10, speed: 2.5, speedMs: 450, pairMs: 450, body: 0.8, gnpSpeed: 1.4, gnpRearm: 0.9, gnpExtend: 0.6, gnpPairMs: 200 },
     // takedowns (engine 0.5.0: hold the squat to defend, drive up out of it to shoot, jump for
     // power). They read a crouch held braceAfterMs and brace for the shot for braceMs: a shot
@@ -6973,7 +6989,7 @@ void main() {
   // floating up, a combo count, their head or body snapping back, the screen shaking with the
   // weight of it, and a layered smack (a crowd "ooh" on a big one)
   // 10/23 PM (Mark): punches are only straight or round now (engine 'punch')
-  const KIND_NAME = { jab: 'Straight', cross: 'Straight', hook: 'Round', overhand: 'Round', uppercut: 'Round', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
+  const KIND_NAME = { jab: 'Straight', cross: 'Straight', hook: 'Hook', overhand: 'Hook', uppercut: 'Uppercut', down: 'Down strike', down_strike: 'Ground strike', teep: 'Teep', low_kick: 'Low kick', knee: 'Knee' };
   const comboBonus = (n) => Math.min(FT.combo.cap, FT.combo.step * Math.max(0, n - 1));
   function impact(foe, hand, where, power, now, kind, dmg) {
     const h = hand && Fight.hand[hand];
@@ -7535,10 +7551,25 @@ void main() {
     // hooks, uppercuts and body shots go around a high guard; the rest wear it down until it breaks
     const shifted = Fight.shift && now < Fight.shift.until;
     if (shifted) dmg *= FT.shift.bonus; // you have the angle: free shots
+    // their head clock (10/24, Mark): a punch has to meet their head. Straights reach 12, a hook the
+    // side of the hand that throws it, uppercuts 6; anywhere else it misses (from a shift's angle
+    // everything lands). A head that moves into the punch takes it double, past the guard.
+    let into = false;
+    if (kind !== 'down_strike' && !shifted) {
+      const key = punchZone(kind, hand), hr = foeHour(foe);
+      if (!inZone(key, hr)) {
+        const hd = foe.hit && foe.hit.head;
+        const what = hr >= 4 && hr <= 8 ? 'Under it' : 'Slipped it';
+        if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: what, big: false });
+        fightMsg(hr >= 4 && hr <= 8 ? 'They ducked: uppercut' : 'They slipped: hook that side', 800);
+        return;
+      }
+      into = movedInto(foe, key, now);
+    }
     // their guard bar: it takes the punch unless you came in clean (out of a slip or a level
     // change, from an angle, or into their wind-up, shot, brace or stuffed shot)
     const outOf = now - Math.max(Fight.lastSlipAt, Fight.lastLowAt) < FT.guard.cleanMs;
-    const clean = shifted || outOf || now < Fight.counterUntil || ['broken', 'windup', 'shoot', 'brace', 'stuffed', 'down'].includes(foe.state);
+    const clean = into || shifted || outOf || now < Fight.counterUntil || ['broken', 'windup', 'shoot', 'brace', 'stuffed', 'down'].includes(foe.state);
     if (!clean && (foe.guardHp ?? 0) > 0 && kind !== 'down_strike') {
       foe.guardHp -= dmg;
       foe.blockUntil = now + 380;
@@ -7562,9 +7593,9 @@ void main() {
     // a hook from the side you sidestepped to
     if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side hook!', 1000); Fight.sidestep = null; }
     // an uppercut catches them changing levels: shooting at you, or braced for your shot
-    // (10/23 PM: any round punch, the uppercut is one)
-    const caughtLow = (kind === 'uppercut' || kind === 'hook' || kind === 'overhand') && (foe.state === 'shoot' || foe.state === 'brace');
+    const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
+    else if (into) { dmg *= FT.foeHead.intoK; Fight.stats.reads++; fightMsg(kind === 'uppercut' ? 'Ducked into it!' : punchZone(kind, hand) === 'straight' ? 'Caught coming back!' : 'Slipped into it!', 1000); }
     // their head coming at the punch: into their wind-up or their shot
     else if (foe.state === 'windup' || foe.state === 'shoot') { dmg *= FT.intoBonus; fightMsg('Into it!', 800); }
     else if (now < Fight.counterUntil) { dmg *= FT.counterBonus; fightMsg('Counter!'); Fight.counterUntil = 0; }
@@ -7667,7 +7698,7 @@ void main() {
     if (!isDemo() && !a.tutor && now - a.start < FT.gate.startQuietMs) return;
     if (!claim(e.hand, now)) return;
     const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
-    const kind = e.shape === 'straight' ? (e.hand === lead ? 'jab' : 'cross') : (e.hand === lead ? 'hook' : 'overhand');
+    const kind = e.shape === 'straight' ? (e.hand === lead ? 'jab' : 'cross') : e.arc === 'up' ? 'uppercut' : (e.hand === lead ? 'hook' : 'overhand');
     const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
     recNote('punch', v);
     landed(kind, v > 0 ? punchPower(v) : 0.6 + 0.8 * Math.max(0, Math.min(1, ((e.power || 1) - 0.5) / 1.0)), now, e.hand, null);
@@ -7699,15 +7730,18 @@ void main() {
   engine.on('jump', (e) => { Fight.lastJump = { height: e.height || 0, t: performance.now() }; });
   // where your head is on the clock: { hour 0 to 12, vx, vy } with vx, vy on the unit circle's
   // square (vx -1 your left to 1 your right, vy -1 upright to 1 ducked)
+  // the hour of a head at (vx, vy): vx -1 left to 1 right, vy -1 upright to 1 ducked
+  function clockHour(vx, vy) {
+    if (Math.hypot(vx, vy) < FT.head.clock.center) return vy >= 0 ? 6 : 0;
+    return ((Math.atan2(vx, -vy) / (Math.PI * 2)) * 12 + 12) % 12;
+  }
   function headClock(s) {
     const C = FT.head.clock;
     let nx = Math.max(-1, Math.min(1, (s.head_x || 0) / C.x));
     if (Math.abs(s.slip || 0) >= 0.5 && Math.abs(nx) < Math.abs(s.slip)) nx = Math.max(-1, Math.min(1, s.slip));
     const ny = Math.max(0, Math.min(1, Math.max((s.head_drop || 0) / C.y, (s.squat_depth || 0) / LEVEL_SHOT)));
-    const vx = nx, vy = 2 * ny - 1, r = Math.hypot(vx, vy);
-    let hour = ((Math.atan2(vx, -vy) / (Math.PI * 2)) * 12 + 12) % 12;
-    if (r < C.center) hour = ny >= 0.5 ? 6 : 0;
-    return { hour, vx, vy, ny };
+    const vx = nx, vy = 2 * ny - 1;
+    return { hour: clockHour(vx, vy), vx, vy, ny };
   }
   const inHours = (h, [a, b]) => (a <= b ? h >= a && h <= b : h >= a || h <= b);
   // the zone a punch threatens: their left hook comes at your right (3 o'clock)
@@ -7732,6 +7766,53 @@ void main() {
     const l = Fight.lowClock;
     if (!l || now - l.t > FT.head.clock.lowMs) return 1;
     return 1 - (1 - FT.head.clock.edgeK) * Math.min(1, Math.abs(l.hour - 6) / 2);
+  }
+  // ---------- their head clock (10/24, Mark: boxers move their heads the most, wrestlers level
+  // change, the rest are not fighters and barely move theirs) ----------
+  // f.hv is their head as you see it (vx + your right, vy -1 upright to 1 ducked), eased toward the
+  // leg of the move they are on; f.hMove is the way the last move went, for punches it moves into
+  const FH = { slipL: [[-1, 0]], slipR: [[1, 0]], duck: [[0, 1]] };
+  const pickW = (w) => { let r = Math.random() * Object.values(w).reduce((n, x) => n + x, 0); for (const [k, x] of Object.entries(w)) if ((r -= x) <= 0) return k; return Object.keys(w)[0]; };
+  const headOf = (f) => (f.boss ? ARCH.boxer.head : archOf(f).head || FT.foeHead.other);
+  function headLeg(f, now) {
+    const leg = f.hSeq[0];
+    const dx = leg.x - f.hv.x, dy = leg.y - f.hv.y, l = Math.hypot(dx, dy) || 1;
+    f.hMove = { dx: dx / l, dy: dy / l, t: now };
+  }
+  function foeHeadTick(f, now, dt) {
+    const H = FT.foeHead;
+    f.hv = f.hv || { x: 0, y: -1 };
+    if (f.state !== 'guard') f.hSeq = null;
+    else if (f.hSeq && f.hSeq.length && now >= f.hSeq[0].until) {
+      f.hSeq.shift();
+      if (f.hSeq.length) headLeg(f, now);
+      else { const dx = -f.hv.x, dy = -1 - f.hv.y, l = Math.hypot(dx, dy) || 1; f.hMove = { dx: dx / l, dy: dy / l, t: now }; } // back up to 12
+    } else if (!(f.hSeq && f.hSeq.length) && now >= (f.hNext || 0)) {
+      const hd = headOf(f);
+      f.hNext = now + rand(H.gapMs[0], H.gapMs[1]);
+      if (Math.random() < hd.rate) {
+        const mv = pickW(hd.moves), amp = hd.amp, hold = () => now + rand(H.holdMs[0], H.holdMs[1]);
+        const at = ([x, y]) => ({ x: x * amp, y: -1 + (y + 1) * amp });
+        if (mv === 'weave') {
+          const s = Math.random() < 0.5 ? -1 : 1;
+          f.hSeq = [Object.assign(at([s, 0]), { until: now + 220 }), Object.assign(at([0, 1]), { until: now + 440 }), Object.assign(at([-s, 0]), { until: now + 800 })];
+        } else f.hSeq = [Object.assign(at(FH[mv][0]), { until: hold() })];
+        headLeg(f, now);
+      }
+    }
+    const tx = f.hSeq && f.hSeq.length ? f.hSeq[0].x : 0, ty = f.hSeq && f.hSeq.length ? f.hSeq[0].y : -1;
+    const k = 1 - Math.exp((-dt * 1000) / H.easeMs);
+    f.hv.x += (tx - f.hv.x) * k; f.hv.y += (ty - f.hv.y) * k;
+  }
+  // where their head is for a punch: a shot or a brace is low (6 o'clock)
+  const foeHour = (f) => (f.state === 'shoot' || f.state === 'brace' ? 6 : f.hv ? clockHour(f.hv.x, f.hv.y) : 0);
+  // the zone your punch reaches on their clock: a hook from the side of the hand that throws it
+  const punchZone = (kind, hand) => (kind === 'jab' || kind === 'cross' ? 'straight' : kind === 'uppercut' ? 'uppercut' : hand === 'left' ? 'hookL' : 'hookR');
+  const ZONE_DIR = { straight: [0, -1], hookR: [1, 0], hookL: [-1, 0], uppercut: [0, 1] }; // a hook comes across: slipping toward its side moves into it
+  // their head moved into the punch: its last move went toward the zone, within intoMs
+  function movedInto(f, key, now) {
+    const m = f.hMove, d = ZONE_DIR[key];
+    return !!m && f.state === 'guard' && now - m.t < FT.foeHead.intoMs && m.dx * d[0] + m.dy * d[1] > 0.3;
   }
   function takedownQuality(power) {
     const now = performance.now(), dr = Fight.lastDrive && now - Fight.lastDrive.t < 1500 ? Fight.lastDrive : null, jp = Fight.lastJump && now - Fight.lastJump.t < 800 ? Fight.lastJump : null;
@@ -7990,6 +8071,7 @@ void main() {
       const tx = P.x + ux * FT.tag.sideM, tz = P.z + uz * FT.tag.sideM;
       if (!blocked(tx, tz)) { const k = Math.min(1, dt * 2); f.x += (tx - f.x) * k; f.z += (tz - f.z) * k; }
     });
+    foeHeadTick(foe, now, dt);
     const want = a.range === 'out' ? FT.rangeOut : foe.state === 'shoot' ? 0.75 : foe.state === 'down' || foe.state === 'ko' ? 1.3 : foe.state === 'stuffed' ? 1.1 : a.range === 'mid' ? FT.rangeMid : FT.rangeClose;
     const d = foeDist(foe) || 1;
     const k = Math.min(1, dt * 4) * (d - want) / d;
@@ -8444,8 +8526,8 @@ void main() {
   //   tweakers and roidheads are only health and pace; thugs are weak all around
   const ARCH = {
     thug: { name: 'Thug', tip: 'Weak all around', gnp: 1.2, w: 10, hp: 0.75, guard: 0.5, turtle: 0.05, windup: 1.3, think: 1.25, hit: 1, counter: 1.4, td: 0.2, stuff: 0, shoot: 1.5, sprawl: 0.8, moves: { straight: 3, hook: 4, uppercut: 0.5, shoot: 0.3, out: 1, cover: 0.5, wait: 1.5 } },
-    boxer: { name: 'Boxer', tip: 'Tight counters, easy to take down and keep down', gnp: 1.4, w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, counter: 0.55, td: 0.25, stuff: 0, shoot: 1, sprawl: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
-    wrestler: { name: 'Wrestler', tip: 'Long counters, tough sprawl and takedown, up fast', gnp: 0.6, w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, counter: 1.6, td: -0.2, stuff: 0.45, shoot: 0.8, sprawl: 1.35, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
+    boxer: { head: { rate: 0.8, amp: 1, moves: { slipL: 1, slipR: 1, duck: 0.6, weave: 0.8 } }, name: 'Boxer', tip: 'Tight counters, moves his head, easy to take down and keep down', gnp: 1.4, w: 2, hp: 1, guard: 1.2, turtle: 0.1, windup: 0.85, think: 0.9, hit: 1, counter: 0.55, td: 0.25, stuff: 0, shoot: 1, sprawl: 1, reads: ['slips', 'level'], dodge: 0.2, moves: { straight: 4, hook: 3, uppercut: 2, shoot: 0, out: 1.5, cover: 1, wait: 0.5 } },
+    wrestler: { head: { rate: 0.4, amp: 1, moves: { duck: 3, slipL: 0.4, slipR: 0.4 } }, name: 'Wrestler', tip: 'Long counters, level changes, tough sprawl and takedown, up fast', gnp: 0.6, w: 2, hp: 1.1, guard: 1, turtle: 0.1, windup: 1, think: 1, hit: 1, counter: 1.6, td: -0.2, stuff: 0.45, shoot: 0.8, sprawl: 1.35, reads: ['level'], moves: { straight: 2, hook: 1.5, uppercut: 0.5, shoot: 4, out: 0.5, cover: 0.5, wait: 1 } },
     tweaker: { name: 'Tweaker', tip: 'Fast, fragile', w: 1.5, hp: 0.55, guard: 0.6, turtle: 0, windup: 0.75, think: 0.55, hit: 1, scale: 0.95, moves: { straight: 3, hook: 4, uppercut: 1, shoot: 0.5, out: 0.5, cover: 0, wait: 0.3 } },
     roidhead: { name: 'Roidhead', tip: 'Slow, a lot of health', w: 1.2, hp: 1.8, guard: 1.3, turtle: 0.1, windup: 1.4, think: 1.3, hit: 1, scale: 1.12, moves: { straight: 1.5, hook: 4, uppercut: 2, shoot: 0.5, out: 0.3, cover: 0.5, wait: 1.5 } },
     turtle: { name: 'Turtle', tip: 'Covers up', w: 1, hp: 1, guard: 1.4, turtle: 0.55, windup: 1, think: 1, hit: 1, moves: { straight: 3, hook: 2, uppercut: 1, shoot: 0.5, out: 1, cover: 1, wait: 1 } },
@@ -9054,6 +9136,12 @@ void main() {
   function drawFoe(f, now) {
     let j = poseFoe(f, now);
     if (f.scale) { const k = f.scale, o = {}; for (const n in j) o[n] = [j[n][0] * k, j[n][1] * k, j[n][2] * k]; j = o; } // a boss stands bigger
+    // their head clock: a slip moves the head and shoulders across, a duck drops the upper body
+    if (f.hv && f.state === 'guard') {
+      const lx = -f.hv.x * FT.foeHead.x, dr = ((f.hv.y + 1) / 2) * FT.foeHead.drop, W8 = { head: 1, neck: 0.9, chest: 0.6, shL: 0.7, shR: 0.7, elL: 0.6, elR: 0.6, fiL: 0.8, fiR: 0.8, pelvis: 0.2 };
+      j = Object.assign({}, j);
+      for (const n in W8) if (j[n]) j[n] = [j[n][0] + lx * W8[n], j[n][1] - dr * W8[n], j[n][2] + dr * 0.4 * W8[n]];
+    }
     // a landed punch snaps the head (or folds the body) back for a moment
     if (f.recoil && now - f.recoil.t < 300) {
       const k = Math.sin((Math.PI * (now - f.recoil.t)) / 300) * 0.09 * f.recoil.k;
@@ -9448,6 +9536,32 @@ void main() {
     const hr = Math.round(c.hour) % 12 || 12;
     const label = s.weaving ? 'Weave' : isLowHour(c) ? hr + ' · Level' : hr + " o'clock";
     ctx.strokeText(label, x0 - 4, cy + R + 7); ctx.fillText(label, x0 - 4, cy + R + 7);
+    ctx.restore();
+  }
+  // Their head clock over their head (10/24): your three reaches faintly (straight at the top, hooks
+  // down each side, uppercut at the bottom), their head as a dot, and what reaches it when it is off 12
+  function foeDial(f, now) {
+    const hd = f.hit && f.hit.head;
+    if (!hd) return;
+    const U = Ui.u, R = 18 * U, cx = hd.x, cy = hd.y - hd.r - R - 14 * U;
+    if (cy < 110 * Ui.u) return; // under the health bars
+    const ang = (h) => (h / 12) * Math.PI * 2 - Math.PI / 2;
+    const Z = FT.head.clock.zones, hr = foeHour(f);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(cx, cy, R + 5 * U, 0, Math.PI * 2); ctx.fill();
+    const arc = (a, b, col) => { ctx.strokeStyle = col; ctx.lineWidth = 5 * U; ctx.beginPath(); ctx.arc(cx, cy, R, ang(a), ang(b < a ? b + 12 : b)); ctx.stroke(); };
+    arc(Z.uppercut[0], Z.uppercut[1], inZone('uppercut', hr) ? '#ffcf3f' : 'rgba(255,207,63,.3)');
+    arc(1.25, 4, inZone('hookR', hr) && !inZone('straight', hr) ? '#7fc4ff' : 'rgba(127,196,255,.3)');
+    arc(8, 10.75, inZone('hookL', hr) && !inZone('straight', hr) ? '#7fc4ff' : 'rgba(127,196,255,.3)');
+    arc(Z.straight[0], Z.straight[1], inZone('straight', hr) ? '#fff' : 'rgba(255,255,255,.3)');
+    const v = f.state === 'shoot' || f.state === 'brace' ? { x: 0, y: 1 } : f.hv || { x: 0, y: -1 }, rr = Math.max(1, Math.hypot(v.x, v.y));
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx + (v.x / rr) * R, cy + (v.y / rr) * R, 5 * U, 0, Math.PI * 2); ctx.fill();
+    const what = inZone('straight', hr) ? '' : inZone('uppercut', hr) ? (inZone('hookL', hr) || inZone('hookR', hr) ? 'Uppercut or hook' : 'Uppercut') : inZone('hookL', hr) ? 'Left hook' : 'Right hook';
+    if (what) {
+      ctx.font = `700 ${Math.round(14 * U)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 3 * U; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.fillStyle = '#fff';
+      ctx.strokeText(what, cx, cy - R - 7 * U); ctx.fillText(what, cx, cy - R - 7 * U);
+    }
     ctx.restore();
   }
   // Your guard, felt rather than read (Mark 10/16: hands covering the face): with both hands up
@@ -10335,7 +10449,7 @@ void main() {
     ctx.restore();
     if (glr) glr.draw();
     if (G.state === 'walk') {
-      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); drawKick(now); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
+      if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); if (!Fight.active.tutor && engine.combat().phase === 'standing') foeDial(Fight.active.foe, now); drawKick(now); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
       // the HUD in logical pixels times the UI scale
       const RW = W, RH = H, U = Ui.u;
       ctx.setTransform(dpr * U, 0, 0, dpr * U, 0, 0);
@@ -10519,7 +10633,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 \u00b7 gym learns your guard, drills straight and round (engine 0.14.2)';
+  const BUILD = '2026-10-24 PM \u00b7 their head clock, uppercuts read (engine 0.15.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;

@@ -80,7 +80,7 @@
     }
     setTurn(v) { this.turn = RE.clamp(v, -1, 1); }
     press(action, now) {
-      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); this.emit('punch', { hand, shape: type === 'jab' || type === 'cross' ? 'straight' : 'round', power: 1, speed: 5, reach: 0.7, ms: 150 }); };
+      const strike = (hand, type) => { this.lastStrike[hand] = now; this.emit('strike', { hand, type, power: 1, speed: 5 }); this.emit('punch', { hand, shape: type === 'jab' || type === 'cross' ? 'straight' : 'round', arc: type === 'uppercut' ? 'up' : type === 'jab' || type === 'cross' ? null : 'side', power: 1, speed: 5, reach: 0.7, ms: 150 }); };
       switch (action) {
         case 'point_left': this.emit('point', { side: 'left' }); break;
         case 'point_right': this.emit('point', { side: 'right' }); break;
