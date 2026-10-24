@@ -5765,7 +5765,7 @@ void main() {
       <li>Both hands overhead to turn around</li>
       <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape. Your view follows your slips and level changes.</li>
     </ul>
-    <p>Explore the city: there is always a next stop, the game talks you through each turn, calls high knees intervals and nudges you when you stand around. Twenty active minutes is a full session. Wave your left hand to open the phone menu.</p>
+    <p>Explore the city: there is always a next stop, the game talks you through each turn, and calls high knees intervals. Twenty active minutes is a full session. Wave your left hand to open the phone menu.</p>
     <div class="btns">
       <button id="playDemo" class="main">Walk with touch controls</button>
       <button id="playSticks" class="secondary">Dual sticks (testing)</button>
@@ -5978,13 +5978,11 @@ void main() {
   // at 20 the game says that is a full session (the fitness target) without ending anything.
   const SESSION = {
     stopM: 900,          // about how far each next stop is (game meters)
-    idleNudgeS: 20,      // standing still this long (not fighting, not in the phone) gets a nudge
     milestones: [10, 15, 20, 30], // active minutes that get a line; 20 is a full session
     cueAhead: 55,        // m before a corner that its direction is spoken
     intervalEveryS: 120, // walking between intervals (a fight resets it: the fight was the work)
     intervalS: 30,
   };
-  const IDLE_LINES = ['March in place to keep walking.', 'The city is not going to walk itself.', 'Still there? March to keep going.'];
   const placeXZ = (p) => ({ x: p.x, z: p.z });
   // a walk on the grid is about 1.25 times the straight line
   const legMeters = (a, b) => Math.hypot(a.x - b.x, a.z - b.z) * 1.25;
@@ -6089,7 +6087,7 @@ void main() {
     G.dest = G.route[G.leg];
     G.cueKey = '';
   }
-  // active time, milestones, the idle nudge and run intervals (fights count as active and pause
+  // active time, milestones and run intervals (fights count as active and pause
   // intervals)
   function sessionTick(dt, now) {
     G.playMs += dt * 1000;
@@ -6105,11 +6103,7 @@ void main() {
       say(next === 20 ? '20 active minutes. That is a full session. Keep exploring, or end it from the phone.' : `${next} active minutes.`, 'confirm');
       banner(`${next} active minutes`, 2500, now);
     }
-    // standing around: a nudge at idleNudgeS, then every 30 s
-    if (!moving && G.idleS >= SESSION.idleNudgeS + 30 * G.idleSaid && !Phone.open) {
-      G.idleSaid++;
-      say(G.idleSaid >= 3 ? 'Taking a breather? March to keep going, or end the session from the phone.' : pick(IDLE_LINES), 'confirm');
-    }
+    // (no nudges for standing around, Mark 10/24: resting is the player's call)
     if (Fight.active || Stage.on) return;
     const iv = G.interval;
     if (!iv) {
@@ -10714,7 +10708,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-24 late \u00b7 widest front camera option (engine 0.17.0)';
+  const BUILD = '2026-10-24 night \u00b7 no idle nudges, side cam quiet outside fights';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -11889,13 +11883,15 @@ void main() {
   }
   // the chip while it sends, and the title's line
   setInterval(() => {
-    const ss = engine.side_status(), on = !!ss.connected, z = ss.zone;
+    const ss = engine.side_status(), on = !!ss.connected, z = Fight.active ? ss.zone : null;
     $('sideChip').hidden = !on || Side.phone || G.state === 'title';
-    // the side camera's zone (engine 0.14.1): the chip says what to change until the player is in it
+    // the side camera's zone (engine 0.14.1): in a fight or the gym the chip says what to change until
+    // the player is in it; walking around it stays quiet (Mark 10/24: the hints nagged outside a fight)
     const chip = !z || z.ok ? 'Side cam' : 'Side cam: ' + z.hint.toLowerCase();
     if ($('sideChip').textContent !== chip) $('sideChip').textContent = chip;
     $('sideChip').classList.toggle('off', !!z && !z.ok);
-    const line = Side.phone || !Side.host ? '' : on ? `Side camera connected, ${ss.fps} frames a second${z ? (z.ok ? ', you are in its zone' : '. ' + z.hint) : ''}` : 'Side camera: waiting for the phone';
+    const zt = G.state === 'title' ? ss.zone : z;   // the title's line helps place the phone
+    const line = Side.phone || !Side.host ? '' : on ? `Side camera connected, ${ss.fps} frames a second${zt ? (zt.ok ? ', you are in its zone' : '. ' + zt.hint) : ''}` : 'Side camera: waiting for the phone';
     if ($('sideLine').textContent !== line) $('sideLine').textContent = line;
   }, 500);
 
