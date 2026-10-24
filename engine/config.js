@@ -184,9 +184,18 @@
           // that comes out of it is a strike, narrow enough that it detects first from leaving"): the zone
           // is one fist around each fist's guard spot, and a punch lands as it leaves (exitMs), not at full reach
           dead: 0.1,         // m: the zone around home, about one fist (was 0.15)
+          // 0.21.0 (Mark 10/25: "the player is a pillar; any hand that leaves the body outside a deadzone is a
+          // strike"): the zone is a column around the body, `dead` past the farther guard fist in front and past
+          // the shoulders (or the wider guard fist) at the sides; moving down or back inside it is not a punch
+          pillar: true,
+          pillarSide: 0.5,   // S: the pillar's sides before the room, the shoulders
+          stallSpeed: 0.5,   // m/s: a trip that slows under this inside the pillar is over, no punch
+          rearmSpeed: 0.8,   // m/s: back inside the pillar and slower than this, the hand is armed again
+          farK: 2.5,         // or a fist this many zones from its guard spot and higher than it (a low guard's punch rises inside)
+          farMin: 0.25,      // m: and at least this far
           fistM: 0.095,      // m: a fist's width; with a side camera the player sets the zone in fists on the phone (0.20.0)
           fireOnExit: true,  // land a punch as it leaves the zone (an uppercut still waits to rise)
-          exitMs: 50,        // out of the zone this long first
+          exitMs: 30,        // out of the zone this long first (0.21.0: was 50; a frame, once it is out of the pillar)
           dropK: 1.0,        // and leaving it more down than out (not rising as an uppercut) is the guard dropping
           exitElbow: 0.06,   // m: the elbow travels this far as the fist leaves (straights 0.12 and up, hooks 0.11 and up),
           exitExtend: 0.3,   // m: or the arm reaches this much farther; else a forearm swung out on a still elbow
@@ -206,7 +215,7 @@
           extend: 0.14,      // m: the fist gets this much farther from its shoulder
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
-          straightFlare: 0.07, // m: and its elbow swings out sideways no more than this (a hook's 0.08 and more)
+          straightFlare: 0.078, // m: and its elbow swings out sideways no more than this (a hook's 0.083 and more; 0.21.0: was 0.07, a rear straight read from rest swings 0.072)
           pathPoints: 8,     // points in a punch's path (0.16.0)
           wideOut: 0.35,     // S: a fist this far out to the side of where it left, elbow swung out, is a hook winding up
           sweepIn: 0.12,     // S: it lands once it has swept back in this far from its widest

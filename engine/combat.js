@@ -421,6 +421,18 @@
   // [x, y] in S from the shoulder midpoint, from leaving to landing, 0.16.0), speed (m/s peak), power (speed / strike.refSpeed, 0.5 to 1.5), reach
   // (farthest from home, arm lengths), ms }. No punch while the hips move sideways fast (a bound),
   // with the hands dropped, or (without fireOnExit) from a fist that never reaches in front of its shoulder.
+  // 0.21.0 the pillar (`pillar`; Mark 10/25: "lower rounds do not pick up at all"; "the player is a pillar,
+  // any hands that leave their body outside of a deadzone are strikes; both cameras work out if it is a
+  // straight or a round"): the zone is a column around the body, from the farther guard fist plus the room
+  // in front (`dead`, or the side phone's fists) and out past the shoulders (`pillarSide`) or the wider
+  // guard fist plus the room at the sides (out.punchPillar { front, side }, meters from the shoulder
+  // midpoint). A fast trip from inside it is a punch once the fist leaves it, from wherever it started: a
+  // body round drops inside first, then leaves. Moving down, back or across inside it is the body. Not a
+  // punch: leaving or landing down past the hips (`lowest`, the guard dropping), a dip that never rises
+  // and one that barely got out and came back in with the elbow in (a hand going back to its guard). A low,
+  // tired guard's punches rise to the head inside its column, so a fist `farK` zones (at least `farMin`)
+  // from its guard spot and higher than it has left too. 'punch' adds exit ('front', 'side', 'up' for that
+  // rise), height and low (where it landed and the lowest it went, S from the shoulder midpoint).
   class PunchDetector {
     constructor(cfg) {
       this.c = cfg.combat.punch;
@@ -439,16 +451,23 @@
         this.hipPrev = { t, x: hm.x };
       }
       const bodyMoving = t < (this.hipQuiet || 0);
-      // the zone's size: one fist, or with a side camera the room the player set on the phone (0.20.0)
+      // the room: one fist, or with a side camera the room the player set on the phone (0.20.0)
       const sv = ctx.sideView, dead = ctx.sideOn && sv && sv.zoneFists > 0 ? sv.zoneFists * c.fistM : c.dead;
       out.punchZoneM = dead;
+      // the pillar (0.21.0), meters from the shoulder midpoint: its front past the farther guard fist,
+      // its sides past the shoulders or the wider guard fist, by the zone's room
+      const homes = ['left', 'right'].map((x) => this.hands[x].home).filter(Boolean);
+      const P = homes.length ? { front: Math.max(...homes.map((x) => x.wz)) + dead * k, side: Math.max(c.pillarSide * sw, ...homes.map((x) => Math.abs(x.wx))) + dead * k } : { front: Infinity, side: Infinity };
+      out.punchPillar = homes.length ? P : null;
       for (const hand of ['left', 'right']) {
         const h = this.hands[hand], a = arms[hand], q = arms.torso[hand];
         // from its own shoulder, meters: x the player's right, y up, z toward the camera; tx in the torso's frame
-        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw, px: a.wrist.x, py: a.wrist.y };
+        const s = { t, angle: a.angle, x: (a.wrist.x - a.shoulder.x) * sw, y: (a.wrist.y - a.shoulder.y) * sw, z: (a.wrist.z - a.shoulder.z) * sw, ex: (a.elbow.x - a.shoulder.x) * sw, ey: (a.elbow.y - a.shoulder.y) * sw, ez: (a.elbow.z - a.shoulder.z) * sw, ext: Math.hypot(a.wrist.x - a.shoulder.x, a.wrist.y - a.shoulder.y, a.wrist.z - a.shoulder.z) * sw, px: a.wrist.x, py: a.wrist.y, wx: a.wrist.x * sw, wz: a.wrist.z * sw };
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
-        if (ctx.upperLow || bodyMoving || s.y < -c.lowest * k) { h.move = null; h.home = null; h.away = false; h.trail = null; continue; }
+        // (with the pillar a punch on its way low, a body round, is not a hand dropped)
+        const dropped = s.y < -c.lowest * k && !(c.pillar && (h.move || h.away));
+        if (ctx.upperLow || bodyMoving || dropped) { h.move = null; h.home = null; h.away = false; h.trail = null; continue; }
         // 0.18.0: a punch landed as it left the zone is followed to its end for 'punch_path' (the whole sweep)
         if (h.trail) {
           const tr = h.trail, dh = Math.hypot(s.x - tr.home.x, s.y - tr.home.y, s.z - tr.home.z);
@@ -464,6 +483,77 @@
           }
         }
         const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
+        if (c.pillar) {
+          // 0.21.0 the pillar (Mark 10/25: "the player is a pillar, any hand that leaves the body
+          // outside a deadzone is a strike"): the body is a column from the back of the guard to the
+          // farther guard fist plus the room in front, and out to the shoulders (or the wider guard
+          // fist) plus the room on each side; a fist moving inside it (down to the body, back to the
+          // guard, across the face) is part of the body, and one that leaves it through the front or a
+          // side is a punch, thrown from wherever it was (a body round drops first, inside, then leaves)
+          // (a combination comes back short of the guard, and the depth the camera reads for a fist coming
+          // back lags: re-armed out there, the pillar reaches out to that spot for this hand's next punch)
+          const re = h.re, outF = s.wz - Math.max(P.front, re ? re.wz + dead * k : -Infinity), outX = Math.abs(s.wx) - Math.max(P.side, re ? Math.abs(re.wx) + dead * k : -Infinity), inside = outF <= 0 && outX <= 0;
+          if (re && s.wz <= P.front && Math.abs(s.wx) <= P.side) h.re = null;
+          const wasInside = h.inside;
+          h.inside = inside;
+          // home: the guard shape held still, or the player's own guard from the gym (0.10.0); it sets
+          // the pillar's front, and a hand needs one before it can punch (walking swings, waves)
+          if (!h.move) {
+            const gp = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+            const gs = { x: (a.wrist.x) * sw, y: s.y, z: s.z };
+            const shape = s.y >= -S.setBelow * k && Math.abs(gs.x) <= S.setWide * k && s.angle <= S.setAngle && s.ey <= -S.elbowDown * k;
+            const taught = !!gp && Math.hypot(gs.x - gp.x, gs.y - gp.y, gs.z - gp.z) <= this.gt;
+            if (s.v < S.stillSpeed * k) { if (h.stillAt == null) h.stillAt = t; } else h.stillAt = null;
+            const settled = !h.away || t - h.stillAt >= c.rehomeMs;
+            if (s.v < S.stillSpeed * k && ((settled && (shape || taught)) || (h.home && d <= c.rearm * k))) {
+              h.home = h.home && d <= c.rearm * k ? { x: h.home.x + (s.x - h.home.x) * 0.2, y: h.home.y + (s.y - h.home.y) * 0.2, z: h.home.z + (s.z - h.home.z) * 0.2, wx: h.home.wx + (s.wx - h.home.wx) * 0.2, wz: h.home.wz + (s.wz - h.home.wz) * 0.2, angle: s.angle } : s;
+              h.away = false;
+            }
+            if (!h.home) { h.rest = s; continue; }
+            // after a punch the hand is armed again once it is back inside and slowing
+            if (h.away && s.v < c.rearmSpeed * k && (inside || (h.landed && s.wz > P.front && Math.abs(s.wx) <= P.side && d <= c.rearmFrac * h.lastFar))) { h.away = false; if (!inside) { h.re = s; h.inside = true; } }
+            // a fast move out of a spot inside starts a trip; it is a punch if it leaves the pillar
+            if (!h.away && (wasInside || h.inside) && s.v >= c.startSpeed * k && t - (h.landAt || -Infinity) >= c.refractoryMs) {
+              const r0 = h.rest || s;
+              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: h.home, short: false, low: r0.y, wide: 0 };
+            } else { h.rest = s; continue; }
+          }
+          const m = h.move;
+          m.path.push(s);
+          if (s.v > m.peakV) m.peakV = s.v;
+          if (d > m.far) { m.far = d; m.farAt = s; }
+          if (s.y < m.low) m.low = s.y;
+          // out of it: landed exitMs later (enough of its path to tell its shape), or as it slows or turns back
+          // (a low, tired guard: punches rise to the head inside the column a fist at the belly sets, so a
+          // fist farther than `farK` zones from where it left, and not on its way down, has left the body too)
+          const gone = !inside || (d >= Math.max(c.farMin, c.farK * dead) * k && s.y > m.home.y);
+          if (gone && m.exitAt == null) {
+            // (leaving it down past the hips is the guard dropping to the sides, not a punch)
+            if (s.y < -c.lowest * k) { h.move = null; h.away = true; continue; }
+            m.exitAt = t; m.exit = inside ? 'up' : outX > outF ? 'side' : 'front';
+          }
+          if (m.exitAt != null) {
+            m.out = Math.max(m.out || 0, outF, outX);
+            // (a fist that dipped with the elbow in and has not risen yet may be an uppercut: it lands on the
+            // way up, and one that never rises is a guard dropping)
+            const dipping = m.home.y - m.low > c.straightDip * k && s.y - m.low < c.upRise * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k;
+            // (and one out a side heading mostly down may be a guard dropping out to the side, or a round
+            // that drops first: it lands once it swings level or in, and one that keeps falling is the guard)
+            const A = m.path[Math.max(0, m.path.length - 3)], vy = s.y - A.y, vo = Math.hypot(s.x - A.x, s.z - A.z);
+            const falling = m.exit === 'side' && vy < 0 && -vy > c.dropK * vo;
+            if (falling) m.fell = true;
+            // (once it fell, it lands only when it moves again level or in: a hook may pause at the end of its wind)
+            const paused = m.fell && s.v < c.stallSpeed * k;
+            if (dipping || falling || paused) { m.waited = true; if (t - m.from > c.maxMs || s.y < -c.lowest * k) { h.move = null; h.away = true; } }
+            // (one that waited, barely out, and came back inside with the elbow in is a hand going back to its
+            // guard; out by half the room or more, it left the body: a punch)
+            else if (m.waited && !gone && m.out < 0.5 * dead * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k) { h.move = null; h.away = true; }
+            else if (t - m.exitAt >= c.exitMs || s.v <= c.stopFrac * m.peakV || !gone) this.land(hand, h, out, k, m.exit);
+          }
+          // slowed down inside, or never left: the hand moved, it did not punch
+          else if (t - m.from > c.maxMs || (t - m.from >= c.minMs && s.v < c.stallSpeed * k)) { h.move = null; h.away = true; }
+          continue;
+        }
         if (h.move) {
           const m = h.move;
           m.path.push(s);
@@ -513,16 +603,17 @@
         else { h.away = true; h.tmp = null; }
       }
     }
-    land(hand, h, out, k) {
+    land(hand, h, out, k, exit) {
       const m = h.move, c = this.c;
       h.move = null;
       h.away = true;
       h.tmp = null;
       h.lastFar = m.far;
+      h.landed = false;
       h.landAt = m.path[m.path.length - 1].t;
       const p = m.path, s0 = p[0];
       const maxZ = Math.max(...p.map((x) => x.z));
-      if (m.peakV < c.minSpeed * k || (!c.fireOnExit && maxZ < c.frontMin * k) || m.far < c.minFar * k) return;
+      if (m.peakV < c.minSpeed * k || (!c.fireOnExit && maxZ < c.frontMin * k) || (!exit && m.far < c.minFar * k)) return;
       // the arm reaches out (the fist farther from its shoulder) or the elbow travels with it: a
       // forearm wiping in front of the face, pivoting on a still elbow, is not a punch; from a spot
       // short of home (a combination) the arm has to reach out again
@@ -531,19 +622,26 @@
       if (!c.fireOnExit && !(ext >= c.extend * k || (elbow >= c.elbowMove * k && !m.short))) return;
       // straight or round: a straight neither dips first (an uppercut) nor swings its elbow out to the
       // side (a hook, an overhand)
-      const dip = s0.y - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - s0.ex)));
-      const straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
+      // (0.21.0: with the pillar the trip starts a frame earlier, at rest, so the elbow's swing is read from
+      // its first moving frame, as the 0.18.0 zone did)
+      const e0 = s0;
+      // (a punch thrown from a fist already dropped under its guard counts the drop: a low round's sweep)
+      const dip = Math.max(s0.y, m.guard ? m.guard.y : -Infinity) - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - e0.ex)));
+      let straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
       // a round one's arc (0.15.0, Mark: "the fist leaves the guard and travels upward in the conflict
       // zone"): 'up' (an uppercut) rises from its lowest point with the elbow kept in, else 'side'
       // (a hook or an overhand, the elbow swinging out)
       let rise = 0, low = p[0].y;
       for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
-      const arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
+      let arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
       // (0.18.0: landed as it leaves, a fist may not be in front of its shoulder yet, so instead of that a
       // fist heading mostly down, and not rising out of it as an uppercut, is a guard dropping, not a punch)
       if (c.fireOnExit) {
         const L = p[p.length - 1], H = m.home, dy = L.y - H.y, out = Math.hypot(L.x - H.x, L.z - H.z);
-        if (arc !== 'up' && dy < 0 && -dy > c.dropK * out) return;
+        if (!exit && arc !== 'up' && dy < 0 && -dy > c.dropK * out) return;
+        // (with the pillar the hand may drop inside it first, a body round, so only a fist that lands down
+        // past the hips is the guard dropping)
+        if (exit && L.y < -c.lowest * k) return;
         // and a fist leaving on a still elbow (a forearm swinging out) is not a punch unless the arm
         // reaches well out or it rises as an uppercut: straights and hooks move the elbow from the start
         if (arc !== 'up' && elbow < c.exitElbow * k && ext < c.exitExtend * k) return;
@@ -553,7 +651,12 @@
       // camera-facing frame (x the player's right, y up); a game lays it on its opponent's clock
       const n = c.pathPoints, path = [];
       for (let i = 0; i < n; i++) { const q = p[Math.round((i * (p.length - 1)) / (n - 1))]; path.push([+q.px.toFixed(3), +q.py.toFixed(3)]); }
-      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, path, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
+      // 0.21.0: where it left the pillar ('front', 'side', or 'up' for a low guard's punch rising to the
+      // head), how high it landed and the lowest it went on the way, in S from the shoulder midpoint (a
+      // body round drops first and stays low)
+      const L2 = p[p.length - 1], lowest = Math.min(...p.map((x) => x.py));
+      h.landed = true;
+      out.events.push(['punch', { hand, shape: straight ? 'straight' : 'round', arc, exit: exit || null, height: +L2.py.toFixed(3), low: +lowest.toFixed(3), path, speed: m.peakV, power: RE.clamp(m.peakV / this.s.refSpeed, 0.5, 1.5), reach: m.far / (0.6 * k), ms: Math.round(p[p.length - 1].t - m.from) }]);
       if (c.fireOnExit) h.trail = { from: m.from, path: p.slice(), peakV: m.peakV, far: m.far, home: m.home, low: m.low, wide: m.wide };
     }
   }
