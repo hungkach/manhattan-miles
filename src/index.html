@@ -157,7 +157,7 @@
       <li>Both hands overhead to turn around</li>
       <li>Opponents wait on some blocks: guard up and punch for real, slip their punches, squat and drive up for a takedown, high knees to escape. Your view follows your slips and level changes.</li>
     </ul>
-    <p>Explore the city: there is always a next stop, the game talks you through each turn, and calls high knees intervals. Twenty active minutes is a full session. Wave your left hand to open the phone menu.</p>
+    <p>Explore the city: there is always a next stop, the game talks you through each turn. Twenty active minutes is a full session. Wave your left hand to open the phone menu.</p>
     <div class="btns">
       <button id="playDemo" class="main">Walk with touch controls</button>
       <button id="playSticks" class="secondary">Dual sticks (testing)</button>
@@ -364,18 +364,15 @@
   const G = { state: 'title', start: 0, steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, banner: '', bannerUntil: 0, fightsDone: 0,
     playMs: 0, activeMs: 0, idleS: 0, idleSaid: 0, milestone: 0, route: [], leg: 0, nav: '', cueKey: '', interval: null, intervalIn: 0, intervals: 0 };
 
-  // ---------- the walk: stops, spoken directions, run intervals, staying active ----------
+  // ---------- the walk: stops, spoken directions, staying active ----------
   // No countdown (Mark: this is an RPG, explore but stay active). There is always a next stop, a
   // real place a solid walk away, with directions spoken as you near each corner (turn here, or
-  // the wrong way). Every couple of minutes of walking a high knees interval is called: the work,
-  // with walking as the recovery. Standing around gets a nudge; active minutes get milestones, and
+  // the wrong way). Active minutes get milestones, and
   // at 20 the game says that is a full session (the fitness target) without ending anything.
   const SESSION = {
     stopM: 900,          // about how far each next stop is (game meters)
     milestones: [10, 15, 20, 30], // active minutes that get a line; 20 is a full session
     cueAhead: 55,        // m before a corner that its direction is spoken
-    intervalEveryS: 120, // walking between intervals (a fight resets it: the fight was the work)
-    intervalS: 30,
   };
   const placeXZ = (p) => ({ x: p.x, z: p.z });
   // a walk on the grid is about 1.25 times the straight line
@@ -481,8 +478,7 @@
     G.dest = G.route[G.leg];
     G.cueKey = '';
   }
-  // active time, milestones and run intervals (fights count as active and pause
-  // intervals)
+  // active time and milestones (fights count as active)
   function sessionTick(dt, now) {
     G.playMs += dt * 1000;
     const moving = Fight.active || P.speed > 0.5;
@@ -498,29 +494,7 @@
       banner(`${next} active minutes`, 2500, now);
     }
     // (no nudges for standing around, Mark 10/24: resting is the player's call)
-    if (Fight.active || Stage.on) return;
-    const iv = G.interval;
-    if (!iv) {
-      if (P.speed > 0.5) G.intervalIn -= dt;
-      if (G.intervalIn <= 0 && !Calls.active) {
-        G.interval = { left: SESSION.intervalS, ran: 0, tenSaid: false };
-        say(`Interval! High knees for ${SESSION.intervalS} seconds.`, 'prompt');
-        banner('High knees!', 1800, now);
-      }
-      return;
-    }
-    iv.left -= dt;
-    if (P.running) iv.ran += dt;
-    if (!iv.tenSaid && iv.left <= 10) { iv.tenSaid = true; say('Ten more seconds.', 'feedback'); }
-    if (iv.left <= 0) {
-      // it counts when you ran most of it; XP by how much of it you ran
-      const ran = Math.round(iv.ran), good = iv.ran >= SESSION.intervalS * 0.6;
-      if (good) G.intervals++;
-      G.intervalLog.push(ran);
-      say(good ? `Done: ${ran} of ${SESSION.intervalS} seconds running. Walk it off.` : `Interval over: ${ran} of ${SESSION.intervalS} seconds running.`, 'feedback');
-      G.interval = null;
-      G.intervalIn = SESSION.intervalEveryS;
-    }
+    // (no high knees intervals since 10/25, Mark: the running comes from calls, chases and the walk)
   }
 
   // ---------- engine ----------
@@ -1293,7 +1267,7 @@
   // of high knees. Fights run 20 to 40 s; the walking between is the active recovery.
   const FT = {
     firstAhead: 32, // m: the first opponent waits about 10 marching steps ahead of the start (they walk to meet you)
-    everyS: [40, 70], spawnAhead: 40, sees: 30, engage: 9,
+    everyS: [40, 70], spawnAhead: 40, sees: 30, engage: 9, denClearM: 45,
     // ranges (m): they drift between close and mid; a step back is out. Straights reach mid range;
     // a hook or uppercut thrown past its `reach` steps you in to close range (10/21)
     rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
@@ -1383,7 +1357,7 @@
     // 10/21 (Mark: runners too fast, the moves need time and should not cost your speed): while a
     // prompt is up the chase runs in slow motion (slowK), your speed holds through the move, and a
     // clean move keeps it boostK faster for boostMs after.
-    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: [1.08, 1.35], boost: { bound: [0.9, 1.8] }, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
+    run: { offerMs: 4500, v: [7.6, 5.8], tire: 0.06, catchM: 3, loseM: 90, ms: 45000, firstM: 22, gapM: [22, 36], promptS: 1.2, slowK: 0.4, boostMs: 1500, boostK: [1.08, 1.35], boost: { bound: [0.9, 1.8], jump: [0.2, 0.45] }, graceS: 0.3, stumbleMs: 1500, stumbleK: 0.2, gassed: 0.6, lookM: 7 },
     // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
     // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
     // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
@@ -1513,26 +1487,32 @@
     } catch (_) {}
   }
 
+  const NUM_WORD = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
   // put an opponent on the street ahead, out of any building
   function spawnFoes(dist = FT.spawnAhead) {
     Fight.scene = null;
     const lvl = level();
-    const n = (G.fightsDone >= 2 || lvl >= 3) && Math.random() < 0.4 + 0.03 * Math.min(10, lvl) ? 2 : 1;
+    // (10/25 tiers: one tier a group, thugs three or more; the very first is thugs)
+    const ids = G.fightsDone === 0 ? streetGroup(lvl, 1, 1) : streetGroup(lvl), n = ids.length;
     let d = dist;
     while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
     const x = P.x + Math.sin(P.yaw) * d, z = P.z + Math.cos(P.yaw) * d;
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1))); // tougher as you level
-      Fight.foes.push(applyArch({ x: x + i * 1.2, z: z + i * 1.5, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], seed: Math.random() }, G.fightsDone === 0 && i === 0 ? 'thug' : pickArch(lvl)));
+      // a loose cluster across the sidewalk, each a step further on (in line where a building is in the way)
+      const side = i % 2 ? -1 : 1, off = i ? side * (0.7 + 0.35 * i) : 0;
+      let fx = x + Math.cos(P.yaw) * off + Math.sin(P.yaw) * 0.9 * i, fz = z - Math.sin(P.yaw) * off + Math.cos(P.yaw) * 0.9 * i;
+      if (blocked(fx, fz)) { fx = x + Math.sin(P.yaw) * 1.2 * i; fz = z + Math.cos(P.yaw) * 1.2 * i; }
+      Fight.foes.push(applyArch({ x: fx, z: fz, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], seed: Math.random() }, ids[i]));
     }
     // the person they are hassling, just past them and to the side
     const side = Math.random() < 0.5 ? -1 : 1, rx = Math.cos(P.yaw) * side, rz = -Math.sin(P.yaw) * side;
     let vx = x + rx * 1.6 + Math.sin(P.yaw) * 0.8, vz = z + rz * 1.6 + Math.cos(P.yaw) * 0.8;
     if (blocked(vx, vz)) { vx = x - rx * 1.6 + Math.sin(P.yaw) * 0.8; vz = z - rz * 1.6 + Math.cos(P.yaw) * 0.8; }
     Fight.people = [{ kind: 'victim', x: vx, z: vz, look: Fight.foes[0], col: VICTIM_COLS[G.fightsDone % VICTIM_COLS.length], seed: Math.random() }];
-    say(n > 1 ? 'Two of them hassling someone up ahead. Go help.' : 'Someone is getting hassled up ahead. Go help.', 'confirm');
-    banner(n > 1 ? 'Two opponents ahead' : 'Someone needs help', 2000);
+    say(n > 1 ? `${NUM_WORD[n] || n} of them hassling someone up ahead. Go help.` : 'Someone is getting hassled up ahead. Go help.', 'confirm');
+    banner(n > 1 ? `${n} opponents ahead` : 'Someone needs help', 2000);
   }
   const foeDist = (f) => Math.hypot(f.x - P.x, f.z - P.z);
   const bearingTo = (f) => ((Math.atan2(f.x - P.x, f.z - P.z) * 180) / Math.PI + 360) % 360;
@@ -1741,8 +1721,7 @@
     const foe = current();
     if (!foe) return;
     Fight.active = { start: now, foe, range: 'close' };
-    // the fight is the work: a running interval stops, and the next one waits a full gap
-    G.interval = null; G.intervalIn = SESSION.intervalEveryS;
+    G.interval = null;
     if (!Stage.on) gatherCrowd(now);
     Fight.hp = FT.playerHp;
     Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity; Fight.shift = null; Fight.shiftCd = 0;
@@ -2015,8 +1994,10 @@
     if (outOf && !shifted) { dmg *= FT.guard.cleanBonus; fightMsg('Clean shot!', 700); }
     // a hook from the side you sidestepped to
     if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side round!', 1000); Fight.sidestep = null; }
-    // an uppercut catches them changing levels: shooting at you, or braced for your shot
-    const caughtLow = kind === 'uppercut' && (foe.state === 'shoot' || foe.state === 'brace');
+    // a round that reaches 5 to 7 o'clock (rising or to the body, from either hand) catches them changing
+    // levels: shooting at you, or braced for your shot (10/25, Mark)
+    const lowReach = kind === 'uppercut' || (Fight.read ? covers(Fight.read, 6) : where === 'body');
+    const caughtLow = lowReach && kind !== 'down_strike' && (foe.state === 'shoot' || foe.state === 'brace');
     if (caughtLow) { dmg *= FT.td.levelBonus; fightMsg(foe.state === 'brace' ? 'Read it!' : 'Caught him low!', 1000); Fight.stats.reads++; foe.state = 'hurt'; foe.until = now + 700; }
     else if (into) { dmg *= FT.foeHead.intoK; Fight.stats.reads++; fightMsg('Caught him!', 1000); }   // their head moved into it (Mark 10/24: one name for it)
     // their head coming at the punch: into their wind-up or their shot
@@ -2198,7 +2179,7 @@
   // leg of the move they are on; f.hMove is the way the last move went, for punches it moves into
   const FH = { slipL: [[-1, 0]], slipR: [[1, 0]], duck: [[0, 1]] };
   const pickW = (w) => { let r = Math.random() * Object.values(w).reduce((n, x) => n + x, 0); for (const [k, x] of Object.entries(w)) if ((r -= x) <= 0) return k; return Object.keys(w)[0]; };
-  const headOf = (f) => (f.boss ? ARCH.boxer.head : archOf(f).head || FT.foeHead.other);
+  const headOf = (f) => archOf(f).head || FT.foeHead.other;
   function headLeg(f, now) {
     const leg = f.hSeq[0];
     const dx = leg.x - f.hv.x, dy = leg.y - f.hv.y, l = Math.hypot(dx, dy) || 1;
@@ -2248,7 +2229,9 @@
   function readPunch(e, lead) {
     const hand = e.hand, right = hand === 'right', s = right ? 1 : -1;
     if (e.shape === 'straight') return { name: 'Straight', kind: hand === lead ? 'jab' : 'cross', cover: [[10.75, 1.25]], into: [0, -1] };
-    if (e.arc === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
+    // (10/25, Mark: "not every uppercut was registered"): a round that left the pillar out the top (exit
+    // 'up') rose to the head from inside it, so it reaches 6 and 12 like the 'up' arc, whatever its elbow did
+    if (e.arc === 'up' || e.exit === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
     // 10/25 (engine 0.21.0, Mark: "lower rounds do not pick up at all"): a round that went down past the
     // ribs on its way (`low`, S under the shoulders) is a body round: the body does not slip, so it lands
     // wherever their head is, for body damage (FT.hit.body)
@@ -2393,7 +2376,7 @@
         Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
-      else { hurtPlayer(now, foe.boss ? STAGE.boss.hit : archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall when it comes up the middle!' }[foe.kind] || 'Hit', 1100); }
+      else { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall when it comes up the middle!' }[foe.kind] || 'Hit', 1100); }
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -2424,7 +2407,7 @@
     };
     // 10/21 (Mark: the AI should read your head movement and level, so you can bait them):
     // a skilled type reads you; a thug does not
-    const reads = foe.boss ? ['slips', 'level'] : A.reads || [];
+    const reads = A.reads || [];
     const slipsLately = (Fight.slips || []).filter((t) => now - t < 3000).length;
     const lowLately = now - Fight.lastLowAt < 2500;
     if (reads.includes('slips') && slipsLately >= 2 && Math.random() < 0.6) { punch('hook'); foe.read = 'slips'; return; }
@@ -2465,7 +2448,7 @@
   function guardBonus(why, k = 1) { Fight.guardHp = Math.min(FT.myGuard.hp, Fight.guardHp + (FT.myGuard.bonus[why] || 0) * k); }
   function windupMs() {
     const a = Fight.active, slow = a ? Math.min(FT.kick.slowMax, 1 + FT.kick.slowPer * (a.foe.legHits || 0)) : 1; // low kicks slow them
-    return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a && a.foe.boss ? STAGE.boss.windup : a ? archOf(a.foe).windup : 1) * slow;
+    return Math.max(450, FT.windupMs - 20 * (level() - 1)) * (a ? archOf(a.foe).windup : 1) * slow;
   }
   function hurtPlayer(now, n) {
     Fight.hp -= n;
@@ -2544,11 +2527,10 @@
   // offer: they run; wave your right hand within FT.run.offerMs to go after them, or let them go
   const OBSTACLES = {
     juke: { big: 'Juke!', small: 'Bound left or right', ev: 'bound', done: 'Juked' },
-    // 10/25 (Mark: the hurdle picked up the movement at random): someone down on the sidewalk, cleared
-    // automatically with a hop of the view; no prompt, no move (the jump stays for takedowns)
-    down: { big: 'Hurdled', small: 'Someone on the ground', auto: true, done: 'Hurdled' },
+    jump: { big: 'Jump!', small: 'Hop the dog', ev: 'jump', done: 'Cleared' },
     duck: { big: 'Duck!', small: 'Squat under the pipe', ev: 'squat', done: 'Ducked' },
   };
+  const DOG_COLS = [[150, 110, 70], [60, 50, 44], [210, 196, 170], [120, 90, 60]];
   function offerChase(foe, now, why, car) {
     foe.state = 'flee'; foe.walk = 0; foe.fleeChecked = true;
     Fight.chase = { mode: 'offer', foe, why, car, start: now, until: now + FT.run.offerMs, v: FT.run.v[0], dir: null };
@@ -2560,7 +2542,7 @@
     Object.assign(c, { mode: 'run', start: now, sp: 0, trail: [{ x: P.x, z: P.z, s: 0 }], obs: [], nextObs: FT.run.firstM, stumbleUntil: 0, missed: 0, dodged: 0, prompt: null });
     trailPush(c, f.x, f.z);
     if (isDemo()) setTouchButtons('chase');
-    say('Chase! High knees. Juke and duck what is in the way.', 'confirm');
+    say('Chase! High knees. Juke, jump and duck what is in the way.', 'confirm');
     banner('Chase!', 1500, now);
   }
   function trailPush(c, x, z) {
@@ -2641,9 +2623,9 @@
     // obstacles land on the trail behind them, never on top of you
     while (c.nextObs < len - 3) {
       if (c.nextObs > c.sp + 12) {
-        const kind = pick(['juke', 'down', 'duck']), p = trailAt(c, c.nextObs), q = trailAt(c, c.nextObs + 1);
+        const kind = pick(['juke', 'jump', 'duck']), p = trailAt(c, c.nextObs), q = trailAt(c, c.nextObs + 1);
         const dl = Math.hypot(q.x - p.x, q.z - p.z) || 1;
-        c.obs.push({ kind, s: c.nextObs, x: p.x, z: p.z, dx: (q.x - p.x) / dl, dz: (q.z - p.z) / dl, seed: Math.random(), col: pick(CROWD_COLS) });
+        c.obs.push({ kind, s: c.nextObs, x: p.x, z: p.z, dx: (q.x - p.x) / dl, dz: (q.z - p.z) / dl, seed: Math.random(), col: kind === 'jump' ? pick(DOG_COLS) : pick(CROWD_COLS) });
       }
       c.nextObs += rand(R.gapM[0], R.gapM[1]);
     }
@@ -2666,14 +2648,11 @@
     const o = c.obs.find((q) => !q.passed);
     if (o) {
       const d = o.s - c.sp, pace = Math.max(v, 4);
-      if (OBSTACLES[o.kind].auto) {
-        // over them without breaking stride
-        if (d <= 0) { o.done = true; o.passed = true; c.dodged++; c.hopAt = now; banner(OBSTACLES[o.kind].done, 700, now); }
-      } else if (!o.promptAt && d <= pace * R.promptS) { o.promptAt = now; o.v0 = v; c.prompt = o; say(OBSTACLES[o.kind].big, 'confirm'); }
-      if (!o.passed && (d <= -pace * R.graceS || (o.done && d <= 0))) {
+      if (!o.promptAt && d <= pace * R.promptS) { o.promptAt = now; o.v0 = v; c.prompt = o; say(OBSTACLES[o.kind].big, 'confirm'); }
+      if (d <= -pace * R.graceS || (o.done && d <= 0)) {
         o.passed = true; c.prompt = null;
         if (o.done) c.dodged++;
-        else { c.missed++; c.stumbleUntil = now + R.stumbleMs; banner(o.kind === 'duck' ? 'Clipped the pipe' : 'Ran into him', 1200, now); thud(); }
+        else { c.missed++; c.stumbleUntil = now + R.stumbleMs; banner(o.kind === 'jump' ? 'Tripped over the dog' : o.kind === 'duck' ? 'Clipped the pipe' : 'Ran into him', 1200, now); thud(); }
       }
     }
     c.obs = c.obs.filter((q) => q.s > c.sp - 20);
@@ -2707,11 +2686,12 @@
     if (OBSTACLES[c.prompt.kind].ev !== ev) return;
     c.prompt.done = true;
     const B = FT.run.boost, [lo, hi] = FT.run.boostK;
-    const k = ev === 'bound' ? effort(out, B.bound[0], B.bound[1], lo, hi) : effort(out, duckFloor(), Math.min(1, LEVEL_SHOT * 1.8), lo, hi);
+    const k = ev === 'bound' ? effort(out, B.bound[0], B.bound[1], lo, hi) : ev === 'jump' ? effort(out, B.jump[0], B.jump[1], lo, hi) : effort(out, duckFloor(), Math.min(1, LEVEL_SHOT * 1.8), lo, hi);
     c.boostUntil = performance.now() + FT.run.boostMs; c.boostV = (c.prompt.v0 || 0) * k; c.boostK = k;
     clack(); // the prompt turns green and says so
   }
   engine.on('bound', (e) => chaseMove('bound', (e && e.dist) || 0));
+  engine.on('jump', (e) => chaseMove('jump', (e && e.height) || 0));
   engine.on('squat', () => chaseMove('squat', engine.signals().squat_depth || 0));
   function thud() { burst(160, 0.8, 0.25, 0.5, 'lowpass'); }
 
@@ -2728,7 +2708,7 @@
   //   startM    the first group this far ahead; marchM between groups (about 20 s of marching)
   //   boss      health, guard and size against a regular opponent; hits land for hit
   const STAGE = { introMs: 4200, startM: 18, marchM: 80, pathM: 520, seeM: 16, crowdPer: 5,
-    boss: { hp: 2.6, guard: 1.6, scale: 1.18, windup: 1.15, hit: 2 } };
+    boss: { hp: 2.6, guard: 1.6, scale: 1.18, hit: 2 } }; // (10/25: a tweaker's pace, ARCH.boss, no slower wind-up)
   const THEMES = [
     { id: 'brunch', name: 'The Brunch Mob', intro: 'Bottomless mimosas since ten a.m. They have taken the whole sidewalk.', cols: [[236, 170, 196], [246, 226, 150], [170, 214, 236]], boss: 'The Maitre D', bossCol: [34, 34, 38], bossLine: 'Do you have a reservation?',
       talk: ['Where is my avocado toast?', 'This table has a two hour minimum.', 'I am not drunk, I am brunching.', 'Can I get the check? And a hit?'] },
@@ -2808,15 +2788,16 @@
     const p = trailAt(Stage, s), q = trailAt(Stage, s + 1), dl = Math.hypot(q.x - p.x, q.z - p.z) || 1, dx = (q.x - p.x) / dl, dz = (q.z - p.z) / dl, rx = dz, rz = -dx;
     const at = (along, side) => { let x = p.x + dx * along + rx * side, z = p.z + dz * along + rz * side; if (blocked(x, z)) { x = p.x + dx * along; z = p.z + dz * along; } return { x, z }; };
     Fight.foes = [];
-    const count = boss ? 1 : Stage.sizes[Stage.group];
+    const count = boss ? 1 : Stage.sizes[Stage.group], ids = boss ? ['thug'] : stageGroup(count, lvl);
     for (let i = 0; i < count; i++) {
       const w = at(i * 1.4, (i % 2 ? -1 : 1) * (0.6 + 0.4 * i));
-      const f = makeFoe(w.x, w.z, i, lvl);
+      const f = makeFoe(w.x, w.z, i, lvl, ids[i]);
       Object.assign(f, { col: boss ? T0.bossCol : T0.cols[i % T0.cols.length], lines: T0.talk, fleeChecked: true, stage: true });
       if (boss) {
         const B = STAGE.boss;
         const base = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
-        Object.assign(f, { boss: true, arch: 'boxer', name: T0.boss, scale: B.scale, hp: Math.round(base * B.hp), guardHp: FT.guard.hp * B.guard, guardMax: FT.guard.hp * B.guard, turtle: 0.2 });
+        const gd = FT.guard.hp * Math.max(B.guard, ARCH.boss.guard);
+        Object.assign(f, { boss: true, arch: 'boss', name: T0.boss, scale: B.scale, hp: Math.round(base * Math.max(B.hp, ARCH.boss.hp)), guardHp: gd, guardMax: gd, turtle: ARCH.boss.turtle });
         f.maxHp = f.hp;
         Stage.boss = f;
       }
@@ -2977,17 +2958,96 @@
     roidhead: { name: 'Roidhead', tip: 'Slow, a lot of health', w: 1.2, hp: 1.8, guard: 1.3, turtle: 0.1, windup: 1.4, think: 1.3, hit: 1, scale: 1.12, moves: { straight: 1.5, hook: 4, uppercut: 2, shoot: 0.5, out: 0.3, cover: 0.5, wait: 1.5 } },
     turtle: { name: 'Turtle', tip: 'Covers up', w: 1, hp: 1, guard: 1.4, turtle: 0.55, windup: 1, think: 1, hit: 1, moves: { straight: 3, hook: 2, uppercut: 1, shoot: 0.5, out: 1, cover: 1, wait: 1 } },
   };
-  const archK = (f, key) => { const v = f && f.boss && key === 'gnp' ? 1 : archOf(f)[key]; return v === undefined ? (key === 'td' || key === 'stuff' ? 0 : 1) : v; };
+  // 10/25 tiers (Mark): tier 1 thugs, the most common, always 3 or more together; tier 2 the five
+  // types; tier 3 two of them in one body, tier 4 three, tier 5 the bosses (all five, "meant to be
+  // challenging"). Rarer and fewer at a time as the tier goes up. A combined type keeps the best body
+  // of its parts (health, guard, size: the most; wind-up and pace: the quickest) and how the fighters
+  // among them fight (boxers, wrestlers, turtles), the hardest of each; roidheads and tweakers bring
+  // only their body, so a boxer tweaker is a boxer at a tweaker's pace, weaknesses and all.
+  ARCH.thug.tier = 1;
+  const TIER2 = ['boxer', 'wrestler', 'turtle', 'roidhead', 'tweaker'];
+  const FIGHTERS = ['boxer', 'wrestler', 'turtle'];
+  const TRAIT = { boxer: 'moves his head, tight counters', wrestler: 'level changes, hard to take down', turtle: 'covers up', roidhead: 'a lot of health', tweaker: 'fast' };
+  const COMBO_NAMES = {
+    'boxer+wrestler': 'Cage fighter', 'boxer+turtle': 'Shell boxer', 'boxer+roidhead': 'Heavyweight', 'boxer+tweaker': 'Jitterbug',
+    'wrestler+turtle': 'Wet blanket', 'wrestler+roidhead': 'Pro wrestler', 'wrestler+tweaker': 'Scrambler',
+    'turtle+roidhead': 'Tank', 'turtle+tweaker': 'Snapping turtle', 'roidhead+tweaker': 'Pre-workout',
+    'boxer+wrestler+turtle': 'Old pro', 'boxer+wrestler+roidhead': 'Contender', 'boxer+wrestler+tweaker': 'Prospect',
+    'boxer+turtle+roidhead': 'Brick wall', 'boxer+turtle+tweaker': 'Ghost', 'boxer+roidhead+tweaker': 'Wrecking ball',
+    'wrestler+turtle+roidhead': 'Sumo', 'wrestler+turtle+tweaker': 'Eel', 'wrestler+roidhead+tweaker': 'Freight train',
+    'turtle+roidhead+tweaker': 'Armadillo',
+  };
+  function mergeArch(ids) {
+    const all = ids.map((id) => ARCH[id]), fight = ids.filter((id) => FIGHTERS.includes(id)).map((id) => ARCH[id]);
+    const src = fight.length ? fight : all;
+    const of = (list, key, fn, def) => { const v = list.map((A) => A[key]).filter((x) => x !== undefined); return v.length ? fn(...v) : def; };
+    const moves = {}, hm = {};
+    for (const A of src) {
+      const tot = Object.values(A.moves).reduce((n, x) => n + x, 0);
+      for (const [k, x] of Object.entries(A.moves)) moves[k] = (moves[k] || 0) + (10 * x) / tot;
+      if (A.head) for (const [k, x] of Object.entries(A.head.moves)) hm[k] = (hm[k] || 0) + x;
+    }
+    const heads = src.filter((A) => A.head).map((A) => A.head);
+    return {
+      parts: ids, tier: ids.length + 1, name: COMBO_NAMES[ids.join('+')] || ids.join(' '), w: 1,
+      tip: `${ids.join(' + ')}: ${ids.map((id) => TRAIT[id]).join(', ')}`,
+      hp: of(all, 'hp', Math.max, 1), guard: of(all, 'guard', Math.max, 1), turtle: of(all, 'turtle', Math.max, 0),
+      windup: of(all, 'windup', Math.min, 1), think: of(all, 'think', Math.min, 1), hit: of(all, 'hit', Math.max, 1), scale: of(all, 'scale', Math.max, 1),
+      counter: of(src, 'counter', Math.min, 1), td: of(src, 'td', Math.min, 0), stuff: of(src, 'stuff', Math.max, 0),
+      shoot: of(src, 'shoot', Math.min, 1), sprawl: of(src, 'sprawl', Math.max, 1), gnp: of(src, 'gnp', Math.min, 1),
+      reads: [...new Set(src.flatMap((A) => A.reads || []))],
+      head: heads.length ? { rate: Math.max(...heads.map((h) => h.rate)), amp: Math.max(...heads.map((h) => h.amp || 1)), moves: hm } : undefined,
+      moves,
+    };
+  }
+  for (const id of TIER2) ARCH[id].tier = 2;
+  const combos = (k, from = 0) => (k === 0 ? [[]] : TIER2.slice(from).flatMap((id, i) => combos(k - 1, from + i + 1).map((c) => [id, ...c])));
+  for (const k of [2, 3]) for (const c of combos(k)) ARCH[c.join('+')] = mergeArch(c);
+  // the boss: all five (boxer and wrestler reads, a turtle's cover, a roidhead's health, a tweaker's
+  // pace), plus the stage's own size, health, guard and heavier hands (STAGE.boss); stays down as long as anyone
+  ARCH.boss = Object.assign(mergeArch(TIER2), { name: 'Boss', tip: '', tier: 5, w: 0, gnp: 1, hit: STAGE.boss.hit });
+  // how often each tier turns up (the higher ones more each level, by grow) and how many come at once
+  const TIERS = { 1: { w: 60, grow: 0, n: [3, 4] }, 2: { w: 28, grow: 0.08, n: [2, 2] }, 3: { w: 8, grow: 0.15, n: [1, 1] }, 4: { w: 2, grow: 0.25, n: [1, 1] } };
+  const tierOf = (id) => (ARCH[id] && ARCH[id].tier) || 1;
+  const archK = (f, key) => { const v = archOf(f)[key]; return v === undefined ? (key === 'td' || key === 'stuff' ? 0 : 1) : v; };
   // your counter window after a slip, duck or bait, by who you are fighting
   const counterMs = (f) => FT.counterMs * archK(f, 'counter');
   // how deep a sprawl has to go: your own warm-up squat floor, times their type, never past a full level change
   const sprawlNeed = (f) => Math.min(LEVEL_SHOT, duckFloor() * archK(f, 'sprawl'));
-  const skillPerLevel = 0.15;
-  function pickArch(lvl) {
-    const ws = Object.entries(ARCH).map(([id, A]) => [id, A.w * (id === 'thug' ? 1 : 1 + skillPerLevel * (lvl - 1))]);
-    let r = Math.random() * ws.reduce((n, [, w]) => n + w, 0);
-    for (const [id, w] of ws) { if ((r -= w) <= 0) return id; }
-    return 'thug';
+  const weighted = (ws) => { let r = Math.random() * ws.reduce((n, [, w]) => n + w, 0); for (const [k, w] of ws) { if ((r -= w) <= 0) return k; } return ws[ws.length - 1][0]; };
+  function pickTier(lvl, lo = 1, hi = 4) {
+    const ws = [];
+    for (let t = lo; t <= hi; t++) ws.push([t, TIERS[t].w * (1 + TIERS[t].grow * (lvl - 1))]);
+    return weighted(ws);
+  }
+  // one type of a tier: tier 2 by each type's own w, tiers 3 and 4 any combination alike
+  const typeOfTier = (t) => weighted(Object.entries(ARCH).filter(([, A]) => A.tier === t).map(([id, A]) => [id, A.w]));
+  // one opponent on their own (a scene's lone criminal): never a thug, thugs come three or more
+  const pickArch = (lvl) => typeOfTier(pickTier(lvl, 2));
+  // how many of a tier come at once: thugs 3 or 4 (5 now and then from level 5), tier 2 a pair, the rest alone
+  function tierCount(t, lvl) {
+    if (t > 1) return TIERS[t].n[0];
+    return 3 + (Math.random() < Math.min(0.6, 0.2 + 0.04 * lvl) ? 1 : 0) + (lvl >= 5 && Math.random() < 0.25 ? 1 : 0);
+  }
+  // a street group: one tier, its own number, any types of it
+  function streetGroup(lvl, lo = 1, hi = 4) {
+    const t = pickTier(lvl, lo, hi), n = tierCount(t, lvl), ids = [];
+    for (let i = 0; i < n; i++) ids.push(typeOfTier(t));
+    return ids;
+  }
+  // a crime center group of n: each place a tier (no more of a tier than its own number), thugs three or
+  // more together or none (too few and the commonest of the rest turn thug), thugs first, the rarest last
+  function stageGroup(n, lvl) {
+    const tiers = [], count = {};
+    for (let i = 0; i < n; i++) {
+      let t = pickTier(lvl);
+      if (t > 1 && (count[t] || 0) >= TIERS[t].n[1]) t = 1;
+      count[t] = (count[t] || 0) + 1; tiers.push(t);
+    }
+    tiers.sort((a, b) => a - b);
+    let thugs = tiers.filter((t) => t === 1).length;
+    while (thugs > 0 && thugs < 3 && thugs < n) tiers[thugs++] = 1;
+    return tiers.map(typeOfTier);
   }
   function applyArch(f, id) {
     const A = ARCH[id];
@@ -2995,7 +3055,7 @@
     f.hp = f.maxHp = Math.max(4, Math.round(f.maxHp * A.hp));
     f.guardHp = f.guardMax = FT.guard.hp * A.guard;
     f.turtle = A.turtle;
-    if (A.scale && !f.boss) f.scale = A.scale;
+    if (A.scale && A.scale !== 1 && !f.boss) f.scale = A.scale;
     return f;
   }
   const archOf = (f) => ARCH[f && f.arch] || ARCH.thug;
@@ -3005,9 +3065,9 @@
     if (!f.metAt) f.metAt = now;
     return now - f.metAt < 4500 && A.tip ? `${A.name}: ${A.tip}` : A.name;
   }
-  const makeFoe = (x, z, i, lvl) => {
+  const makeFoe = (x, z, i, lvl, id = pickArch(lvl)) => {
     const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * (1 + 0.08 * (lvl - 1)));
-    return applyArch({ x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() }, pickArch(lvl));
+    return applyArch({ x, z, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() }, id);
   };
   function spawnScene(kind, now) {
     if (kind === 'hassle') { spawnFoes(); Fight.scene = null; return; }
@@ -3015,12 +3075,16 @@
     const st = streetHere(at.x, at.z, 30), dir = st ? st.dir : { x: hx, z: hz };
     const sc = { kind, busy: true, start: now, alarmAt: 0 };
     Fight.foes = []; Fight.people = [];
+    // who is at it (10/25 tiers): a snatcher runs alone (never a thug), a brawl is a pair of tier 2s or
+    // thugs, anything else one of tier 2 to 4 alone, or thugs, three or more, with lookouts
+    const ids = kind === 'snatch' ? [pickArch(lvl)] : streetGroup(lvl, 1, kind === 'brawl' ? 2 : 4);
+    if (kind !== 'brawl' && tierOf(ids[0]) > 1) ids.length = 1;
     const victim = (x, z, line) => ({ kind: 'victim', x, z, look: P, col: pick(VICTIM_COLS), seed: Math.random(), waveUntil: now + 60000, say: line, sayUntil: now + 60000 });
     if (kind === 'snatch') {
       // he is already running, away from you down the street (closer: he has a head start)
       const v = aheadSpot(rand(16, 22));
       at.x = v.x; at.z = v.z;
-      const f = makeFoe(at.x + hx * 6, at.z + hz * 6, 0, lvl);
+      const f = makeFoe(at.x + hx * 6, at.z + hz * 6, 0, lvl, ids[0]);
       Fight.people = [victim(at.x, at.z, pick(SCENE_LINES.snatch))];
       Fight.foes = [f];
       offerChase(f, now, 'snatch');
@@ -3035,13 +3099,13 @@
       }
       const car = { parked: true, alarm: true, x: cx, z: cz, hx: dir.x, hz: dir.z, col: pick(CAR_COLS), cab: false, v: 0, e: -1 };
       Traffic.cars.push(car);
-      const f = makeFoe(cx - ox * 1.5, cz - oz * 1.5, 0, lvl);
+      const f = makeFoe(cx - ox * 1.5, cz - oz * 1.5, 0, lvl, ids[0]);
       f.state = 'smash'; f.faceTo = car;
       Fight.foes = [f];
       sc.car = car;
       say('Car alarm up ahead. Someone is breaking in.', 'confirm'); banner('Car break-in ahead', 2000, now);
     } else if (kind === 'brawl') {
-      const a = makeFoe(at.x - dir.x * 0.7, at.z - dir.z * 0.7, 0, lvl), b = makeFoe(at.x + dir.x * 0.7, at.z + dir.z * 0.7, 1, lvl);
+      const a = makeFoe(at.x - dir.x * 0.7, at.z - dir.z * 0.7, 0, lvl, ids[0]), b = makeFoe(at.x + dir.x * 0.7, at.z + dir.z * 0.7, 1, lvl, ids[1]);
       a.state = b.state = 'brawl'; a.faceTo = b; b.faceTo = a;
       Fight.foes = [a, b];
       for (let i = 0; i < 4; i++) {
@@ -3051,7 +3115,7 @@
       if (Fight.people[0]) { Fight.people[0].say = pick(SCENE_LINES.brawl); Fight.people[0].sayUntil = now + 60000; }
       say('A street fight up ahead. Go break it up.', 'confirm'); banner('Street fight ahead', 2000, now);
     } else if (kind === 'deal') {
-      const f = makeFoe(at.x, at.z, 0, lvl);
+      const f = makeFoe(at.x, at.z, 0, lvl, ids[0]);
       const buyer = { kind: 'crowd', x: at.x + dir.x * 1.1, z: at.z + dir.z * 1.1, tx: 0, tz: 0, sx: 0, sz: 0, joinAt: -Infinity, look: f, col: pick(CROWD_COLS), seed: Math.random(), buyer: true };
       buyer.tx = buyer.sx = buyer.x; buyer.tz = buyer.sz = buyer.z;
       f.state = 'deal'; f.faceTo = buyer;
@@ -3063,10 +3127,20 @@
       const side = blocked(at.x + rx * 7, at.z + rz * 7) ? 1 : -1;
       let wx = at.x, wz = at.z;
       for (let k = 1; k < 10 && !blocked(wx + rx * side, wz + rz * side); k++) { wx += rx * side; wz += rz * side; }
-      const f = makeFoe(wx, wz, 0, lvl);
+      const f = makeFoe(wx, wz, 0, lvl, ids[0]);
       f.state = 'spray'; f.faceTo = { x: wx + rx * side * 3, z: wz + rz * side * 3 };
       Fight.foes = [f];
       say('Someone is tagging a wall up ahead.', 'confirm'); banner('Tagger ahead', 2000, now);
+    }
+    // the rest of a thug crew keeps a lookout around them, on your side
+    const lead = Fight.foes[0];
+    for (let i = Fight.foes.length; lead && i < ids.length; i++) {
+      const sd = i % 2 ? -1 : 1, k = 1.3 + 0.5 * i;
+      let x = lead.x - hx * k + rx * sd * 1.1, z = lead.z - hz * k + rz * sd * 1.1;
+      if (blocked(x, z)) { x = lead.x - hx * k; z = lead.z - hz * k; }
+      const f = makeFoe(x, z, i, lvl, ids[i]);
+      f.faceTo = lead;
+      Fight.foes.push(f);
     }
     Fight.scene = sc;
   }
@@ -3083,7 +3157,8 @@
     const taunt = FOE_TAUNTS[sc.kind];
     if (taunt) { foe.say = taunt; foe.sayUntil = now + 2500; }
     if (sc.buyer) { const b = sc.buyer, bx = b.x - P.x, bz = b.z - P.z, bl = Math.hypot(bx, bz) || 1; b.run = { x: bx / bl, z: bz / bl }; b.look = { x: b.x + b.run.x * 10, z: b.z + b.run.z * 10 }; }
-    const runs = sc.kind === 'tagger' || (sc.kind === 'breakin' && Math.random() < 0.35) || (sc.kind === 'deal' && Math.random() < 0.5);
+    // (a crew stands and fights; one alone may run)
+    const runs = Fight.foes.length === 1 && (sc.kind === 'tagger' || (sc.kind === 'breakin' && Math.random() < 0.35) || (sc.kind === 'deal' && Math.random() < 0.5));
     if (runs) {
       Fight.foes = [foe];
       offerChase(foe, now, sc.kind, sc.car);
@@ -3107,6 +3182,8 @@
     } catch (_) {}
   }
 
+  // within half a block (FT.denClearM) of the next stop, the crime center, plus a crime's own distance ahead
+  const nearDen = (x, z, ahead = 0) => !Calls.active && !Stage.on && G.dest && Math.hypot(G.dest.x - x, G.dest.z - z) < FT.denClearM + ahead;
   // walking: count down to the next encounter, and start the fight when you reach them
   function updateEncounters(dt, now) {
     if (Fight.active) return;
@@ -3115,7 +3192,9 @@
     if (Fight.people.length && !Fight.foes.length && Fight.people.every((p) => Math.hypot(p.x - P.x, p.z - P.z) > 60)) Fight.people = [];
     if (!Fight.foes.length) {
       if (P.speed > 0.5 && !Calls.active) Fight.waitS -= dt;
-      if (Fight.waitS <= 0) spawnScene(pick(SCENES), now);
+      // (10/25, Mark: no random crimes within half a block of a crime center, so they do not get in
+      // its way; one waiting to happen holds until you are clear of it)
+      if (Fight.waitS <= 0 && !nearDen(P.x, P.z, FT.spawnAhead + 10)) spawnScene(pick(SCENES), now);
       return;
     }
     const foe = current();
@@ -3862,9 +3941,6 @@
       if (phase === 'drive') { fwd = 0.6; dy = Math.min(dy, -0.55); }
       if (phase === 'top') dy = Math.min(dy, -0.45);
     }
-    // a chase hurdle: a quick hop of the view
-    const ch = Fight.chase;
-    if (ch && ch.hopAt && performance.now() - ch.hopAt < 450) dy = 0.35 * Math.sin((Math.PI * (performance.now() - ch.hopAt)) / 450);
     pv.lat += (lat - pv.lat) * 0.3; pv.dy += (dy - pv.dy) * 0.3; pv.fwd += (fwd - pv.fwd) * 0.3; pv.roll += (roll - pv.roll) * 0.3;
     return pv;
   }
@@ -4658,7 +4734,7 @@
     return out;
   }
   const POLE = [46, 54, 52], BARK = [96, 70, 48], LEAVES = [[72, 112, 56], [86, 126, 62], [62, 100, 52]], HYDRANT = [196, 44, 34], RAIL = [34, 70, 50], GLOBE = [96, 230, 140];
-  // chase obstacles on the trail: a bystander (juke), someone on the ground (hurdled by itself), a scaffold pipe (duck)
+  // chase obstacles on the trail: a bystander (juke), a dog (jump), a scaffold pipe (duck)
   function drawObstacle(o, now) {
     if (o.kind === 'juke') {
       if (!o.person) o.person = { kind: 'ped', x: o.x, z: o.z, col: o.col, seed: o.seed, walking: false, stand: true, look: P, phone: true };
@@ -4666,14 +4742,18 @@
       return;
     }
     const list = [], at = (x, y, z) => toCam(x, y, z), rx = o.dz, rz = -o.dx;
-    if (o.kind === 'down') {
-      // someone lying across the sidewalk (the last one who tried to stop them)
-      const c = o.col, skin = [196, 150, 120], pants = [52, 56, 70];
-      const P0 = (k, y) => at(o.x + rx * k, y, o.z + rz * k);
-      capsule(list, P0(-0.05, 0.16), P0(0.45, 0.16), 0.17, c, F);   // torso
-      ball(list, P0(0.68, 0.14), 0.12, skin, F);                     // head
-      capsule(list, P0(-0.05, 0.12), P0(-0.85, 0.1), 0.09, pants, F); // legs
-      capsule(list, P0(0.4, 0.12), at(o.x + rx * 0.25 + o.dx * 0.35, 0.06, o.z + rz * 0.25 + o.dz * 0.35), 0.05, c, F); // an arm out
+    if (o.kind === 'jump') {
+      // a dog across the sidewalk, side on, on a leash to nobody in particular
+      const c = o.col, L2 = 0.38, t = now / 140;
+      const hx = o.x + rx * L2, hz = o.z + rz * L2, tx = o.x - rx * L2, tz = o.z - rz * L2;
+      capsule(list, at(tx, 0.42, tz), at(hx, 0.44, hz), 0.15, c, F);
+      ball(list, at(hx + rx * 0.2, 0.62, hz + rz * 0.2), 0.13, c, F);
+      ball(list, at(hx + rx * 0.33, 0.58, hz + rz * 0.33), 0.06, c.map((v) => v * 0.6), F);
+      for (const [px, pz, ph] of [[hx, hz, 0], [tx, tz, Math.PI]]) for (const side of [-1, 1]) {
+        const lx = px + o.dx * 0.1 * side, lz = pz + o.dz * 0.1 * side, sw = Math.sin(t + ph + side) * 0.05;
+        capsule(list, at(lx, 0.4, lz), at(lx + rx * sw, 0.02, lz + rz * sw), 0.045, c, F);
+      }
+      capsule(list, at(tx, 0.48, tz), at(tx - rx * 0.25, 0.7 + Math.sin(t * 2) * 0.05, tz - rz * 0.25), 0.035, c, F);
     } else {
       // a scaffold pipe at head height across the way, two uprights and an orange flag
       const half = 1.6, y = 1.25;
@@ -5007,13 +5087,6 @@
         }
       }
     }
-    // a high knees interval: a bar counting down
-    if (G.interval) {
-      const bw = Math.min(W - 160, 240), bx = W / 2 - bw / 2, by = H * 0.3;
-      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(bx, by, bw, 26);
-      ctx.fillStyle = P.running ? '#ffcf3f' : '#b98b2e'; ctx.fillRect(bx + 2, by + 2, (bw - 4) * Math.max(0, G.interval.left / SESSION.intervalS), 22);
-      line(`High knees ${Math.ceil(G.interval.left)} s`, W / 2, by + 5, 'center', '800 14px system-ui, sans-serif');
-    }
     if (now < G.bannerUntil) {
       ctx.font = '800 22px system-ui, sans-serif';
       const tw = ctx.measureText(G.banner).width;
@@ -5084,7 +5157,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-25 \u00b7 side phone box: + and - widen it, shows with a hidden fist (engine 0.21.0)';
+  const BUILD = '2026-10-25 PM \u00b7 opponent tiers and combined types, bosses are all five, dog hurdle back, no intervals';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5104,7 +5177,7 @@
   const TOUCH_BUTTONS = {
     walk: ['point_left', 'point_right', 'turn_around', 'wave_right'],
     fight: ['jab', 'cross', 'hook', 'overhand', 'uppercut', ...(FT.kick.on ? ['teep', 'low_kick', 'knee'] : []), 'slip_left', 'slip_right', 'weave_left', 'weave_right', 'bound_left', 'bound_right', 'squat', 'drive_up', 'jump'],
-    chase: ['bound_left', 'bound_right', 'squat'],
+    chase: ['bound_left', 'bound_right', 'jump', 'squat'],
   };
   function enableTouch() {
     engine.enable_demo($('demo'), { buttons: TOUCH_BUTTONS.walk });
@@ -5130,7 +5203,7 @@
     Object.assign(P, { x: START.x, z: START.z, yaw: START.yaw, view: START.yaw, speed: 0, running: false, cadence: 0, cell: null, runBlend: 0 });
     engine.set_facing((START.yaw * 180) / Math.PI);
     Object.assign(G, { state: 'walk', start: performance.now(), steps: 0, blocks: 0, meters: 0, arrived: 0, dest: null, peakCadence: 0, runMs: 0, bannerUntil: 0, fightsDone: 0,
-      playMs: 0, activeMs: 0, idleS: 0, idleSaid: 0, milestone: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: SESSION.intervalEveryS, intervals: 0 });
+      playMs: 0, activeMs: 0, idleS: 0, idleSaid: 0, milestone: 0, leg: 0, nav: '', cueKey: '', interval: null, intervalIn: 0, intervals: 0 });
     Phone.open = false; $('phone').hidden = true;
     Object.assign(Calls, { active: null, answered: 0, missed: 0 });
     Object.assign(Peds, { list: [], waves: 0, chatAt: 0, voiceAt: -Infinity });
@@ -5189,7 +5262,7 @@
     $('progLine').textContent = progLine();
     $('sumStats').innerHTML = [
       ['Time', fmt(ms)], ['Steps', G.steps], ['City distance', `${miles.toFixed(2)} mi (${G.blocks} blocks)`], ['Moving or fighting', fmt(G.activeMs)], ['Rest (subway, cab, breathers)', fmt(restMs)], ['Running', fmt(G.runMs)],
-      ['Stops reached', G.arrived], ...(Stage.started ? [['Crime centers cleared', `${Stage.cleared} of ${Stage.started}`]] : []), ['High knees intervals', `${G.intervals} of ${G.intervalLog.length}${G.intervalLog.length ? ` (${G.intervalLog.join(', ')} s run of ${SESSION.intervalS})` : ''}`],
+      ['Stops reached', G.arrived], ...(Stage.started ? [['Crime centers cleared', `${Stage.cleared} of ${Stage.started}`]] : []),
       ...(G.fightsDone || fq.length ? [['Fights won', `${Fight.stats.won} of ${G.fightsDone}`], ['Punches landed', `${landed} of ${thrown}${clean < landed ? `, ${clean} clean` : ''}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
       ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []),
       ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`],
@@ -5653,10 +5726,10 @@
   const NARRATOR_LINES = ['Fight! Guard up.', 'Running', 'Sprawl!', 'Sprawl! Now hit.', 'Knockdown!', 'Angle!', 'Guard broken! Let them have it.', 'Takedown. Ground and pound.',
     'Stuffed. Drive up faster.', 'Guard down. Slip and duck.', 'Caught low. Stand tall when it comes up the middle.', 'Knockout! March on.',
     'You got dropped. Shake it off and march on.', 'You got away.', 'They ran off. March on.', 'Next one!', 'His friend jumps in!', 'Tag! The other one steps in.', 'They switch!',
-    'Sidestep. Throw the round.', 'Jump out of the level change to take them down.', 'Ten more seconds.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
-    'He got away. Into the subway, probably.', 'Chase! High knees. Juke and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
-    'Juke!', 'Duck!', 'Got it.', 'One.', 'Two.', 'Three.', 'Again.', 'Moving on.', 'Car alarm up ahead. Someone is breaking in.', 'A street fight up ahead. Go break it up.',
-    'Corner deal going down ahead.', 'Someone is tagging a wall up ahead.', 'Someone is getting hassled up ahead. Go help.', 'Two of them hassling someone up ahead. Go help.'];
+    'Sidestep. Throw the round.', 'Jump out of the level change to take them down.', 'Wrong way. Turn around.', 'March to them.', 'Got him. He turns to fight.', 'He is gone.',
+    'He got away. Into the subway, probably.', 'Chase! High knees. Juke, jump and duck what is in the way.', 'Purse snatcher! Wave your right hand to chase.', 'He is running. Wave your right hand to chase.',
+    'Juke!', 'Jump!', 'Duck!', 'Got it.', 'One.', 'Two.', 'Three.', 'Again.', 'Moving on.', 'Car alarm up ahead. Someone is breaking in.', 'A street fight up ahead. Go break it up.',
+    'Corner deal going down ahead.', 'Someone is tagging a wall up ahead.', 'Someone is getting hassled up ahead. Go help.', 'Two of them hassling someone up ahead. Go help.', 'Three of them hassling someone up ahead. Go help.', 'Four of them hassling someone up ahead. Go help.'];
   // One queue, never talking over itself. Kinds:
   //   instruction  waits its turn, then starts 2 s after the last line ended (time to move the phone)
   //   prompt       an instruction from the framing check: a newer one replaces one still waiting,
@@ -6336,7 +6409,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Side, ARCH, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Side, ARCH, streetGroup, stageGroup, pickTier, nearDen, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
