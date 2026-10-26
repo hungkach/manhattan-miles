@@ -6851,7 +6851,7 @@ void main() {
   const Prog = { xp: 0, walkXp: 0, pop: '', popUntil: 0, records: {}, life: { activeMs: 0, meters: 0, steps: 0, fights: 0, takedowns: 0, calls: 0, stops: 0, intervals: 0, walks: 0 } };
   try { const saved = JSON.parse(localStorage.getItem(PROG_KEY) || 'null'); if (saved) { Prog.xp = saved.xp || 0; Object.assign(Prog.life, saved.life || {}); Prog.records = saved.records || {}; } } catch (_) {}
   const level = () => levelFor(Prog.xp);
-  function saveProg() { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: Prog.xp, life: Prog.life, records: Prog.records, rating: Prog.rating })); } catch (_) {} }
+  function saveProg() { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: Prog.xp, life: Prog.life, records: Prog.records })); } catch (_) {} }
   function award(n, why) {
     const before = level();
     Prog.xp += n; Prog.walkXp += n;
@@ -6860,28 +6860,23 @@ void main() {
     if (now > before) { say(`Level ${now}. ${titleOf(now)}.`, 'confirm'); banner(`Level ${now}: ${titleOf(now)}`, 3000); }
     saveProg();
   }
-  function progLine() { const l = level(); return `Level ${l} \u00b7 ${titleOf(l)} \u00b7 ${Prog.xp} XP \u00b7 street rating ${Math.round(Prog.rating.r)} \u00b7 ${(Prog.life.meters / 1609.34).toFixed(1)} city miles all time`; }
+  function progLine() { const l = level(); return `Level ${l} \u00b7 ${titleOf(l)} \u00b7 ${Prog.xp} XP \u00b7 ${(Prog.life.meters / 1609.34).toFixed(1)} city miles all time`; }
 
   // ---------- street rating: adaptive difficulty (10/26, Mark) ----------
   // A chess-style rating: you have one, every encounter has one, and the next encounter is picked near
   // yours. It rates how you fight (won or lost, hits taken, punches and shots avoided), never how hard
-  // you hit or how fast you won: fitness pays through damage and records, so getting fitter never makes
-  // the game harder. It moves in batches (after each crime center, every few street fights, and at the
-  // end of a walk); each fight's surprise is clipped and a walk's first fight counts half, so one bad
-  // fight or a bad warm-up barely moves it. Camera play only: touch play reads it and never changes it.
+  // you hit or how fast you won. 10/26 PM (Mark: "per session, not saved; you might be tired one day,
+  // energised the next"): every walk starts at RATE.start and finds today's level as you fight; nothing
+  // is kept. It moves in batches (after each crime center, every few street fights); each fight's
+  // surprise is clipped and a walk's first fight counts half, so one bad fight or a bad warm-up barely
+  // moves it. Camera play only: touch play stays at the start.
   //   gap      "at your level" is an encounter you are expected to score 0.75 against (a solid win), not a coin flip
   //   perDl    rating points per step of difficulty (tier mix, group size, wind-up, a little health)
   //   mix      [share, offset]: most encounters at your level, some easier, now and then a tough one
   //   doubt    how sure the rating is: big moves while new, small once settled, growing again after time away
-  const RATE = { start: 1200, doubt: 350, minDoubt: 60, doubtPerDay: 10, kMin: 8, kMax: 40, clip: 0.3, firstK: 0.5, batch: 5, gap: 190, perDl: 70, pace: 50,
+  const RATE = { start: 1200, doubt: 350, minDoubt: 80, shrink: 0.88, kMin: 12, kMax: 40, clip: 0.3, firstK: 0.5, batch: 3, gap: 190, perDl: 70, pace: 50,
     tierR: { 1: 800, 2: 1000, 3: 1200, 4: 1400, 5: 1600 }, mix: [[0.7, 0], [0.2, -150], [0.1, 200]] };
-  Prog.rating = { r: RATE.start + 40 * (level() - 1), doubt: RATE.doubt, at: Date.now() }; // (seeded from the old level)
-  try {
-    const saved = JSON.parse(localStorage.getItem(PROG_KEY) || 'null');
-    if (saved && saved.rating) Prog.rating = Object.assign(Prog.rating, saved.rating);
-    Prog.rating.doubt = Math.min(RATE.doubt, Prog.rating.doubt + RATE.doubtPerDay * Math.max(0, (Date.now() - (Prog.rating.at || Date.now())) / 864e5));
-  } catch (_) {}
-  const Rating = { pending: [], walkFights: 0, walkStart: Prog.rating.r };
+  const Rating = { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start };
   // an encounter's rating: the group's strengths added up (three thugs are about one tier 2), plus its pace
   function encRating(ids, dl) {
     const sum = ids.reduce((n, id) => n + 10 ** (RATE.tierR[tierOf(id)] / 400), 0);
@@ -6890,7 +6885,7 @@ void main() {
   function rateTarget() {
     let r = Math.random(), off = 0;
     for (const [p, o] of RATE.mix) { if ((r -= p) <= 0) { off = o; break; } }
-    return Prog.rating.r - RATE.gap + off;
+    return Rating.r - RATE.gap + off;
   }
   // the difficulty step for a target (1 is the old level 1; below 1 is easier still)
   const dlFor = (target) => Math.max(-1, Math.min(15, 1 + (target - (RATE.start - RATE.gap)) / RATE.perDl));
@@ -6907,21 +6902,20 @@ void main() {
     return won ? 0.6 + 0.4 * k : 0.4 * k;
   }
   function rateFight(q, won, encR) {
-    const e = 1 / (1 + 10 ** ((encR - Prog.rating.r) / 400));
+    const e = 1 / (1 + 10 ** ((encR - Rating.r) / 400));
     Rating.pending.push({ s: fightScore(q, won), e, w: Rating.walkFights++ === 0 ? RATE.firstK : 1 });
   }
   function rateFlush() {
     const P0 = Rating.pending;
     Rating.pending = [];
     if (!P0.length || isDemo()) return;
-    const R = Prog.rating;
+    const R = Rating;
     for (const p of P0) {
       const k = RATE.kMin + (RATE.kMax - RATE.kMin) * (R.doubt / RATE.doubt);
       R.r += k * p.w * Math.max(-RATE.clip, Math.min(RATE.clip, p.s - p.e));
-      R.doubt = Math.max(RATE.minDoubt, R.doubt * 0.92);
+      R.doubt = Math.max(RATE.minDoubt, R.doubt * RATE.shrink);
     }
-    R.at = Date.now();
-    saveProg();
+    R.low = Math.min(R.low, R.r); R.high = Math.max(R.high, R.r);
   }
 
   // ---------- the phone: wave your left hand to open it ----------
@@ -7605,7 +7599,7 @@ void main() {
     Fight.guardHp = FT.myGuard.hp; Fight.guardBrokenUntil = -Infinity; Fight.shift = null; Fight.shiftCd = 0;
     Q.fight = { start: now, thrown: 0, landed: 0, clean: 0, hits: 0, power: [], takedowns: [], atYou: 0, avoided: 0, blocked: 0 };
     Fight.active.encR = encRating(Fight.foes.filter((f) => f.state !== 'ko').map((f) => f.arch), foe.dl != null ? foe.dl : 1);
-    foe.state = 'guard'; foe.until = now + rand(900, 1600);
+    foe.state = 'guard'; foe.until = now + rand(900, 1600); foe.metAt = foe.metAt || now;
     foe.guardHp = foe.guardMax || FT.guard.hp;
     Fight.lowSince = null;
     engine.enter_combat({
@@ -7843,7 +7837,8 @@ void main() {
       if (!hit) {
         const hd = foe.hit && foe.hit.head;
         if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: `${rd.name}: ${hr >= 4 && hr <= 8 ? 'under it' : 'slipped'}`, big: false });
-        fightMsg(hr >= 4 && hr <= 8 ? 'They ducked: round up the middle' : 'They slipped: round from that side', 800);
+        if (Fight.readMsg && now - Fight.readMsg.t < 50) fightMsg(Fight.readMsg.text, 1400);
+        else fightMsg(hr >= 4 && hr <= 8 ? 'They ducked: round up the middle' : 'They slipped: round from that side', 800);
         return;
       }
       const m = foe.hMove;
@@ -7984,6 +7979,7 @@ void main() {
     if (!claim(e.hand, now)) return;
     const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
     const rd = readPunch(e, lead);
+    readTheirPunch(a, rd, now);
     const h = Fight.hand[e.hand], v = h && h.sp ? Math.max(0, ...h.sp.filter((q) => now - q.t <= FT.hit.speedMs).map((q) => q.v)) : 0;
     recNote('punch', v);
     Fight.read = rd; // landed() and impact() read it: its hours, its name
@@ -8101,6 +8097,30 @@ void main() {
     const m = f.hMove, d = ZONE_DIR[key];
     return !!m && f.state === 'guard' && now - m.t < FT.foeHead.intoMs && m.dx * d[0] + m.dy * d[1] > 0.3;
   }
+  // your favorite punch, seen coming (see Habit): a head mover slips a straight or ducks a round and
+  // counters at once; anyone else covers up and lets the guard bar take it
+  function readTheirPunch(a, rd, now) {
+    const key = rd.body ? null : rd.kind === 'uppercut' ? 'rising' : rd.name === 'Straight' ? 'straight' : 'round';
+    if (!key || a.tutor) return;
+    const fav = favorite(Habit.punch), foe = a.foe;
+    habitPush(Habit.punch, key);
+    if (fav !== key || foe.state !== 'guard' || (Fight.shift && now < Fight.shift.until) || !learns(foe, 'punch', now)) return;
+    foe.readCool = now + HAB.coolMs;
+    Habit.read++; Fight.stats.readBy = (Fight.stats.readBy || 0) + 1;
+    if (headOf(foe).rate >= 0.3) {
+      // off the line it travels on: a straight or a rising round is slipped, a round from the side ducked
+      const s = Math.random() < 0.5 ? -1 : 1, to = key === 'round' ? { x: 0, y: 1 } : { x: s, y: 0 };
+      foe.hv = { x: to.x, y: to.y }; foe.hSeq = [Object.assign({ until: now + 450 }, to)]; foe.hMove = { dx: 0, dy: 0, t: now };
+      Fight.readMsg = { t: now, text: `Read your ${key}: mix it up` };
+      // and the counter comes straight back
+      foe.state = 'windup'; foe.judging = false; foe.kind = key === 'round' ? 'uppercut' : 'hook'; foe.hookSide = s < 0 ? 'R' : 'L';
+      foe.aim = Object.assign({}, Fight.head); foe.read = null;
+      foe.until = now + windupMs() * HAB.counterK;
+    } else {
+      foe.state = 'cover'; foe.until = now + 1200;
+      fightMsg(`Covered up: read your ${key}`, 1200);
+    }
+  }
   // ---------- punches on the clock (10/24, engine 0.16.0; names and covers simplified 10/24 night) ----------
   // 10/24 night (Mark: "do away with the boxing terminology, just call things straights or rounds";
   // engine 0.18.0 lands a punch as the fist leaves the guard, so its path is only the start): a
@@ -8147,6 +8167,14 @@ void main() {
     const tdK = archK(foe, 'td');
     if (foe.state === 'brace' && tq.q + tdK < FT.td.beatBrace) return { takedown: false, braced: true };
     const timed = ['windup', 'hurt', 'broken', 'stuffed'].includes(foe.state);
+    // your shot habit (see Habit): the third in a minute meets a braced opponent, unless it was timed or big
+    const now = performance.now();
+    Habit.shots = Habit.shots.filter((t) => now - t < HAB.shotMs); Habit.shots.push(now);
+    if (!timed && Habit.shots.length >= HAB.shots && learns(foe, 'shot', now) && tq.q + tdK < FT.td.beatBrace) {
+      foe.readCool = now + HAB.coolMs; Habit.read++; Fight.stats.readBy = (Fight.stats.readBy || 0) + 1;
+      fightMsg('He expected the shot: time it', 1400);
+      return { takedown: false, braced: true };
+    }
     if (!timed && tq.q < archK(foe, 'stuff')) return { takedown: false, braced: true };
     const q = Math.max(0, Math.min(1, tq.q + tdK + (timed ? FT.td.timedBonus : 0)));
     // 10/23 (Mark): no penalty for taking one down in a group: the full burst, and the friend waits
@@ -8245,6 +8273,9 @@ void main() {
       const evaded = !inZone(key, c.hour) || now - ((Fight.clockOut || {})[key] || -Infinity) < FT.head.clock.graceMs;
       const lowNow = isLowHour(c);
       const cost = FT.myGuard[foe.kind] || 1;
+      if (evaded) habitPush(Habit.escape, lowNow ? 'low' : c.vx >= 0 ? 'right' : 'left');
+      const readHit = foe.read === 'escape' && !evaded;
+      if (readHit) { Habit.read++; Fight.stats.readBy = (Fight.stats.readBy || 0) + 1; }
       if (Q.fight) { Q.fight.atYou++; if (evaded) Q.fight.avoided++; else if (!(foe.kind === 'uppercut' && lowNow) && Fight.guardHp >= cost * 0.5) Q.fight.blocked++; }
       const off = effort(Math.hypot(c.vx, c.vy + 1) / 2, 0.3, 1);
       if (evaded && foe.kind === 'straight') { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', off); fightMsg('Slipped: counter!'); }
@@ -8260,6 +8291,8 @@ void main() {
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
       else { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall when it comes up the middle!' }[foe.kind] || 'Hit', 1100); }
+      if (readHit) { fightMsg(`Read your ${ESC_NAME[foe.readEsc]}: mix it up`, 1400); fightTalk('foe', 'landed', now, 0.5); }
+      if (foe.read === 'escape') foe.read = null;
       foe.swingUntil = now + FT.swingMs; foe.swingKind = foe.kind; // the punch is drawn flying at where your head was
       foe.state = 'guard'; foe.until = now + rand(700, 1500);
       return;
@@ -8284,14 +8317,21 @@ void main() {
     if (Math.random() < (foe.turtle || 0)) { foe.state = 'cover'; foe.until = now + rand(1600, 2600); return; }
     // between moves they drift between close and mid range
     a.range = Math.random() < FT.midChance ? 'mid' : 'close';
-    const punch = (kind) => {
+    const punch = (kind, side) => {
       a.range = 'close'; foe.state = 'windup'; foe.judging = false; foe.kind = kind; foe.aim = Object.assign({}, Fight.head);
-      if (kind === 'hook') foe.hookSide = Math.random() < 0.5 ? 'L' : 'R';
+      if (kind === 'hook') foe.hookSide = side || (Math.random() < 0.5 ? 'L' : 'R');
       foe.until = now + windupMs() + (kind === 'hook' ? 100 : kind === 'uppercut' ? 50 : 0);
     };
     // 10/21 (Mark: the AI should read your head movement and level, so you can bait them):
     // a skilled type reads you; a thug does not
     const reads = A.reads || [];
+    // your favorite way out of a punch: they throw at it (their left hook comes to your right)
+    const esc = favorite(Habit.escape);
+    if (esc && learns(foe, 'escape', now)) {
+      if (esc === 'low') punch('uppercut'); else punch('hook', esc === 'right' ? 'L' : 'R');
+      foe.read = 'escape'; foe.readEsc = esc; foe.readCool = now + HAB.coolMs;
+      return;
+    }
     const slipsLately = (Fight.slips || []).filter((t) => now - t < 3000).length;
     const lowLately = now - Fight.lastLowAt < 2500;
     if (reads.includes('slips') && slipsLately >= 2 && Math.random() < 0.6) { punch('hook'); foe.read = 'slips'; return; }
@@ -8320,7 +8360,7 @@ void main() {
     const out = a.foe;
     if (out.state !== 'ko') { out.state = 'sub'; out.until = 0; out.guardHp = FT.guard.hp; }
     a.foe = next;
-    next.state = 'guard'; next.until = now + 900; next.guardHp = next.guardHp ?? FT.guard.hp;
+    next.state = 'guard'; next.until = now + 900; next.metAt = next.metAt || now; next.guardHp = next.guardHp ?? FT.guard.hp;
     a.range = 'close'; a.tagAt = now + rand(FT.tag.everyS[0], FT.tag.everyS[1]) * 1000;
     Fight.combo.n = 0;
     const line = why === 'down' ? 'His friend jumps in!' : why === 'broken' || why === 'teep' ? 'Tag! The other one steps in.' : why === 'ko' ? 'Next one!' : 'They switch!';
@@ -8881,11 +8921,19 @@ void main() {
       counter: of(src, 'counter', Math.min, 1), td: of(src, 'td', Math.min, 0), stuff: of(src, 'stuff', Math.max, 0),
       shoot: of(src, 'shoot', Math.min, 1), sprawl: of(src, 'sprawl', Math.max, 1), gnp: of(src, 'gnp', Math.min, 1),
       reads: [...new Set(src.flatMap((A) => A.reads || []))],
+      learn: [...new Set(all.flatMap((A) => A.learn || []))],
       head: heads.length ? { rate: Math.max(...heads.map((h) => h.rate)), amp: Math.max(...heads.map((h) => h.amp || 1)), moves: hm } : undefined,
       moves,
     };
   }
   for (const id of TIER2) ARCH[id].tier = 2;
+  // 10/26 PM (Mark: tier 2 and up pick up on your tendencies and punish them; thugs do not): what each
+  // type learns about you (see Habit): your favorite way out of a punch, your favorite punch, your shots
+  Object.assign(ARCH.boxer, { learn: ['escape', 'punch'] });
+  Object.assign(ARCH.wrestler, { learn: ['escape', 'shot'] });
+  Object.assign(ARCH.turtle, { learn: ['punch'] });
+  Object.assign(ARCH.roidhead, { learn: ['escape'] });
+  Object.assign(ARCH.tweaker, { learn: ['punch'] });
   const combos = (k, from = 0) => (k === 0 ? [[]] : TIER2.slice(from).flatMap((id, i) => combos(k - 1, from + i + 1).map((c) => [id, ...c])));
   for (const k of [2, 3]) for (const c of combos(k)) ARCH[c.join('+')] = mergeArch(c);
   // the boss: all five (boxer and wrestler reads, a turtle's cover, a roidhead's health, a tweaker's
@@ -8950,6 +8998,37 @@ void main() {
     if (!f.metAt) f.metAt = now;
     return now - f.metAt < 4500 && A.tip ? `${A.name}: ${A.tip}` : A.name;
   }
+  // ---------- habits (10/26 PM, Mark: "pick up on tendencies and punish the player, tier 2 and above") ----------
+  // Kept for the walk (they watched you fight their friends), the last `window` of each:
+  //   escape  how you got out of their punches: 'left', 'right' or 'low'
+  //   punch   the shape you throw: 'straight', 'round' or 'rising' (body rounds cannot be read)
+  //   shots   when you shot
+  // A favorite is `share` of the last `window` with at least `need` of them. A type that learns it acts
+  // on it `str` of the time by tier (2: 0.45 up to the boss 0.9), once it has had `learnMs` in front of
+  // you, at most once each `coolMs`:
+  //   escape  they throw at your favorite way out: the hook that comes to that side, or the uppercut
+  //           if you duck (it is telegraphed like any punch: go the other way)
+  //   punch   they see your favorite punch coming: a head mover slips it (a straight) or ducks it (a
+  //           round) and counters at once; anyone else covers up and the guard bar takes it
+  //   shot    your `shots`th shot in a minute meets a braced opponent (a timed or a big shot still beats it)
+  // Every read says so ("Read your slip right: mix it up"), and the summary counts them.
+  const HAB = { window: 10, need: 5, share: 0.6, coolMs: 2500, learnMs: 4000, shotMs: 60000, shots: 3, str: { 2: 0.45, 3: 0.65, 4: 0.8, 5: 0.9 }, counterK: 0.7 };
+  const Habit = { escape: [], punch: [], shots: [], read: 0 };
+  function favorite(list) {
+    const recent = list.slice(-HAB.window), n = {};
+    if (recent.length < HAB.need) return null;
+    for (const k of recent) n[k] = (n[k] || 0) + 1;
+    const [top, c] = Object.entries(n).sort((a, b) => b[1] - a[1])[0];
+    return c / recent.length >= HAB.share ? top : null;
+  }
+  const habitPush = (list, k) => { list.push(k); if (list.length > 3 * HAB.window) list.shift(); };
+  // does this opponent act on that habit now (thugs never)
+  function learns(f, what, now) {
+    if (!f || tierOf(f.arch) < 2 || !(archOf(f).learn || []).includes(what)) return false;
+    if (now - (f.metAt || now) < HAB.learnMs || now < (f.readCool || 0)) return false;
+    return Math.random() < HAB.str[tierOf(f.arch)];
+  }
+  const ESC_NAME = { left: 'slip left', right: 'slip right', low: 'duck' };
   const makeFoe = (x, z, i, lvl, id = pickArch(lvl)) => {
     const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * Math.max(0.85, 1 + 0.03 * (lvl - 1)));
     return applyArch({ x, z, dl: lvl, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90], [90, 90, 96], [150, 110, 40]][(G.fightsDone + i) % 5], turtle: (G.fightsDone + i) % 3 === 1 ? 0.55 : 0.1, guardHp: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), guardMax: FT.guard.hp * ((G.fightsDone + i) % 3 === 1 ? FT.guard.turtleK : 1), seed: Math.random() }, id);
@@ -11042,7 +11121,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-26 \u00b7 street rating: encounters adapt to how you fight';
+  const BUILD = '2026-10-26 PM \u00b7 rating per walk, tier 2 and up read your habits';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -11094,7 +11173,8 @@ void main() {
     Object.assign(Peds, { list: [], waves: 0, chatAt: 0, voiceAt: -Infinity });
     Object.assign(Tutor, { report: '', clip: null });
     Object.assign(Q, { fights: [], fight: null });
-    Object.assign(Rating, { pending: [], walkFights: 0, walkStart: Prog.rating.r });
+    Object.assign(Habit, { escape: [], punch: [], shots: [], read: 0 });
+    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start });
     Object.assign(Rec, { walk: {}, win: { t: 0, spm: 0 } });
     Object.assign(G, { restMs: 0, cabs: 0, intervalLog: [] });
     Traffic.cars = []; Vendors.list = [];
@@ -11152,7 +11232,7 @@ void main() {
       ['Stops reached', G.arrived], ...(Stage.started ? [['Crime centers cleared', `${Stage.cleared} of ${Stage.started}`]] : []),
       ...(G.fightsDone || fq.length ? [['Fights won', `${Fight.stats.won} of ${G.fightsDone}`], ['Punches landed', `${landed} of ${thrown}${clean < landed ? `, ${clean} clean` : ''}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
       ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []),
-      ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Street rating', isDemo() ? `${Math.round(Prog.rating.r)} (rated in camera play)` : `${Math.round(Prog.rating.r)}${Math.round(Prog.rating.r) !== Math.round(Rating.walkStart) ? `, was ${Math.round(Rating.walkStart)}` : ''}`],
+      ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Habits read against you', Habit.read], ['Street rating today', isDemo() ? 'rated in camera play' : `${Math.round(Rating.r)} (started at ${RATE.start}, range ${Math.round(Rating.low)} to ${Math.round(Rating.high)})`],
       ...(Tutor.report ? [['Combat tutorial', Tutor.report]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [];
@@ -12296,7 +12376,7 @@ void main() {
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Side, ARCH, Rating, RATE, encRating, ratedGroup, rateTarget, dlFor, fightScore, rateFight, rateFlush, streetGroup, stageGroup, pickTier, nearDen, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { Side, ARCH, Habit, HAB, Rating, RATE, encRating, ratedGroup, rateTarget, dlFor, fightScore, rateFight, rateFlush, streetGroup, stageGroup, pickTier, nearDen, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>
