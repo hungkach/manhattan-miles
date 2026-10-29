@@ -7279,7 +7279,7 @@ void main() {
     // your guard bar blocks their punches by itself (the gloves come up), each block costing it;
     // it refills by regen a second (after pauseMs without a block). Slips, ducks, stuffed shots
     // and knockouts top it up. Empty, punches land. An uppercut that catches you low skips it.
-    myGuard: { hp: 6, straight: 1, hook: 1.5, uppercut: 1.5, regen: 0.3, pauseMs: 1200, bonus: { slip: 1, duck: 1, stuff: 1.5, ko: 3, teep: 1.5 } },
+    myGuard: { hp: 6, openMs: 350, straight: 1, hook: 1.5, uppercut: 1.5, regen: 0.3, pauseMs: 1200, bonus: { slip: 1, duck: 1, stuff: 1.5, ko: 3, teep: 1.5 } },
     oneHand: false,
     // aftermath: a hurt opponent (under fleeBelow of their health) may run off instead of going down
     fleeBelow: 0.3, fleeChance: 0.35, fleeMs: 2200, crowd: 6,
@@ -8032,6 +8032,7 @@ void main() {
     Fight.fistFlash[e.hand] = now + 180;
     if (!isDemo() && !a.tutor && now - a.start < FT.gate.startQuietMs) return;
     if (!claim(e.hand, now)) return;
+    Fight.lastPunchAt = now; // your guard is down while it is out (FT.myGuard.openMs)
     const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
     const rd = readPunch(e, lead);
     readTheirPunch(a, rd, now);
@@ -8328,10 +8329,15 @@ void main() {
       const evaded = !inZone(key, c.hour) || now - ((Fight.clockOut || {})[key] || -Infinity) < FT.head.clock.graceMs;
       const lowNow = isLowHour(c);
       const cost = FT.myGuard[foe.kind] || 1;
+      // 10/29 (Mark: "both guard bars should work the same way: auto block unless you are slipping, ducking or
+      // weaving or in the middle of throwing a strike"): yours is down while your punch is out (openMs) and when
+      // their punch finds your head off the 12 o'clock line or mid weave, as theirs is (see landed)
+      const punching = now - (Fight.lastPunchAt || -Infinity) < FT.myGuard.openMs;
+      const guardDown = punching || !inHours(c.hour, [11, 1]) || !!s.weaving;
       if (evaded) habitPush(Habit.escape, lowNow ? 'low' : c.vx >= 0 ? 'right' : 'left');
       const readHit = foe.read === 'escape' && !evaded;
       if (readHit) { Habit.read++; Fight.stats.readBy = (Fight.stats.readBy || 0) + 1; }
-      if (Q.fight) { Q.fight.atYou++; if (evaded) Q.fight.avoided++; else if (!(foe.kind === 'uppercut' && lowNow) && Fight.guardHp >= cost * 0.5) Q.fight.blocked++; }
+      if (Q.fight) { Q.fight.atYou++; if (evaded) Q.fight.avoided++; else if (!(foe.kind === 'uppercut' && lowNow) && !guardDown && Fight.guardHp >= cost * 0.5) Q.fight.blocked++; }
       const off = effort(Math.hypot(c.vx, c.vy + 1) / 2, 0.3, 1);
       if (evaded && foe.kind === 'straight') { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', off); fightMsg('Slipped: counter!'); }
       else if (evaded && foe.kind === 'hook' && lowNow) { Fight.stats.ducked = (Fight.stats.ducked || 0) + 1; Fight.counterUntil = now + counterMs(foe); guardBonus('duck', effort(c.ny, 0.5, 1)); fightMsg('Ducked it: counter!'); tone(520, 0.1, 0.12, 'triangle'); }
@@ -8339,12 +8345,13 @@ void main() {
       else if (evaded && foe.kind === 'uppercut' && now - Fight.lastLowAt < 1600 && !lowNow) { Fight.counterUntil = now + counterMs(foe); guardBonus('duck', 1); fightMsg('Baited it: counter!', 1100); tone(520, 0.1, 0.12, 'triangle'); }
       else if (evaded && foe.kind === 'uppercut') { Fight.stats.slipped++; Fight.counterUntil = now + counterMs(foe); guardBonus('slip', off); fightMsg('Slipped the round: counter!'); }
       else if (foe.kind === 'uppercut' && lowNow) { hurtPlayer(now, FT.upperLowHit); fightMsg('Caught low!', 1200); say('Caught low. Stand tall when it comes up the middle.', 'feedback'); Fight.shake = { t: now, k: 2 }; tone(110, 0.3, 0.45, 'sine', 0, 40); }
-      else if (Fight.guardHp >= cost * 0.5) {
+      else if (!guardDown && Fight.guardHp >= cost * 0.5) {
         Fight.guardHp = Math.max(0, Fight.guardHp - cost);
         Fight.lastBlockAt = now; Fight.stats.blocked++;
         Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
+      else if (guardDown) { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg(punching ? 'Caught punching' : 'Moved into it', 1100); }
       else { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall when it comes up the middle!' }[foe.kind] || 'Hit', 1100); }
       if (readHit) { fightMsg(`Read your ${ESC_NAME[foe.readEsc]}: mix it up`, 1400); fightTalk('foe', 'landed', now, 0.5); }
       if (foe.read === 'escape') foe.read = null;
@@ -11200,7 +11207,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-29 \u00b7 big gangs, guards always up, uppercuts without a dip (engine 0.22.0)';
+  const BUILD = '2026-10-29 PM \u00b7 your guard works like theirs: down while punching or moving into it';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
