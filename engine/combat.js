@@ -646,6 +646,13 @@
       // (a punch thrown from a fist already dropped under its guard counts the drop: a low round's sweep)
       const dip = Math.max(s0.y, m.guard ? m.guard.y : -Infinity) - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - e0.ex)));
       let straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
+      // 0.23.0 (Mark 10/29: "most straights were read as rounds"): from a guard at the chest (a tired guard)
+      // the arm lifts forward to shoulder height, and the elbow drifts out a little on its way up: synthetic
+      // straights from there swing it out up to 0.105 m (over straightFlare) while it rises 0.18 m and more;
+      // a hook whose elbow stays that close in rises it at most 0.088 m (overhands swing out 0.106 m and more,
+      // their fists farther out). So an elbow kept within liftFlare that lifts liftElbow, with no dip, is a straight
+      const sg = hand === 'right' ? 1 : -1;
+      if (!straight && dip <= c.straightDip * k && flare <= c.liftFlare * k && Math.max(...p.map((x) => x.ey)) - e0.ey >= c.liftElbow * k && Math.max(...p.map((x) => sg * (x.x - s0.x))) <= c.liftOut * k) straight = true;
       // a round one's arc (0.15.0, Mark: "the fist leaves the guard and travels upward in the conflict
       // zone"): 'up' (an uppercut) rises from its lowest point with the elbow kept in, else 'side'
       // (a hook or an overhand, the elbow swinging out)

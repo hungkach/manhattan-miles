@@ -218,6 +218,9 @@
           headSpeed: 1.0,    // S/s (or T/s down): the head moving this fast, a slip or a duck, makes the pillar strict (0.22.0)
           headQuietMs: 200,  // and for this long after
           headK: 2,          // the room is this many times wider meanwhile
+          liftFlare: 0.115,  // m: a punch whose elbow stays within this (0.23.0) ...
+          liftElbow: 0.13,   // m: ... and lifts this much, with no dip, is a straight thrown from a chest-high guard
+          liftOut: 0.25,     // m: (its fist going no farther out to its own side than this)
           upLift: 0.045,     // m: a fist risen this much as it leaves, with no dip and the elbow in, is an uppercut (0.22.0)
           upPic: 0.11,       // S: and risen this much in the picture
           upExit: 0.12,      // m: a fist this far above where it left has left the pillar's top (0.22.0)

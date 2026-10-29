@@ -1551,11 +1551,20 @@
   }
 
   const NUM_WORD = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
+  // 10/29 (Mark: "the first three encounters should be scripted: 3 thugs to start, then a more curated
+  // version, then a third; after that the algorithm adjusts"): a walk's first three street encounters are
+  // these, whatever the rating says, and they still feed it (they are the walk's placement fights)
+  const OPENERS = [
+    { ids: ['thug', 'thug', 'thug'], dl: 1 },                     // three thugs: the guard, counters, the clock
+    { ids: ['thug', 'thug', 'thug', 'boxer'], dl: 1.5 },          // a crew with a boxer at the back: he moves his head and reads you
+    { ids: ['wrestler', 'boxer'], dl: 2 },                        // a fighter pair: shots to sprawl, a head to catch
+  ];
+  const opener = () => (!Stage.on && G.fightsDone < OPENERS.length ? OPENERS[G.fightsDone] : null);
   // put an opponent on the street ahead, out of any building
   function spawnFoes(dist = FT.spawnAhead) {
     Fight.scene = null;
     // (10/25 tiers: one tier a group, thugs three or more; the very first is thugs; 10/26: near your rating)
-    const tgt = rateTarget(), { ids, dl: lvl } = G.fightsDone === 0 ? { ids: streetGroup(dlFor(tgt), 1, 1), dl: dlFor(tgt) } : ratedGroup(tgt), n = ids.length;
+    const op = opener(), { ids, dl: lvl } = op ? { ids: op.ids.slice(), dl: op.dl } : ratedGroup(rateTarget()), n = ids.length;
     let d = dist;
     while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
     const x = P.x + Math.sin(P.yaw) * d, z = P.z + Math.cos(P.yaw) * d;
@@ -2335,9 +2344,9 @@
   function readPunch(e, lead) {
     const hand = e.hand, right = hand === 'right', s = right ? 1 : -1;
     if (e.shape === 'straight') return { name: 'Straight', kind: hand === lead ? 'jab' : 'cross', cover: [[10.75, 1.25]], into: [0, -1] };
-    // (10/25, Mark: "not every uppercut was registered"): a round that left the pillar out the top (exit
-    // 'up') rose to the head from inside it, so it reaches 6 and 12 like the 'up' arc, whatever its elbow did
-    if (e.arc === 'up' || e.exit === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
+    // (10/29: the engine's arc alone says rising; since 0.22.0 a jab from a low guard can leave the pillar's
+    // top, and reading that as rising made straights rounds)
+    if (e.arc === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
     // 10/25 (engine 0.21.0, Mark: "lower rounds do not pick up at all"): a round that went down past the
     // ribs on its way (`low`, S under the shoulders) is a body round: the body does not slip, so it lands
     // wherever their head is, for body damage (FT.hit.body)
@@ -3395,7 +3404,7 @@
       if (P.speed > 0.5 && !Calls.active) Fight.waitS -= dt;
       // (10/25, Mark: no random crimes within half a block of a crime center, so they do not get in
       // its way; one waiting to happen holds until you are clear of it)
-      if (Fight.waitS <= 0 && !nearDen(P.x, P.z, FT.spawnAhead + 10)) spawnScene(pick(SCENES), now);
+      if (Fight.waitS <= 0 && !nearDen(P.x, P.z, FT.spawnAhead + 10)) { if (opener()) spawnFoes(); else spawnScene(pick(SCENES), now); }
       return;
     }
     const foe = current();
@@ -5373,7 +5382,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-29 night \u00b7 no floating buildings, no lamps in the road';
+  const BUILD = '2026-10-29 late night \u00b7 straights from a low guard read as straights, scripted first three fights (engine 0.23.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;

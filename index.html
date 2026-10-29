@@ -119,7 +119,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.22.0 from hungkach/body-arcade@2511165, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.23.0 from hungkach/body-arcade@332aa30, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -128,7 +128,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.22.0';
+  RE.version = '0.23.0';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -449,6 +449,9 @@
           headSpeed: 1.0,    // S/s (or T/s down): the head moving this fast, a slip or a duck, makes the pillar strict (0.22.0)
           headQuietMs: 200,  // and for this long after
           headK: 2,          // the room is this many times wider meanwhile
+          liftFlare: 0.115,  // m: a punch whose elbow stays within this (0.23.0) ...
+          liftElbow: 0.13,   // m: ... and lifts this much, with no dip, is a straight thrown from a chest-high guard
+          liftOut: 0.25,     // m: (its fist going no farther out to its own side than this)
           upLift: 0.045,     // m: a fist risen this much as it leaves, with no dip and the elbow in, is an uppercut (0.22.0)
           upPic: 0.11,       // S: and risen this much in the picture
           upExit: 0.12,      // m: a fist this far above where it left has left the pillar's top (0.22.0)
@@ -2204,6 +2207,13 @@
       // (a punch thrown from a fist already dropped under its guard counts the drop: a low round's sweep)
       const dip = Math.max(s0.y, m.guard ? m.guard.y : -Infinity) - Math.min(...p.map((x) => x.y)), flare = Math.max(...p.map((x) => Math.abs(x.ex - e0.ex)));
       let straight = dip <= c.straightDip * k && flare <= c.straightFlare * k;
+      // 0.23.0 (Mark 10/29: "most straights were read as rounds"): from a guard at the chest (a tired guard)
+      // the arm lifts forward to shoulder height, and the elbow drifts out a little on its way up: synthetic
+      // straights from there swing it out up to 0.105 m (over straightFlare) while it rises 0.18 m and more;
+      // a hook whose elbow stays that close in rises it at most 0.088 m (overhands swing out 0.106 m and more,
+      // their fists farther out). So an elbow kept within liftFlare that lifts liftElbow, with no dip, is a straight
+      const sg = hand === 'right' ? 1 : -1;
+      if (!straight && dip <= c.straightDip * k && flare <= c.liftFlare * k && Math.max(...p.map((x) => x.ey)) - e0.ey >= c.liftElbow * k && Math.max(...p.map((x) => sg * (x.x - s0.x))) <= c.liftOut * k) straight = true;
       // a round one's arc (0.15.0, Mark: "the fist leaves the guard and travels upward in the conflict
       // zone"): 'up' (an uppercut) rises from its lowest point with the elbow kept in, else 'side'
       // (a hook or an overhand, the elbow swinging out)
@@ -7441,11 +7451,20 @@ void main() {
   }
 
   const NUM_WORD = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
+  // 10/29 (Mark: "the first three encounters should be scripted: 3 thugs to start, then a more curated
+  // version, then a third; after that the algorithm adjusts"): a walk's first three street encounters are
+  // these, whatever the rating says, and they still feed it (they are the walk's placement fights)
+  const OPENERS = [
+    { ids: ['thug', 'thug', 'thug'], dl: 1 },                     // three thugs: the guard, counters, the clock
+    { ids: ['thug', 'thug', 'thug', 'boxer'], dl: 1.5 },          // a crew with a boxer at the back: he moves his head and reads you
+    { ids: ['wrestler', 'boxer'], dl: 2 },                        // a fighter pair: shots to sprawl, a head to catch
+  ];
+  const opener = () => (!Stage.on && G.fightsDone < OPENERS.length ? OPENERS[G.fightsDone] : null);
   // put an opponent on the street ahead, out of any building
   function spawnFoes(dist = FT.spawnAhead) {
     Fight.scene = null;
     // (10/25 tiers: one tier a group, thugs three or more; the very first is thugs; 10/26: near your rating)
-    const tgt = rateTarget(), { ids, dl: lvl } = G.fightsDone === 0 ? { ids: streetGroup(dlFor(tgt), 1, 1), dl: dlFor(tgt) } : ratedGroup(tgt), n = ids.length;
+    const op = opener(), { ids, dl: lvl } = op ? { ids: op.ids.slice(), dl: op.dl } : ratedGroup(rateTarget()), n = ids.length;
     let d = dist;
     while (d > 6 && blocked(P.x + Math.sin(P.yaw) * d, P.z + Math.cos(P.yaw) * d)) d -= 2;
     const x = P.x + Math.sin(P.yaw) * d, z = P.z + Math.cos(P.yaw) * d;
@@ -8225,9 +8244,9 @@ void main() {
   function readPunch(e, lead) {
     const hand = e.hand, right = hand === 'right', s = right ? 1 : -1;
     if (e.shape === 'straight') return { name: 'Straight', kind: hand === lead ? 'jab' : 'cross', cover: [[10.75, 1.25]], into: [0, -1] };
-    // (10/25, Mark: "not every uppercut was registered"): a round that left the pillar out the top (exit
-    // 'up') rose to the head from inside it, so it reaches 6 and 12 like the 'up' arc, whatever its elbow did
-    if (e.arc === 'up' || e.exit === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
+    // (10/29: the engine's arc alone says rising; since 0.22.0 a jab from a low guard can leave the pillar's
+    // top, and reading that as rising made straights rounds)
+    if (e.arc === 'up') return { name: 'Round', kind: 'uppercut', cover: [[4.5, 7.5], [11, 1]], into: [0, 1] };
     // 10/25 (engine 0.21.0, Mark: "lower rounds do not pick up at all"): a round that went down past the
     // ribs on its way (`low`, S under the shoulders) is a body round: the body does not slip, so it lands
     // wherever their head is, for body damage (FT.hit.body)
@@ -9285,7 +9304,7 @@ void main() {
       if (P.speed > 0.5 && !Calls.active) Fight.waitS -= dt;
       // (10/25, Mark: no random crimes within half a block of a crime center, so they do not get in
       // its way; one waiting to happen holds until you are clear of it)
-      if (Fight.waitS <= 0 && !nearDen(P.x, P.z, FT.spawnAhead + 10)) spawnScene(pick(SCENES), now);
+      if (Fight.waitS <= 0 && !nearDen(P.x, P.z, FT.spawnAhead + 10)) { if (opener()) spawnFoes(); else spawnScene(pick(SCENES), now); }
       return;
     }
     const foe = current();
@@ -11263,7 +11282,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-29 night \u00b7 no floating buildings, no lamps in the road';
+  const BUILD = '2026-10-29 late night \u00b7 straights from a low guard read as straights, scripted first three fights (engine 0.23.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
