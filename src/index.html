@@ -180,6 +180,9 @@
       <label class="pick">Look
         <select id="look"><option value="golden">Golden hour</option><option value="day">Day</option><option value="night">Night</option></select>
       </label>
+      <label class="pick">Season
+        <select id="season"><option value="auto">Auto (by the date)</option><option value="spring">Spring</option><option value="summer">Summer</option><option value="fall">Fall</option><option value="winter">Winter (holidays)</option></select>
+      </label>
       <label class="pick">Graphics
         <select id="gfx"><option value="high">High (3D city)</option><option value="low">Low (3D city, lighter)</option><option value="classic">Classic (older phones)</option></select>
       </label>
@@ -713,7 +716,7 @@
     }
     // overheard as you pass
     if (near && now > Peds.chatAt && !Fight.active) {
-      near.chatted = true; near.say = pick(CHATTER); near.sayUntil = now + 3200;
+      near.chatted = true; near.say = pick(SEA && Math.random() < 0.4 ? SEA.chatter : CHATTER); near.sayUntil = now + 3200;
       Peds.chatAt = now + PED.chatGapS * 1000;
       if (now - Peds.voiceAt > PED.voiceGapS * 1000 && !voiceBusy()) { Peds.voiceAt = now; sayAs(near.say, near, 'feedback'); }
     }
@@ -841,7 +844,7 @@
     best.stopUntil = now + 2600;
     best.waveUntil = now + 1800;
     Peds.waves++;
-    const line = best.lines ? pick(best.lines) : best.kind === 'vendor' ? pick(VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
+    const line = best.lines ? pick(best.lines) : best.kind === 'vendor' ? pick(SEA && Math.random() < 0.5 ? SEA.vendor : VENDOR_LINES) : pick(G.fightsDone && Math.random() < 0.4 ? PED_FIGHT_LINES : PED_LINES);
     best.say = line; best.sayUntil = now + 4000;
     sayAs(line, best, 'feedback');
     note(`\u201c${line}\u201d`, 4500);
@@ -3828,7 +3831,12 @@
     const r = rng(Math.floor(seed * 1e6) + 3);
     if (officer) return { skin: pickR(SKINS, r), hair: pickR(HAIRS, r), top, top2: top, pants: [30, 36, 60], shoes: SHOE, sleeve: true };
     const jacket = r() < 0.35;
-    return { skin: pickR(SKINS, r), hair: pickR(HAIRS, r), bald: r() < 0.08, top, top2: jacket ? top.map((v) => v * 0.8) : top, pants: pickR(PANTS_C, r), shoes: pickR(SHOES_C, r), sleeve: r() < 0.8 };
+    const st = { skin: pickR(SKINS, r), hair: pickR(HAIRS, r), bald: r() < 0.08, top, top2: jacket ? top.map((v) => v * 0.8) : top, pants: pickR(PANTS_C, r), shoes: pickR(SHOES_C, r), sleeve: r() < 0.8 };
+    // (10/30 seasons: coats, hats and scarves in winter; short sleeves and shorts in summer)
+    const sid = SEA ? SEA.id : '', r2 = rng(Math.floor(seed * 1e6) + 41);
+    if (sid === 'winter') Object.assign(st, { sleeve: true, top2: top.map((v) => v * 0.75), hat: r2() < 0.55 ? pickR(XMAS_BULBS.concat([[40, 40, 46], [200, 200, 204]]), r2) : null, scarf: r2() < 0.5 ? pickR(XMAS_BULBS, r2) : null });
+    else if (sid === 'summer') Object.assign(st, { sleeve: r2() < 0.25, shorts: r2() < 0.45 });
+    return st;
   }
   // joints the poses do not carry: hair over the head, toes ahead of the feet
   function extraJoints(o, fr, j) {
@@ -3847,6 +3855,8 @@
     capsule(list, c.shL, c.shR, 0.08, st.top, F);
     capsule(list, c.chest, c.neck, 0.052, st.skin, F);
     if (!st.bald) ball(list, ex.hair, 0.108, st.hair, F);
+    if (st.hat) ball(list, ex.hair, 0.12, st.hat, F);
+    if (st.scarf) capsule(list, c.neck, lerp3(c.chest, c.neck, 0.4), 0.075, st.scarf, F);
     ball(list, c.head, 0.105, st.skin, F);
     if (ex.eyeL && depth < 30) { ball(list, ex.eyeL, 0.017, [24, 22, 22], F); ball(list, ex.eyeR, 0.017, [24, 22, 22], F); ball(list, ex.nose, 0.022, st.skin.map((v) => v * 0.92), F); }
     for (const sd of ['L', 'R']) {
@@ -3854,7 +3864,7 @@
       capsule(list, c['el' + sd], c['fi' + sd], 0.042, st.skin, F);
       ball(list, c['fi' + sd], st.fist || 0.047, st.hand || st.skin, F);
       capsule(list, c['hip' + sd], c['kn' + sd], 0.078, st.pants, F);
-      capsule(list, c['kn' + sd], c['ft' + sd], 0.062, st.pants, F);
+      capsule(list, c['kn' + sd], c['ft' + sd], 0.062, st.shorts ? st.skin : st.pants, F);
       if (depth < 70) capsule(list, c['ft' + sd], ex['toe' + sd], 0.05, st.shoes, F);
       else ball(list, c['ft' + sd], 0.06, st.shoes, F);
     }
@@ -4560,15 +4570,23 @@
   // Light per channel: ambient amb (the sky's fill) plus sun times how square a surface faces it.
   // Golden hour puts the sun low in the west-southwest, so the cross streets glow (Manhattanhenge).
   const LOOKS = {
-    golden: { name: 'Golden hour', top: [40, 60, 122], hor: [250, 170, 118], fog: [214, 160, 140], az: -1.95, el: 0.09, sunCol: [255, 206, 146], amb: [0.5, 0.53, 0.68], sun: [0.74, 0.54, 0.32], night: 0, cloud: [255, 186, 158], under: [150, 104, 128] },
-    day: { name: 'Day', top: [62, 120, 196], hor: [188, 212, 236], fog: [176, 198, 222], az: 2.6, el: 0.8, sunCol: [255, 252, 238], amb: [0.68, 0.71, 0.77], sun: [0.34, 0.32, 0.28], night: 0, cloud: [255, 255, 255], under: [196, 206, 222] },
+    golden: { id: 'golden', name: 'Golden hour', top: [40, 60, 122], hor: [250, 170, 118], fog: [214, 160, 140], az: -1.95, el: 0.09, sunCol: [255, 206, 146], amb: [0.5, 0.53, 0.68], sun: [0.74, 0.54, 0.32], night: 0, cloud: [255, 186, 158], under: [150, 104, 128] },
+    day: { id: 'day', name: 'Day', top: [62, 120, 196], hor: [188, 212, 236], fog: [176, 198, 222], az: 2.6, el: 0.8, sunCol: [255, 252, 238], amb: [0.68, 0.71, 0.77], sun: [0.34, 0.32, 0.28], night: 0, cloud: [255, 255, 255], under: [196, 206, 222] },
     // indoors (the gym): even light, no sun to speak of
-    gym: { name: 'Gym', top: [30, 32, 38], hor: [30, 32, 38], fog: [24, 26, 32], az: 0.5, el: 1.2, sunCol: [255, 255, 255], amb: [0.86, 0.86, 0.88], sun: [0.18, 0.18, 0.18], night: 0, cloud: [0, 0, 0], under: [0, 0, 0] },
-    night: { name: 'Night', top: [6, 8, 24], hor: [44, 36, 74], fog: [28, 28, 52], az: 1.1, el: 0.5, sunCol: [214, 224, 255], amb: [0.26, 0.28, 0.42], sun: [0.06, 0.07, 0.12], night: 1, cloud: [70, 70, 104], under: [34, 34, 56] },
+    gym: { id: 'gym', name: 'Gym', top: [30, 32, 38], hor: [30, 32, 38], fog: [24, 26, 32], az: 0.5, el: 1.2, sunCol: [255, 255, 255], amb: [0.86, 0.86, 0.88], sun: [0.18, 0.18, 0.18], night: 0, cloud: [0, 0, 0], under: [0, 0, 0] },
+    night: { id: 'night', name: 'Night', top: [6, 8, 24], hor: [44, 36, 74], fog: [28, 28, 52], az: 1.1, el: 0.5, sunCol: [214, 224, 255], amb: [0.26, 0.28, 0.42], sun: [0.06, 0.07, 0.12], night: 1, cloud: [70, 70, 104], under: [34, 34, 56] },
   };
   const LOOK_KEY = 'manhattan-miles-look', GFX_KEY = 'manhattan-miles-gfx';
   let L = LOOKS.golden, HIGH = true;
-  function setLook(id) { L = LOOKS[id] || LOOKS.golden; SUN.x = Math.sin(L.az); SUN.z = Math.cos(L.az); PrimLit.cache = new WeakMap(); }
+  // 10/30 seasons (see SEASONS): the look's sky, haze and clouds lean a little toward the season's color
+  let SEA = null, lookId = 'golden';
+  const mix3 = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+  function setLook(id) {
+    lookId = LOOKS[id] ? id : 'golden';
+    const base = LOOKS[lookId], t = SEA && SEA.tint;
+    L = t ? Object.assign({}, base, { fog: mix3(base.fog, t.col, t.k), hor: mix3(base.hor, t.col, t.k * 0.8), top: mix3(base.top, t.col, t.k * 0.4), cloud: mix3(base.cloud, t.col, t.k * 0.6) }) : base;
+    SUN.x = Math.sin(L.az); SUN.z = Math.cos(L.az); PrimLit.cache = new WeakMap();
+  }
   const PrimLit = { cache: new WeakMap() };
   const GX = { gl: true, windows: true, store: true, cornice: true, facade: true, street: true, props: true, clouds: true, towers: true };
   // graphics: high and low draw the city in WebGL (high: sharper textures, more distance, water
@@ -4834,7 +4852,7 @@
     // glass: the sky's color on shaded walls, the sun's on sunlit ones; lit rooms at night
     // (glass is not lit like a wall: it reflects, so it takes the sky's own color, hazed)
     const sky = L.top.map((v, i) => (v * 0.6 + L.hor[i] * 0.4));
-    const glassC = L.night ? [14, 18, 34] : L === LOOKS.golden && d.sunlit > 0.45 ? [236, 150, 96] : d.kind === 'tower' ? sky.map((v) => v * 0.85) : sky.map((v) => v * 0.55);
+    const glassC = L.night ? [14, 18, 34] : L.id === 'golden' && d.sunlit > 0.45 ? [236, 150, 96] : d.kind === 'tower' ? sky.map((v) => v * 0.85) : sky.map((v) => v * 0.55);
     const glass = rgbOf(hazed(glassC, depth));
     const warm = rgbOf(hazed([255, 196, 112], depth * 0.5));
     const floorH = d.kind === 'house' ? 3.2 : 3.6;
@@ -4899,6 +4917,85 @@
   // at the curb every 26 to 32 m, trees on residential streets and through the parks, a hydrant
   // near some corners; subway entrances with their green globes at the stations.
   const Props = { cache: new Map() };
+  // ---------- seasons (10/30, Mark: "a seasonal mode: summer, spring, fall, winter (Christmas), with themed
+  // atmosphere and decorations") ----------
+  // Auto follows the date. Each season: tree leaves, park and lawn ground (GROUND_COL 1 and 2), a tint on
+  // the sky and haze, what drifts through the air (Weather), sidewalk decorations by the buildings
+  // (`deco`), and lines for the passers-by and the vendors. Winter also puts snow on the roofs (MW.SNOW, the
+  // 3D city), wreaths and bulbs on the lamps, Christmas trees in the parks and a big one at Rockefeller
+  // Center; summer opens some hydrants; people dress for it (styleOf).
+  const SEASONS = {
+    spring: { name: 'Spring', leaves: [[236, 176, 200], [126, 178, 98], [246, 208, 222]], ground: { 1: [106, 152, 78], 2: [94, 130, 70] }, tint: { col: [214, 232, 238], k: 0.1 }, air: 'petal', deco: 'planter',
+      chatter: ['Allergy season. My nose has its own weather now.', 'Everybody is on a roof deck. Nobody I know has a roof deck.', 'The cherry trees are out. So is every tourist in the state.'],
+      vendor: ['Iced coffee season starts the minute it hits fifty degrees.', 'Pretzel and a sneeze, two dollars.'] },
+    summer: { name: 'Summer', leaves: [[60, 110, 46], [74, 122, 54], [54, 98, 42]], ground: { 1: [84, 126, 60], 2: [76, 108, 56] }, tint: { col: [255, 234, 196], k: 0.12 }, air: 'firefly', deco: null,
+      chatter: ['The subway platform is a sauna with rats.', 'Somebody opened the hydrant. Best pool in Manhattan.', 'It is not the heat. It is the garbage.'],
+      vendor: ['Ice pops! Colder than your landlord.', 'Water, a dollar. Free advice: drink it.'] },
+    fall: { name: 'Fall', leaves: [[214, 118, 40], [188, 68, 40], [226, 170, 62]], ground: { 1: [126, 122, 72], 2: [112, 98, 64] }, tint: { col: [242, 192, 144], k: 0.12 }, air: 'leaf', deco: 'pumpkin',
+      chatter: ['Pumpkin spice everything. My rent is pumpkin spice now.', 'The leaves are turning. So is the guy who sold me this coffee.', 'Halloween in this city is a regular Tuesday with candy.'],
+      vendor: ['Roasted nuts. The smell is free, the nuts are four dollars.', 'Hot cider! Basically a hug in a cup.'] },
+    winter: { name: 'Winter', leaves: [[232, 236, 242], [218, 224, 232], [204, 212, 222]], ground: { 1: [226, 230, 236], 2: [214, 220, 228] }, tint: { col: [204, 214, 232], k: 0.25 }, air: 'snow', deco: null,
+      chatter: ['The tree is up at Rockefeller. So are the prices.', 'Every corner has a slush puddle deeper than it looks.', 'Happy holidays. Please do not stop in the middle of the sidewalk.'],
+      vendor: ['Hot chocolate! Marshmallows are extra. Joy is free.', 'Roasted chestnuts. Like in the song, but with a line.'] },
+  };
+  const SEASON_KEY = 'manhattan-miles-season', GROUND_BASE = MW.GROUND_COL.map((c) => c && c.slice());
+  let seasonPick = 'auto';
+  const autoSeason = () => { const m = new Date().getMonth(); return m >= 2 && m <= 4 ? 'spring' : m >= 5 && m <= 7 ? 'summer' : m >= 8 && m <= 10 ? 'fall' : 'winter'; };
+  function applySeason(pickId) {
+    seasonPick = SEASONS[pickId] ? pickId : 'auto';
+    const id = seasonPick === 'auto' ? autoSeason() : seasonPick;
+    SEA = Object.assign({ id }, SEASONS[id]);
+    for (let i = 0; i < GROUND_BASE.length; i++) { const c = SEA.ground[i] || GROUND_BASE[i]; MW.GROUND_COL[i] = c && c.slice(); }
+    MW.SNOW = id === 'winter';
+    Props.cache.clear(); Season.big = undefined; Weather.parts = [];
+    GLF.key = ''; // the 3D city paints its ground and roofs again
+    setLook(lookId);
+  }
+  const Season = { big: undefined };
+  // the tree at Rockefeller Center, in winter: on the plaza between 49th and 50th, west of 5th Avenue
+  function bigTree() {
+    if (Season.big !== undefined) return Season.big;
+    Season.big = null;
+    const A = MW.intersection('5th Avenue', 'West 50th Street'), B = MW.intersection('6th Avenue', 'West 50th Street') || MW.intersection('Avenue of the Americas', 'West 50th Street'), C = MW.intersection('5th Avenue', 'West 49th Street');
+    if (!A || !B || !C) return null;
+    // (the open plaza in front of 30 Rock is about a third of the way from 5th to 6th in the map, seen down a
+    // gap from West 50th Street)
+    for (const k of [0.33, 0.36, 0.3, 0.39, 0.27]) {
+      const x = A.x + (B.x - A.x) * k + (C.x - A.x) * 0.5, z = A.z + (B.z - A.z) * k + (C.z - A.z) * 0.5;
+      if (!MW.buildingAt(x, z, 1)) { Season.big = { kind: 'bigtree', x, z, seed: 0.5 }; break; }
+    }
+    return Season.big;
+  }
+  // what drifts through the air, drawn over the city: snow, falling leaves, petals, fireflies at night
+  const Weather = { parts: [], t: 0, view: 0 };
+  function drawWeather(now) {
+    const kind = SEA && (SEA.air === 'firefly' ? (L.night ? 'firefly' : null) : SEA.air);
+    if (!kind) return;
+    const dt = Math.min(0.05, (now - (Weather.t || now)) / 1000), n = { snow: 140, leaf: 26, petal: 40, firefly: 24 }[kind] * (0.5 + 0.5 * Perf.crowd);
+    if (!Weather.t) Weather.view = P.view;
+    Weather.t = now;
+    let dv = P.view - Weather.view; while (dv > Math.PI) dv -= Math.PI * 2; while (dv < -Math.PI) dv += Math.PI * 2;
+    Weather.view = P.view;
+    const shift = (dv / 1.1) * W, A = Weather.parts;
+    const fresh = (top) => ({ x: Math.random() * W, y: top ? -10 - Math.random() * 40 : Math.random() * H, z: 0.4 + Math.random() * 0.6, ph: Math.random() * 6.28, spin: Math.random() * 6.28 });
+    while (A.length < n) A.push(fresh(false));
+    if (A.length > n) A.length = Math.floor(n);
+    ctx.save();
+    for (const p of A) {
+      const fall = { snow: 40, leaf: 55, petal: 30, firefly: 0 }[kind] * p.z, sway = { snow: 14, leaf: 40, petal: 30, firefly: 18 }[kind];
+      p.ph += dt * (kind === 'leaf' ? 2.2 : 1.4); p.spin += dt * 3;
+      p.x += Math.sin(p.ph) * sway * p.z * dt - shift * p.z; // turning sweeps the air across the view, the near flakes most
+      p.y += (fall + (kind === 'firefly' ? Math.cos(p.ph * 0.7) * 12 : 0)) * dt;
+      if (p.y > H + 10 || p.x < -30 || p.x > W + 30) Object.assign(p, fresh(kind !== 'firefly'), kind === 'firefly' ? { y: H * (0.45 + Math.random() * 0.5) } : {});
+      if (kind === 'snow') { ctx.fillStyle = `rgba(255,255,255,${0.5 + 0.4 * p.z})`; ctx.beginPath(); ctx.arc(p.x, p.y, 1 + 2.4 * p.z, 0, 6.29); ctx.fill(); }
+      else if (kind === 'firefly') { const a = 0.35 + 0.65 * Math.max(0, Math.sin(p.ph * 2.3)); const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 7 * p.z + 2); g.addColorStop(0, `rgba(230,255,140,${a})`); g.addColorStop(1, 'rgba(230,255,140,0)'); ctx.fillStyle = g; ctx.fillRect(p.x - 10, p.y - 10, 20, 20); }
+      else {
+        const c = kind === 'leaf' ? SEA.leaves[Math.floor(p.ph * 10) % 3] : [246, 196, 214], sz = (kind === 'leaf' ? 5 : 3.2) * (0.6 + p.z);
+        ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.9)`; ctx.beginPath(); ctx.ellipse(p.x, p.y, sz, sz * Math.abs(Math.cos(p.spin)) * 0.6 + 0.6, p.spin * 0.5, 0, 6.29); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
   // 10/29 (Mark: a lamp or a tree in the middle of the road now and then): a prop set off its own street
   // can land on another street's roadway (at a corner, or between an avenue's two carriageways); not there
   function onRoadway(x, z) {
@@ -4916,6 +5013,8 @@
     list = [];
     if (MW.walkEdge(e)) {
       const r = rng((e * 2654435761) % 1e9 + 11), off = MW.roadW(e) / 2 + 0.8;
+      // (the season's own things come from their own draws, so the lamps and trees stay where they are)
+      const r2 = rng((e * 2654435761) % 1e9 + 97), sid = SEA ? SEA.id : '', offDeco = MW.roadW(e) / 2 + MW.SIDEWALK - 0.9;
       const k0 = MW.EP0[e], k1 = MW.EP0[e + 1] - 1;
       const midK = Math.floor((k0 + k1) / 2), park = MW.groundAt(MW.PX[midK], MW.PZ[midK]) === 1;
       const leafy = park || MW.ECLS[e] === 5 || r() < 0.25;
@@ -4927,7 +5026,13 @@
           const t = (next - s0) / Ls, x = ax + (bx - ax) * t, z = az + (bz - az) * t, side = n++ % 2 ? 1 : -1;
           const tree = leafy && r() < (park ? 0.85 : 0.55);
           const px = x + nx * off * side, pz = z + nz * off * side;
-          if (!MW.buildingAt(px, pz, 0.5) && !onRoadway(px, pz)) list.push({ kind: tree ? 'tree' : 'lamp', x: px, z: pz, dx: -nx * side, dz: -nz * side, seed: r() });
+          if (!MW.buildingAt(px, pz, 0.5) && !onRoadway(px, pz)) list.push({ kind: tree ? (sid === 'winter' && park && r2() < 0.35 ? 'xmas' : 'tree') : 'lamp', x: px, z: pz, dx: -nx * side, dz: -nz * side, seed: r() });
+          // a pumpkin or a planter by the buildings on the other side
+          // (as near the buildings as the sidewalk allows: a narrow street's buildings stand closer)
+          if (SEA && SEA.deco && r2() < 0.3) for (const o2 of [offDeco, offDeco - 1.5, offDeco - 3]) {
+            const qx = x - nx * o2 * side, qz = z - nz * o2 * side;
+            if (o2 > MW.roadW(e) / 2 + 1 && !MW.buildingAt(qx, qz, 0.4) && !onRoadway(qx, qz)) { list.push({ kind: SEA.deco, x: qx, z: qz, dx: nx * side, dz: nz * side, seed: r2() }); break; }
+          }
           next += tree ? (park ? 9 : 13) + r() * 6 : 26 + r() * 6;
         }
         s0 += Ls;
@@ -4936,7 +5041,7 @@
         const t = r() < 0.5 ? 0.12 : 0.88, k = Math.min(k1 - 1, k0 + Math.floor((k1 - k0) * t));
         const ax = MW.PX[k], az = MW.PZ[k], bx = MW.PX[k + 1], bz = MW.PZ[k + 1], Ls = Math.hypot(bx - ax, bz - az) || 1, sd = r() < 0.5 ? 1 : -1;
         const px = (ax + bx) / 2 + ((bz - az) / Ls) * off * sd, pz = (az + bz) / 2 - ((bx - ax) / Ls) * off * sd;
-        if (!MW.buildingAt(px, pz, 0.5) && !onRoadway(px, pz)) list.push({ kind: 'hydrant', x: px, z: pz, seed: r() });
+        if (!MW.buildingAt(px, pz, 0.5) && !onRoadway(px, pz)) list.push({ kind: 'hydrant', x: px, z: pz, seed: r(), spray: sid === 'summer' && r2() < 0.4, dx: -((bz - az) / Ls) * sd, dz: ((bx - ax) / Ls) * sd });
       }
     }
     if (Props.cache.size > 5000) Props.cache.clear();
@@ -4950,6 +5055,9 @@
       const dx = pr.x - cam.x, dz = pr.z - cam.z;
       if (dx * dx + dz * dz < R * R && dx * cam.sy + dz * cam.cy > -1) out.push(pr);
     }
+    // the big tree at Rockefeller Center, seen from blocks away
+    const bt = SEA && SEA.id === 'winter' ? bigTree() : null;
+    if (bt && Math.hypot(bt.x - cam.x, bt.z - cam.z) < 420 && (bt.x - cam.x) * cam.sy + (bt.z - cam.z) * cam.cy > -5) out.push(bt);
     for (const st of MW.stations) {
       if (Math.abs(st.x - cam.x) > R || Math.abs(st.z - cam.z) > R) continue;
       if (!st.ent) { const sp = sidewalkNear(st.x, st.z, 1); st.ent = { kind: 'subway', x: sp.x, z: sp.z, dx: sp.dir ? sp.dir.x : 1, dz: sp.dir ? sp.dir.z : 0, seed: 0 }; }
@@ -4998,15 +5106,45 @@
       capsule(list, at(pr.x, 5.5, pr.z), at(hx, 5.75, hz), 0.05, POLE, F);
       ball(list, at(hx, 5.62, hz), 0.17, L.night ? [255, 236, 190] : [222, 222, 206], F);
       if (L.night) glow.push([hx, 5.55, hz, 2.6, '255,214,140'], [hx, 0.05, hz, 5, '255,190,110']);
+      if (SEA && SEA.id === 'winter') {
+        // a wreath facing the street, and colored bulbs up to the lamp
+        const rx = pr.dz, rz = -pr.dx, cx = pr.x + pr.dx * 0.12, cz = pr.z + pr.dz * 0.12;
+        for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; ball(list, at(cx + rx * Math.cos(a) * 0.28, 3.4 + Math.sin(a) * 0.28, cz + rz * Math.cos(a) * 0.28), 0.1, [40, 98, 52], F); }
+        ball(list, at(cx + pr.dx * 0.05, 3.1, cz + pr.dz * 0.05), 0.08, [196, 30, 40], F);
+        for (let i = 0; i < 6; i++) {
+          const t = (i + 0.5) / 6, c = XMAS_BULBS[i % 4], x = pr.x + (hx - pr.x) * t, z = pr.z + (hz - pr.z) * t, y = 5.5 - Math.sin(t * Math.PI) * 0.35;
+          ball(list, at(x, y, z), 0.06, c, F);
+          if (L.night) glow.push([x, y, z, 0.5, c.join(',')]);
+        }
+      }
     } else if (pr.kind === 'tree') {
-      const k = 0.8 + pr.seed * 0.5, lc = LEAVES[Math.floor(pr.seed * 3) % 3];
+      // (winter: bare branches with snow on them, so smaller)
+      const k = (0.8 + pr.seed * 0.5) * (SEA && SEA.id === 'winter' ? 0.72 : 1), lc = (SEA ? SEA.leaves : LEAVES)[Math.floor(pr.seed * 3) % 3];
       capsule(list, at(pr.x, 0, pr.z), at(pr.x, 2.6 * k, pr.z), 0.12 * k, BARK, F);
       ball(list, at(pr.x, 3.9 * k, pr.z), 1.55 * k, lc, F);
       ball(list, at(pr.x + 0.7 * k, 3.4 * k, pr.z + 0.3 * k), 1.15 * k, lc.map((v) => v * 0.9), F);
       ball(list, at(pr.x - 0.6 * k, 3.5 * k, pr.z - 0.4 * k), 1.2 * k, lc.map((v) => v * 1.08), F);
+    } else if (pr.kind === 'xmas' || pr.kind === 'bigtree') {
+      xmasTree(list, glow, pr.x, pr.z, pr.kind === 'bigtree' ? 24 : 4.2 + pr.seed * 1.5, pr.seed, at);
+    } else if (pr.kind === 'pumpkin') {
+      // one to three on the stoop; lit at night
+      for (let i = 0; i < 1 + Math.floor(pr.seed * 3); i++) {
+        const x = pr.x + pr.dz * (i - 1) * 0.5, z = pr.z - pr.dx * (i - 1) * 0.5, r = 0.18 + ((pr.seed * (i + 3) * 7.1) % 1) * 0.08;
+        ball(list, at(x, r, z), r, [222, 116, 30], F);
+        capsule(list, at(x, r * 1.8, z), at(x, r * 2.2, z), 0.03, [70, 96, 40], F);
+        if (L.night) glow.push([x, r, z, 0.8, '255,150,40']);
+      }
+    } else if (pr.kind === 'planter') {
+      boxPrims(list, pr.x, 0.2, pr.z, 0.45, 0.2, 0.22, pr.dz, -pr.dx, [150, 86, 60]);
+      for (let i = 0; i < 6; i++) ball(list, at(pr.x + pr.dz * (i - 2.5) * 0.16, 0.48 + ((i * 0.37) % 0.1), pr.z - pr.dx * (i - 2.5) * 0.16), 0.08, PETALS[(i + Math.floor(pr.seed * 4)) % 4], F);
     } else if (pr.kind === 'hydrant') {
       capsule(list, at(pr.x, 0, pr.z), at(pr.x, 0.55, pr.z), 0.13, HYDRANT, F);
       ball(list, at(pr.x, 0.62, pr.z), 0.1, HYDRANT, F);
+      if (pr.spray && SEA && SEA.id === 'summer') {
+        // an open hydrant: water arcing out toward the street
+        const ph = (performance.now() / 120) % 1;
+        for (let i = 0; i < 7; i++) { const t = (i + ph) / 7, d = 0.2 + t * 2.6, y = 0.42 + t * 1.1 - t * t * 1.5; ball(list, at(pr.x + pr.dx * d, Math.max(0.05, y), pr.z + pr.dz * d), 0.07 + t * 0.12, [200, 226, 246], F); }
+      }
     } else if (pr.kind === 'subway') {
       // the stair railing and two green globes on posts
       boxPrims(list, pr.x, 0.55, pr.z, 1.8, 0.75, 0.5, pr.dx, pr.dz, RAIL);
@@ -5032,6 +5170,23 @@
       }
       ctx.restore();
     }
+  }
+  const XMAS_BULBS = [[230, 40, 40], [40, 190, 80], [250, 200, 60], [70, 120, 240]], PETALS = [[236, 90, 120], [250, 210, 70], [190, 120, 220], [250, 250, 250]];
+  // a Christmas tree: a cone of greens, ornaments, a star on top (lit at night)
+  function xmasTree(list, glow, x, z, h, seed, at) {
+    // (its lights are drawn over the city: none when a building stands in the way of the big one)
+    const lit = h < 10 || !occluded(x, h * 0.6, z, null);
+    capsule(list, at(x, 0, z), at(x, h * 0.12, z), h * 0.03, BARK, F);
+    const tiers = h > 10 ? 12 : 6, bulbs = h > 10 ? 48 : 14;
+    for (let i = 0; i < tiers; i++) { const y = h * (0.16 + (i * 0.84) / tiers), r = h * 0.26 * (1 - i / (tiers + 0.5)); ball(list, at(x, y, z), r, i % 2 ? [40, 104, 58] : [32, 92, 50], F); }
+    for (let i = 0; i < bulbs; i++) {
+      const u = (i * 0.618 + seed) % 1, y = h * (0.2 + u * 0.7), r = h * 0.26 * (1 - (y / h - 0.16) / 0.91) + h * 0.01, a = i * 2.4, c = XMAS_BULBS[i % 4];
+      const bx = x + Math.cos(a) * r, bz = z + Math.sin(a) * r;
+      ball(list, at(bx, y, bz), h * 0.016 + 0.04, c, F);
+      if (L.night && lit) glow.push([bx, y, bz, h * 0.05 + 0.3, c.join(',')]);
+    }
+    ball(list, at(x, h * 1.0, z), h * 0.035 + 0.06, [255, 214, 90], F);
+    if (lit) glow.push([x, h * 1.0, z, h * 0.12 + 0.6, '255,220,120']);
   }
   // a rooftop water tank: legs, a wooden barrel, a pointed cap
   const TANK = [126, 84, 52], TANK_CAP = [78, 58, 44], STEEL = [70, 72, 76];
@@ -5164,7 +5319,7 @@
       ctx.setTransform(sd, 0, 0, sd, 0, 0); ctx.save(); shaken(); skyFill(); ctx.restore();
       ctx = mainCtx;
       ctx.clearRect(0, 0, W, H);
-      glr.begin({ W, H, dpr, F, cam, roll: pv.roll, shk, look: L, drawDistance: HIGH ? T.drawDistance : Math.min(T.drawDistance, 320), sun: SUN, golden: L === LOOKS.golden });
+      glr.begin({ W, H, dpr, F, cam, roll: pv.roll, shk, look: L, drawDistance: HIGH ? T.drawDistance : Math.min(T.drawDistance, 320), sun: SUN, golden: L.id === 'golden' });
     }
     ctx.save();
     shaken();
@@ -5203,6 +5358,7 @@
     L = outdoorLook;
     ctx.restore();
     if (glr) glr.draw();
+    if (G.state === 'walk' && !gym && GX.weather !== false) drawWeather(now);
     if (G.state === 'walk') {
       if (Fight.active) { ctx.save(); ctx.translate(shk.x, shk.y); if (!Fight.active.tutor && engine.combat().phase === 'standing') foeDial(Fight.active.foe, now); drawKick(now); drawArms(now); drawGuardView(now); drawHits(now); ctx.restore(); }
       // the HUD in logical pixels times the UI scale
@@ -5381,7 +5537,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-30 \u00b7 streets cut buildings back: nothing floats';
+  const BUILD = '2026-10-30 \u00b7 seasons (auto by the date), nothing floats';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5394,6 +5550,9 @@
   $('realNames').checked = realNames;
   $('look').value = Object.keys(LOOKS).find((k) => LOOKS[k] === L);
   $('gfx').value = GFX.mode;
+  try { applySeason(localStorage.getItem(SEASON_KEY) || 'auto'); } catch (_) { applySeason('auto'); }
+  $('season').value = seasonPick;
+  $('season').addEventListener('change', () => { applySeason($('season').value); try { localStorage.setItem(SEASON_KEY, seasonPick); } catch (_) {} });
   $('look').addEventListener('change', () => { setLook($('look').value); try { localStorage.setItem(LOOK_KEY, $('look').value); } catch (_) {} });
   $('gfx').addEventListener('change', () => { GFX.mode = $('gfx').value; HIGH = GFX.mode !== 'low'; try { localStorage.setItem(GFX_KEY, GFX.mode); } catch (_) {} });
   $('realNames').addEventListener('change', () => { realNames = $('realNames').checked; try { localStorage.setItem(REAL_KEY, realNames ? '1' : '0'); } catch (_) {} });
@@ -6636,7 +6795,7 @@
 
   // test hook for automated checks
   // runCamera(fn) runs the camera setup with fn starting the source, e.g. engine.start_replay(clip)
-  window.__game = { Side, ARCH, Habit, HAB, Rating, RATE, encRating, ratedGroup, rateTarget, dlFor, fightScore, rateFight, rateFlush, streetGroup, stageGroup, pickTier, nearDen, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
+  window.__game = { applySeason, SEASONS, Weather, bigTree, Side, ARCH, Habit, HAB, Rating, RATE, encRating, ratedGroup, rateTarget, dlFor, fightScore, rateFight, rateFlush, streetGroup, stageGroup, pickTier, nearDen, archK, archOf, sprawlNeed, GLF, GFX, glRenderer, say, Sfx, Cast, Studio, castOf, sayAs, Voice, Tutor, endTutor, Stage, startStage, THEMES, Q, Rec, REC, punchPower, effort, spawnScene, GX, setLook, LOOKS, Perf, Tutor, startTutor, Traffic, Vendors, teleport, uiScale, G, P, T, Warm, Fight, FT, SESSION, Phone, Calls, Peds, Subway, MW, World, Nav, Prog, radio, greet, startRide, award, level, engine, whereAmI, runCamera, blocked, spawnFoes, startWalk, openPhone, pickPhone, nextTurn, routeNow, endWalk, PLACES: () => PLACES };
 })();
 </script>
 </body>

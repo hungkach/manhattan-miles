@@ -609,7 +609,8 @@ void main() {
         }
         // the roof
         const tri = n === 4 ? [0, 1, 2, 0, 2, 3] : earcut(pts, n);
-        const roofT = [tint[0] * 0.55 + 0.12, tint[1] * 0.55 + 0.12, tint[2] * 0.55 + 0.12];
+        // (winter: snow on the roofs, MW.SNOW)
+        const roofT = MW.SNOW ? [0.9, 0.92, 0.95] : [tint[0] * 0.55 + 0.12, tint[1] * 0.55 + 0.12, tint[2] * 0.55 + 0.12];
         for (const i of tri) push(pts[i * 2], h, pts[i * 2 + 1], 0, 1, 0, 0, 0, 1, 1, -2, -1, 0, 0, roofT);
         if (base > 0.5) for (let i = tri.length - 1; i >= 0; i--) push(pts[tri[i] * 2], base, pts[tri[i] * 2 + 1], 0, -1, 0, 0, 0, 1, 1, -1, -1, 0, 0, [tint[0] * 0.5, tint[1] * 0.5, tint[2] * 0.5]);
         // a wooden water tank on the roof of an old mid-rise
