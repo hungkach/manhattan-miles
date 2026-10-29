@@ -603,12 +603,8 @@ void main() {
           const nx = ez / L, nz = -ex / L;
           // whole bays along the wall
           const bw = L / Math.max(1, Math.round(L / bay)), seed = (b.seed + k * 0.618) % 1;
-          // (an overpass: down to the ground except where the street runs under it, MW.overWall)
-          for (const [t0, t1, y0] of b.over ? MW.overWall(b, ax, az, bx, bz) : [[0, 1, base]]) {
-            const x0 = ax + ex * t0, z0 = az + ez * t0, x1 = ax + ex * t1, z1 = az + ez * t1, tall = h - y0;
-            const q = [[x0, y0, z0, L * t0, 0], [x1, y0, z1, L * t1, 0], [x1, h, z1, L * t1, tall], [x0, h, z0, L * t0, tall]];
-            for (const i of [0, 1, 2, 0, 2, 3]) push(q[i][0], q[i][1], q[i][2], nx, 0, nz, q[i][3], q[i][4], floorH, bw, up, street, seed, tall, tint);
-          }
+          const q = [[ax, base, az, 0, 0], [bx, base, bz, L, 0], [bx, h, bz, L, top], [ax, h, az, 0, top]];
+          for (const i of [0, 1, 2, 0, 2, 3]) push(q[i][0], q[i][1], q[i][2], nx, 0, nz, q[i][3], q[i][4], floorH, bw, up, street, seed, top, tint);
           // an overpass's underside
         }
         // the roof

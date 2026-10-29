@@ -4783,8 +4783,7 @@
           if ((cam.x - ax) * nx + (cam.z - az) * nz <= 0) continue;
           const mx = (ax + bx) / 2, mz = (az + bz) / 2, depth = Math.hypot(mx - cam.x, mz - cam.z);
           const sunlit = Math.max(0, nx * SUN.x + nz * SUN.z);
-          // (an overpass's wall reaches the ground away from the street that runs under it)
-          const y0 = b.over && !MW.corridor(mx, mz) ? 0 : b.base;
+          const y0 = b.base;
           out.push({ cp: [toCam(ax, y0, az), toCam(bx, y0, bz), toCam(bx, h, bz), toCam(ax, h, az)], color: shadeWall(col, sunlit, depth), depth,
             win: depth < (HIGH ? 105 : 60) && h > 5 && L > 3 ? { ax, az, bx, bz, h, base: y0, L, kind: h > 40 ? 'tower' : h > 12 ? 'mid' : 'house', seed: b.seed + k * 0.618, col, sunlit, depth } : null });
         }
@@ -5382,7 +5381,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-29 late night \u00b7 straights from a low guard read as straights, scripted first three fights (engine 0.23.0)';
+  const BUILD = '2026-10-30 \u00b7 streets cut buildings back: nothing floats';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
