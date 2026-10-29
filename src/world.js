@@ -19,6 +19,7 @@
   // 10 runway, 11 taxiway. Widths (two-way, one-way) in meters.
   const CLS_W = [[22, 11.5], [16, 11], [18, 16], [15, 12], [12, 9], [10, 8.5], [9, 5.5], [9, 5.5], [2.6, 2.6], [2.6, 2.6], [45, 45], [23, 23]];
   W.SIDEWALK = 5; // m of sidewalk beyond the curb on each side
+  W.OVER_DEPTH = 3; // m: a street this far inside a building's outline runs under it (see chunk)
   W.MIN_BLOCK_AREA = 25; // m2: smaller footprints do not block walking
   // ground classes (data): 0 land, 1 park, 2 woods, 3 sand, 4 paved, 5 water inside land, 6 plaza, 7 other, 8 other boroughs
   W.GROUND_COL = [[158, 155, 149], [95, 127, 71], [86, 105, 63], [217, 203, 160], [142, 139, 133], null, [169, 162, 145], [111, 95, 79], [85, 82, 77]];
@@ -194,20 +195,24 @@
       // canopies and skybridges mapped over a street: leave the street clear
       const road = W.nearestEdge(mx, mz, 16, (e) => W.ECLS[e] <= 7 && !(W.EFLAG[e] & 6));
       if (road && road.d < W.roadW(road.e) / 2 - 0.5) return;
-      // a footprint that reaches over a street's roadway (ramps, bridges between
-      // buildings, terminals) is an overpass: you walk under it, and it is
-      // drawn from base meters up
-      let over = false;
+      // a footprint that a street runs well into (ramps, bridges between buildings,
+      // terminals, or a street line that overlaps the outline in the data) is an
+      // overpass: you walk under it along the street, its ceiling is base meters up,
+      // and its walls reach the ground everywhere else (W.overWall). 10/29 (Mark: whole
+      // buildings floating over him): a street that only clips the outline, under
+      // OVER_DEPTH meters inside it, leaves the building solid on the ground
+      let deep = 0;
       W.edgesNear(mx, mz, Math.hypot(x1 - x0, z1 - z0) / 2 + 12, (e) => {
-        if (over || !W.walkEdge(e)) return;
-        for (let k = W.EP0[e]; k < W.EP0[e + 1] - 1 && !over; k++) {
+        if (deep >= W.OVER_DEPTH || !W.walkEdge(e)) return;
+        for (let k = W.EP0[e]; k < W.EP0[e + 1] - 1 && deep < W.OVER_DEPTH; k++) {
           const ax = W.PX[k], az = W.PZ[k], bx = W.PX[k + 1], bz = W.PZ[k + 1], L = Math.hypot(bx - ax, bz - az);
-          for (let t = 0; t <= L && !over; t += 4) {
+          for (let t = 0; t <= L && deep < W.OVER_DEPTH; t += 2) {
             const px = ax + ((bx - ax) * t) / (L || 1), pz = az + ((bz - az) * t) / (L || 1);
-            if (px >= x0 && px <= x1 && pz >= z0 && pz <= z1 && pip(px, pz, pts)) over = true;
+            if (px >= x0 && px <= x1 && pz >= z0 && pz <= z1 && pip(px, pz, pts)) deep = Math.max(deep, edgeDist(px, pz, pts, n));
           }
         }
       });
+      const over = deep >= W.OVER_DEPTH;
       let area = 0;
       for (let k = 0; k < n; k++) { const k2 = (k + 1) % n; area += pts[k * 2] * pts[k2 * 2 + 1] - pts[k2 * 2] * pts[k * 2 + 1]; }
       area = Math.abs(area) / 2;
@@ -260,7 +265,7 @@
     if (!list) return null;
     for (const bi of list) {
       const b = ch.blds[bi];
-      if (b.over) continue; // overpasses: you walk under them
+      if (b.over && W.corridor(x, z)) continue; // overpasses: you walk under them along the street
       if (b.area < W.MIN_BLOCK_AREA) continue; // kiosks, newsstands, subway stairs: step around them
       if (x < b.x0 - pad || x > b.x1 + pad || z < b.z0 - pad || z > b.z1 + pad) continue;
       if (pip(x, z, b.pts)) return b;
@@ -312,6 +317,32 @@
       }
     }
     return cls;
+  };
+
+  // the distance from (px, pz) to the nearest side of an outline
+  function edgeDist(px, pz, pts, n) {
+    let m = Infinity;
+    for (let k = 0; k < n; k++) {
+      const k2 = (k + 1) % n, ax = pts[k * 2], az = pts[k * 2 + 1], dx = pts[k2 * 2] - ax, dz = pts[k2 * 2 + 1] - az, L = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / L));
+      m = Math.min(m, Math.hypot(px - ax - dx * t, pz - az - dz * t));
+    }
+    return m;
+  }
+  // on a walkable street's corridor (the road and its sidewalks)
+  W.corridor = function (x, z) {
+    const n = W.nearestEdge(x, z, 30, W.walkEdge);
+    return !!n && n.d <= W.roadW(n.e) / 2 + W.SIDEWALK;
+  };
+  // an overpass's wall from a to b: [[t0, t1, y0], ...] along it (0 to 1), open below base where the
+  // street runs under it, down to the ground everywhere else
+  W.overWall = function (b, ax, az, bx, bz) {
+    const L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(L / 2)), out = [];
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n, y0 = W.corridor(ax + (bx - ax) * t, az + (bz - az) * t) ? b.base : 0, last = out[out.length - 1];
+      if (last && last[2] === y0) last[1] = (i + 1) / n; else out.push([i / n, (i + 1) / n, y0]);
+    }
+    return out;
   };
 
   // ---------- where you can walk ----------

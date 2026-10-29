@@ -4774,8 +4774,10 @@
           if ((cam.x - ax) * nx + (cam.z - az) * nz <= 0) continue;
           const mx = (ax + bx) / 2, mz = (az + bz) / 2, depth = Math.hypot(mx - cam.x, mz - cam.z);
           const sunlit = Math.max(0, nx * SUN.x + nz * SUN.z);
-          out.push({ cp: [toCam(ax, b.base, az), toCam(bx, b.base, bz), toCam(bx, h, bz), toCam(ax, h, az)], color: shadeWall(col, sunlit, depth), depth,
-            win: depth < (HIGH ? 105 : 60) && h > 5 && L > 3 ? { ax, az, bx, bz, h, base: b.base, L, kind: h > 40 ? 'tower' : h > 12 ? 'mid' : 'house', seed: b.seed + k * 0.618, col, sunlit, depth } : null });
+          // (an overpass's wall reaches the ground away from the street that runs under it)
+          const y0 = b.over && !MW.corridor(mx, mz) ? 0 : b.base;
+          out.push({ cp: [toCam(ax, y0, az), toCam(bx, y0, bz), toCam(bx, h, bz), toCam(ax, h, az)], color: shadeWall(col, sunlit, depth), depth,
+            win: depth < (HIGH ? 105 : 60) && h > 5 && L > 3 ? { ax, az, bx, bz, h, base: y0, L, kind: h > 40 ? 'tower' : h > 12 ? 'mid' : 'house', seed: b.seed + k * 0.618, col, sunlit, depth } : null });
         }
         if (cam.y > h) {
           const cp = [];
@@ -4889,6 +4891,17 @@
   // at the curb every 26 to 32 m, trees on residential streets and through the parks, a hydrant
   // near some corners; subway entrances with their green globes at the stations.
   const Props = { cache: new Map() };
+  // 10/29 (Mark: a lamp or a tree in the middle of the road now and then): a prop set off its own street
+  // can land on another street's roadway (at a corner, or between an avenue's two carriageways); not there
+  function onRoadway(x, z) {
+    let hit = false;
+    MW.edgesNear(x, z, 20, (e2) => {
+      if (hit || MW.ECLS[e2] > 5) return;
+      const n = MW.nearestEdge(x, z, 20, (q) => q === e2);
+      if (n && n.d < MW.roadW(e2) / 2 + 0.3) hit = true;
+    });
+    return hit;
+  }
   function propsOfEdge(e) {
     let list = Props.cache.get(e);
     if (list) return list;
@@ -4906,7 +4919,7 @@
           const t = (next - s0) / Ls, x = ax + (bx - ax) * t, z = az + (bz - az) * t, side = n++ % 2 ? 1 : -1;
           const tree = leafy && r() < (park ? 0.85 : 0.55);
           const px = x + nx * off * side, pz = z + nz * off * side;
-          if (!MW.buildingAt(px, pz, 0.5)) list.push({ kind: tree ? 'tree' : 'lamp', x: px, z: pz, dx: -nx * side, dz: -nz * side, seed: r() });
+          if (!MW.buildingAt(px, pz, 0.5) && !onRoadway(px, pz)) list.push({ kind: tree ? 'tree' : 'lamp', x: px, z: pz, dx: -nx * side, dz: -nz * side, seed: r() });
           next += tree ? (park ? 9 : 13) + r() * 6 : 26 + r() * 6;
         }
         s0 += Ls;
@@ -4915,7 +4928,7 @@
         const t = r() < 0.5 ? 0.12 : 0.88, k = Math.min(k1 - 1, k0 + Math.floor((k1 - k0) * t));
         const ax = MW.PX[k], az = MW.PZ[k], bx = MW.PX[k + 1], bz = MW.PZ[k + 1], Ls = Math.hypot(bx - ax, bz - az) || 1, sd = r() < 0.5 ? 1 : -1;
         const px = (ax + bx) / 2 + ((bz - az) / Ls) * off * sd, pz = (az + bz) / 2 - ((bx - ax) / Ls) * off * sd;
-        if (!MW.buildingAt(px, pz, 0.5)) list.push({ kind: 'hydrant', x: px, z: pz, seed: r() });
+        if (!MW.buildingAt(px, pz, 0.5) && !onRoadway(px, pz)) list.push({ kind: 'hydrant', x: px, z: pz, seed: r() });
       }
     }
     if (Props.cache.size > 5000) Props.cache.clear();
@@ -5360,7 +5373,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-29 late \u00b7 a punch opens only its own side, yours and theirs';
+  const BUILD = '2026-10-29 night \u00b7 no floating buildings, no lamps in the road';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
