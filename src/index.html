@@ -1056,8 +1056,13 @@
   //   perDl    rating points per step of difficulty (tier mix, group size, wind-up, a little health)
   //   mix      [share, offset]: most encounters at your level, some easier, now and then a tough one
   //   doubt    how sure the rating is: big moves while new, small once settled, growing again after time away
-  const RATE = { start: 1200, doubt: 350, minDoubt: 80, shrink: 0.88, kMin: 12, kMax: 40, clip: 0.3, firstK: 0.5, batch: 3, gap: 190, perDl: 70, pace: 50,
-    tierR: { 1: 800, 2: 1000, 3: 1200, 4: 1400, 5: 1600 }, mix: [[0.7, 0], [0.2, -150], [0.1, 200]] };
+  // 10/29 (Mark: "losing too much gets draining, so we should be at an RPE that is just right for fitness"; "I'm
+  // getting fitter, push for more and harder enemies"): it climbs faster (kMax 120 while new in the walk, 24 once
+  // settled), a loss or an escape counts at once and the next encounter is an easier one (lossEase)
+  //   loss     a loss counts with at least lossK and its surprise clipped at lossClip (a win's at clip), so a run
+  //            of losses eases off within a fight or two
+  const RATE = { start: 1200, doubt: 350, minDoubt: 80, shrink: 0.85, kMin: 24, kMax: 120, clip: 0.35, firstK: 0.5, batch: 2, lossEase: -150, lossK: 60, lossClip: 0.6, gap: 190, perDl: 70, pace: 50,
+    tierR: { 1: 800, 2: 1000, 3: 1200, 4: 1400, 5: 1600, 6: 1800, 7: 1900 }, mix: [[0.7, 0], [0.2, -150], [0.1, 200]] };
   const Rating = { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start };
   // an encounter's rating: the group's strengths added up (three thugs are about one tier 2), plus its pace
   function encRating(ids, dl) {
@@ -1065,6 +1070,7 @@
     return 400 * Math.log10(sum || 1) + RATE.pace * (dl - 1);
   }
   function rateTarget() {
+    if (Rating.ease) { Rating.ease = false; return Rating.r - RATE.gap + RATE.lossEase; }
     let r = Math.random(), off = 0;
     for (const [p, o] of RATE.mix) { if ((r -= p) <= 0) { off = o; break; } }
     return Rating.r - RATE.gap + off;
@@ -1077,15 +1083,17 @@
     const dl = dlFor(target);
     return { ids: streetGroup(dl, lo, hi), dl };
   }
-  // a fight's score, 0 to 1, from how you fought: a win is 0.6 to 1, a loss or an escape 0 to 0.4
+  // a fight's score, 0 to 1, from how you fought: a win is 0.6 to 1, a loss or an escape 0 to 0.4 (hits as a
+  // share of your health, the knockouts' health back included, so a long mob fight is judged fairly)
   function fightScore(q, won) {
     const def = (q.avoided + 0.3 * q.blocked) / Math.max(3, q.atYou);
-    const k = 0.6 * (1 - Math.min(10, q.hits) / 10) + 0.4 * Math.min(1, def);
+    const k = 0.6 * (1 - Math.min(1, q.hits / (FT.playerHp + (q.healed || 0)))) + 0.4 * Math.min(1, def);
     return won ? 0.6 + 0.4 * k : 0.4 * k;
   }
   function rateFight(q, won, encR) {
     const e = 1 / (1 + 10 ** ((encR - Rating.r) / 400));
     Rating.pending.push({ s: fightScore(q, won), e, w: Rating.walkFights++ === 0 ? RATE.firstK : 1 });
+    if (!won) { Rating.ease = true; rateFlush(); }
   }
   function rateFlush() {
     const P0 = Rating.pending;
@@ -1093,8 +1101,8 @@
     if (!P0.length || isDemo()) return;
     const R = Rating;
     for (const p of P0) {
-      const k = RATE.kMin + (RATE.kMax - RATE.kMin) * (R.doubt / RATE.doubt);
-      R.r += k * p.w * Math.max(-RATE.clip, Math.min(RATE.clip, p.s - p.e));
+      const lost = p.s < 0.6, k = Math.max(lost ? RATE.lossK : 0, RATE.kMin + (RATE.kMax - RATE.kMin) * (R.doubt / RATE.doubt));
+      R.r += k * p.w * Math.max(-(lost ? RATE.lossClip : RATE.clip), Math.min(RATE.clip, p.s - p.e));
       R.doubt = Math.max(RATE.minDoubt, R.doubt * RATE.shrink);
     }
     R.low = Math.min(R.low, R.r); R.high = Math.max(R.high, R.r);
@@ -1327,7 +1335,7 @@
     // a hook or uppercut thrown past its `reach` steps you in to close range (10/21)
     rangeClose: 1.6, rangeMid: 2.3, rangeOut: 3.4, outMs: [1200, 2000], midChance: 0.5,
     reach: { jab: 2.6, cross: 2.6, hook: 1.85, overhand: 1.95, uppercut: 1.85 },
-    hp: [12, 16], playerHp: 10,
+    hp: [12, 16], playerHp: 10, koHeal: 1,
     windupMs: 650, graceMs: 200, shootMs: 1300, stuffedMs: 1500, swingMs: 220,
     // straights: long reach, less power; hooks: more power, short reach; uppercuts land to the body
     damage: { jab: 0.7, cross: 1.0, hook: 1.5, overhand: 1.7, uppercut: 1.5, down: 1.0, down_strike: 0.8 }, // ground strikes all land (10/24), so a bit less each
@@ -1554,9 +1562,9 @@
     Fight.foes = [];
     for (let i = 0; i < n; i++) {
       const hp = Math.round(rand(FT.hp[0], FT.hp[1]) * Math.max(0.85, 1 + 0.03 * (lvl - 1))); // a little tougher each step
-      // a loose cluster across the sidewalk, each a step further on (in line where a building is in the way)
-      const side = i % 2 ? -1 : 1, off = i ? side * (0.7 + 0.35 * i) : 0;
-      let fx = x + Math.cos(P.yaw) * off + Math.sin(P.yaw) * 0.9 * i, fz = z - Math.sin(P.yaw) * off + Math.cos(P.yaw) * 0.9 * i;
+      // a loose cluster across the sidewalk, rows of four, each row a step further on (in line where a building is in the way)
+      const col = i % 4, off = (col % 2 ? -1 : 1) * (0.35 + 0.7 * Math.floor(col / 2)) * (i ? 1 : 0), fwd = Math.floor(i / 4) * 1.1 + (col % 2) * 0.3;
+      let fx = x + Math.cos(P.yaw) * off + Math.sin(P.yaw) * fwd, fz = z - Math.sin(P.yaw) * off + Math.cos(P.yaw) * fwd;
       if (blocked(fx, fz)) { fx = x + Math.sin(P.yaw) * 1.2 * i; fz = z + Math.cos(P.yaw) * 1.2 * i; }
       Fight.foes.push(applyArch({ x: fx, z: fz, dl: lvl, hp, maxHp: hp, state: 'wait', t: 0, until: 0, kind: '', hurtUntil: 0, col: [[196, 64, 52], [60, 92, 170], [70, 140, 90]][(G.fightsDone + i) % 3], seed: Math.random() }, ids[i]));
     }
@@ -1565,8 +1573,8 @@
     let vx = x + rx * 1.6 + Math.sin(P.yaw) * 0.8, vz = z + rz * 1.6 + Math.cos(P.yaw) * 0.8;
     if (blocked(vx, vz)) { vx = x - rx * 1.6 + Math.sin(P.yaw) * 0.8; vz = z - rz * 1.6 + Math.cos(P.yaw) * 0.8; }
     Fight.people = [{ kind: 'victim', x: vx, z: vz, look: Fight.foes[0], col: VICTIM_COLS[G.fightsDone % VICTIM_COLS.length], seed: Math.random() }];
-    say(n > 1 ? `${NUM_WORD[n] || n} of them hassling someone up ahead. Go help.` : 'Someone is getting hassled up ahead. Go help.', 'confirm');
-    banner(n > 1 ? `${n} opponents ahead` : 'Someone needs help', 2000);
+    say(isMob(n) ? `A gang of ${n} hassling someone up ahead. Go help.` : n > 1 ? `${NUM_WORD[n] || n} of them hassling someone up ahead. Go help.` : 'Someone is getting hassled up ahead. Go help.', 'confirm');
+    banner(isMob(n) ? `A gang of ${n} ahead` : n > 1 ? `${n} opponents ahead` : 'Someone needs help', 2000);
   }
   const foeDist = (f) => Math.hypot(f.x - P.x, f.z - P.z);
   const bearingTo = (f) => ((Math.atan2(f.x - P.x, f.z - P.z) * 180) / Math.PI + 360) % 360;
@@ -2010,11 +2018,12 @@
     // their head clock (10/24, Mark): a punch has to meet their head. Straights reach 12, a hook the
     // side of the hand that throws it, uppercuts 6; anywhere else it misses (from a shift's angle
     // everything lands). A head that moves into the punch takes it double, past the guard.
-    let into = false;
+    let into = false, caughtOff = false;
     if (kind !== 'down_strike' && !shifted) {
       // the hours the punch swept (from its path; a punch with none, a touch button, by its kind)
       const rd = Fight.read || { name: KIND_NAME[kind], cover: [FT.head.clock.zones[punchZone(kind, hand)]], into: ZONE_DIR[punchZone(kind, hand)] };
       const hr = foeHour(foe), hit = covers(rd, hr);
+      caughtOff = hit && !inHours(hr, [11, 1]); // their head off the line, and the punch found it there
       Fight.sweepShow = { cover: rd.cover, hit, t: now };
       if (!hit) {
         const hd = foe.hit && foe.hit.head;
@@ -2026,10 +2035,14 @@
       const m = foe.hMove;
       into = !!m && foe.state === 'guard' && now - m.t < FT.foeHead.intoMs && m.dx * rd.into[0] + m.dy * rd.into[1] > 0.3;
     }
-    // their guard bar: it takes the punch unless you came in clean (out of a slip or a level
-    // change, from an angle, or into their wind-up, shot, brace or stuffed shot)
+    // their guard bar: it takes the punch unless you came in clean
+    // 10/26 (Mark: "make enemies' guards automatic unless they are pre or mid punch or are caught with their
+    // head on the clock"): clean is into their wind-up or the punch itself (or right after it, the counter
+    // window), their head caught off the line or moving into it, from an angle, or with no guard to speak of
+    // (broken, shooting, braced, stuffed, down). A slip or a level change by itself no longer gets one in.
     const outOf = now - Math.max(Fight.lastSlipAt, Fight.lastLowAt) < FT.guard.cleanMs;
-    const clean = into || shifted || outOf || now < Fight.counterUntil || ['broken', 'windup', 'shoot', 'brace', 'stuffed', 'down'].includes(foe.state);
+    const midPunch = foe.state === 'windup' || now < (foe.swingUntil || 0);
+    const clean = into || caughtOff || shifted || midPunch || now < Fight.counterUntil || ['broken', 'shoot', 'brace', 'stuffed', 'down'].includes(foe.state);
     if (!clean && (foe.guardHp ?? 0) > 0 && kind !== 'down_strike') {
       foe.guardHp -= dmg;
       foe.blockUntil = now + 380;
@@ -2037,6 +2050,7 @@
       clack();
       const hd = foe.hit && foe.hit.head;
       if (hd) Fight.pops.push({ x: hd.x, y: hd.y, t: now, text: 'Blocked', big: false });
+      if ((a.blockedN = (a.blockedN || 0) + 1) === 3) fightMsg('Guard up: hit him as he punches, or catch his head', 1600);
       fightTalk('foe', 'blocked', now, 0.25);
       if (foe.guardHp <= 0) {
         foe.state = 'broken'; foe.until = now + FT.guard.brokenMs; foe.guardHp = 0;
@@ -2050,6 +2064,7 @@
     }
     // 10/23 PM (Mark): in range, every punch lands; the guard bar and the bonuses decide what it does
     if (outOf && !shifted) { dmg *= FT.guard.cleanBonus; fightMsg('Clean shot!', 700); }
+    else if (caughtOff && !into) fightMsg('Caught off the line!', 800);
     // a hook from the side you sidestepped to
     if (Fight.sidestep && now < Fight.sidestep.until && (kind === 'hook' || kind === 'overhand') && hand === Fight.sidestep.side) { dmg *= FT.sidestep.bonus; fightMsg('Side round!', 1000); Fight.sidestep = null; }
     // a round that reaches 5 to 7 o'clock (rising or to the body, from either hand) catches them changing
@@ -2085,6 +2100,9 @@
   function knockout(foe, now) {
     foe.state = 'ko'; foe.until = now + 1500;
     guardBonus('ko');
+    // 10/29 (kung fu groups; winning is never punished): a knockout with more of them waiting gives a hit back
+    const a = Fight.active;
+    if (a && others(a).length && Fight.hp < FT.playerHp) { Fight.hp = Math.min(FT.playerHp, Fight.hp + FT.koHeal); if (Q.fight) Q.fight.healed = (Q.fight.healed || 0) + FT.koHeal; }
     say('Knockdown!', 'feedback');
     bell(3); Fight.shake = { t: now, k: 2.4 }; Fight.flashAt = now;
     fightMsg('Knockout!', 1600);
@@ -2594,12 +2612,15 @@
       foeThink(a, now);
       return;
     }
-    // the one waiting their turn circles at the edge, off to one side
-    others(a).forEach((f, i) => {
+    // the ones waiting their turn circle at the edge, off to the sides (10/29: a big group in a ring around you
+    // in front, in rows, like the old kung fu movies)
+    const wait = others(a), per = 10, nRow = Math.ceil(Math.min(wait.length, per) / 2);
+    wait.forEach((f, i) => {
       if (f.state !== 'sub') { f.state = 'sub'; f.until = 0; }
-      const bx = foe.x - P.x, bz = foe.z - P.z, bl = Math.hypot(bx, bz) || 1, ang = (i % 2 ? -1 : 1) * (0.5 + 0.12 * Math.sin(now / 1700 + i));
+      const row = Math.floor(i / per), j = i % per, slot = Math.floor(j / 2);
+      const bx = foe.x - P.x, bz = foe.z - P.z, bl = Math.hypot(bx, bz) || 1, ang = (j % 2 ? -1 : 1) * (0.5 + (nRow > 1 ? (1.1 * slot) / (nRow - 1) : 0) + 0.12 * Math.sin(now / 1700 + i)) + (row % 2) * 0.15;
       const ux = (bx / bl) * Math.cos(ang) - (bz / bl) * Math.sin(ang), uz = (bx / bl) * Math.sin(ang) + (bz / bl) * Math.cos(ang);
-      const tx = P.x + ux * FT.tag.sideM, tz = P.z + uz * FT.tag.sideM;
+      const tx = P.x + ux * (FT.tag.sideM + 1.2 * row), tz = P.z + uz * (FT.tag.sideM + 1.2 * row);
       if (!blocked(tx, tz)) { const k = Math.min(1, dt * 2); f.x += (tx - f.x) * k; f.z += (tz - f.z) * k; }
     });
     foeHeadTick(foe, now, dt);
@@ -2866,7 +2887,8 @@
     }
     return pts;
   }
-  function stageFoeCount() { return Math.max(9, Math.min(19, 10 + Math.floor((Stage.dl - 1) * 0.75))); }
+  // (10/29: big groups for the fit, up to 60 across the groups)
+  function stageFoeCount() { return Math.max(9, Math.min(60, 10 + Math.floor((Stage.dl - 1) * 3))); }
   function startStage(now) {
     let ti = 0;
     try { ti = (Number(localStorage.getItem(THEME_KEY)) || 0) % THEMES.length; localStorage.setItem(THEME_KEY, String(ti + 1)); } catch (_) { ti = Math.floor(Math.random() * THEMES.length); }
@@ -2876,7 +2898,7 @@
     let dir = st ? st.dir : { x: hx, z: hz };
     if (dir.x * hx + dir.z * hz < 0) dir = { x: -dir.x, z: -dir.z };
     const trail = streetPath(P.x, P.z, dir, STAGE.pathM);
-    const n = stageFoeCount(), groups = n > 12 ? 4 : 3, sizes = [];
+    const n = stageFoeCount(), groups = n > 24 ? 5 : n > 12 ? 4 : 3, sizes = [];
     for (let i = 0; i < groups; i++) sizes.push(Math.floor(n / groups) + (i < n % groups ? 1 : 0));
     Object.assign(Stage, { on: true, theme, trail, sizes, group: 0, sp: 0, phase: 'intro', introUntil: now + STAGE.introMs, people: [], spot: 0, boss: null, foes: 0 });
     Stage.started++;
@@ -3083,6 +3105,10 @@
     'boxer+turtle+roidhead': 'Brick wall', 'boxer+turtle+tweaker': 'Ghost', 'boxer+roidhead+tweaker': 'Wrecking ball',
     'wrestler+turtle+roidhead': 'Sumo', 'wrestler+turtle+tweaker': 'Eel', 'wrestler+roidhead+tweaker': 'Freight train',
     'turtle+roidhead+tweaker': 'Armadillo',
+    // 10/29 (Mark: "more than 4 tiers"): any four, and all five
+    'boxer+wrestler+turtle+roidhead': 'Juggernaut', 'boxer+wrestler+turtle+tweaker': 'Shadow', 'boxer+wrestler+roidhead+tweaker': 'Champion',
+    'boxer+turtle+roidhead+tweaker': 'Fortress', 'wrestler+turtle+roidhead+tweaker': 'Grizzly',
+    'boxer+wrestler+turtle+roidhead+tweaker': 'Legend',
   };
   function mergeArch(ids) {
     const all = ids.map((id) => ARCH[id]), fight = ids.filter((id) => FIGHTERS.includes(id)).map((id) => ARCH[id]);
@@ -3117,12 +3143,15 @@
   Object.assign(ARCH.roidhead, { learn: ['escape'] });
   Object.assign(ARCH.tweaker, { learn: ['punch'] });
   const combos = (k, from = 0) => (k === 0 ? [[]] : TIER2.slice(from).flatMap((id, i) => combos(k - 1, from + i + 1).map((c) => [id, ...c])));
-  for (const k of [2, 3]) for (const c of combos(k)) ARCH[c.join('+')] = mergeArch(c);
+  for (const k of [2, 3, 4, 5]) for (const c of combos(k)) ARCH[c.join('+')] = mergeArch(c);
   // the boss: all five (boxer and wrestler reads, a turtle's cover, a roidhead's health, a tweaker's
   // pace), plus the stage's own size, health, guard and heavier hands (STAGE.boss); stays down as long as anyone
-  ARCH.boss = Object.assign(mergeArch(TIER2), { name: 'Boss', tip: '', tier: 5, w: 0, gnp: 1, hit: STAGE.boss.hit });
-  // how often each tier turns up (the higher ones more each level, by grow) and how many come at once
-  const TIERS = { 1: { w: 60, grow: 0, n: [3, 4] }, 2: { w: 28, grow: 0.08, n: [2, 2] }, 3: { w: 8, grow: 0.15, n: [1, 1] }, 4: { w: 2, grow: 0.25, n: [1, 1] } };
+  ARCH.boss = Object.assign(mergeArch(TIER2), { name: 'Boss', tip: '', tier: 7, w: 0, gnp: 1, hit: STAGE.boss.hit });
+  // how often each tier turns up (the higher ones more each difficulty step, by grow, from step `from`)
+  // and how many come at once (n: the most of that tier a crime center group takes; tierCount grows it)
+  const TIERS = { 1: { w: 60, grow: 0, n: [3, 40] }, 2: { w: 28, grow: 0.08, n: [2, 5] }, 3: { w: 8, grow: 0.15, n: [1, 3] }, 4: { w: 2, grow: 0.25, n: [1, 2] },
+    5: { w: 1.2, grow: 0.3, n: [1, 1], from: 6 }, 6: { w: 0.5, grow: 0.35, n: [1, 1], from: 9 } };
+  const MAX_TIER = 6;
   const tierOf = (id) => (ARCH[id] && ARCH[id].tier) || 1;
   const archK = (f, key) => { const v = archOf(f)[key]; return v === undefined ? (key === 'td' || key === 'stuff' ? 0 : 1) : v; };
   // your counter window after a slip, duck or bait, by who you are fighting
@@ -3130,24 +3159,34 @@
   // how deep a sprawl has to go: your own warm-up squat floor, times their type, never past a full level change
   const sprawlNeed = (f) => Math.min(LEVEL_SHOT, duckFloor() * archK(f, 'sprawl'));
   const weighted = (ws) => { let r = Math.random() * ws.reduce((n, [, w]) => n + w, 0); for (const [k, w] of ws) { if ((r -= w) <= 0) return k; } return ws[ws.length - 1][0]; };
-  function pickTier(lvl, lo = 1, hi = 4) {
+  function pickTier(lvl, lo = 1, hi = MAX_TIER) {
     const ws = [];
-    for (let t = lo; t <= hi; t++) ws.push([t, TIERS[t].w * (1 + TIERS[t].grow * (lvl - 1))]);
-    return weighted(ws);
+    for (let t = lo; t <= hi; t++) if (!TIERS[t].from || lvl >= TIERS[t].from) ws.push([t, TIERS[t].w * (1 + TIERS[t].grow * (lvl - 1))]);
+    return ws.length ? weighted(ws) : lo;
   }
   // one type of a tier: tier 2 by each type's own w, tiers 3 and 4 any combination alike
   const typeOfTier = (t) => weighted(Object.entries(ARCH).filter(([, A]) => A.tier === t).map(([id, A]) => [id, A.w]));
   // one opponent on their own (a scene's lone criminal): never a thug, thugs come three or more
   const pickArch = (lvl) => typeOfTier(pickTier(lvl, 2));
-  // how many of a tier come at once: thugs 3 or 4 (5 now and then from level 5), tier 2 a pair, the rest alone
+  const isMob = (n) => n >= 8;
+  // how many of a tier come at once (10/29, Mark: "someone very fit should be fighting large groups, think old
+  // school kung fu movies; groups of 20+ should not be unfeasible"): thugs 3 or 4 at the start, 2.5 more each
+  // difficulty step, up to 40; tier 2 a pair, one more every three steps from step 4; tier 3 one more every
+  // four steps from 7, tier 4 every five from 10; tiers 5 and 6 alone
   function tierCount(t, lvl) {
-    if (t > 1) return TIERS[t].n[0];
-    return 3 + (Math.random() < Math.min(0.6, 0.2 + 0.04 * lvl) ? 1 : 0) + (lvl >= 5 && Math.random() < 0.25 ? 1 : 0);
+    const up = (from, per) => Math.max(0, Math.floor((lvl - from) / per) + 1);
+    if (t === 1) return Math.min(TIERS[1].n[1], 3 + Math.floor(Math.max(0, lvl - 1) * 2.5 + Math.random() * 1.5));
+    if (t === 2) return Math.min(TIERS[2].n[1], 2 + up(4, 3));
+    if (t === 3) return Math.min(TIERS[3].n[1], 1 + up(7, 4));
+    if (t === 4) return Math.min(TIERS[4].n[1], 1 + up(10, 5));
+    return 1;
   }
-  // a street group: one tier, its own number, any types of it
-  function streetGroup(lvl, lo = 1, hi = 4) {
+  // a street group: one tier, its own number, any types of it; a mob of eight thugs or more has someone
+  // tougher running it, last in line
+  function streetGroup(lvl, lo = 1, hi = MAX_TIER) {
     const t = pickTier(lvl, lo, hi), n = tierCount(t, lvl), ids = [];
     for (let i = 0; i < n; i++) ids.push(typeOfTier(t));
+    if (t === 1 && n >= 8 && hi >= 2) ids[n - 1] = typeOfTier(pickTier(lvl, 2, hi));
     return ids;
   }
   // a crime center group of n: each place a tier (no more of a tier than its own number), thugs three or
@@ -3194,7 +3233,7 @@
   //           round) and counters at once; anyone else covers up and the guard bar takes it
   //   shot    your `shots`th shot in a minute meets a braced opponent (a timed or a big shot still beats it)
   // Every read says so ("Read your slip right: mix it up"), and the summary counts them.
-  const HAB = { window: 10, need: 5, share: 0.6, coolMs: 2500, learnMs: 4000, shotMs: 60000, shots: 3, str: { 2: 0.45, 3: 0.65, 4: 0.8, 5: 0.9 }, counterK: 0.7 };
+  const HAB = { window: 10, need: 5, share: 0.6, coolMs: 2500, learnMs: 4000, shotMs: 60000, shots: 3, str: { 2: 0.45, 3: 0.65, 4: 0.8, 5: 0.86, 6: 0.9, 7: 0.92 }, counterK: 0.7 };
   const Habit = { escape: [], punch: [], shots: [], read: 0 };
   function favorite(list) {
     const recent = list.slice(-HAB.window), n = {};
@@ -3225,6 +3264,7 @@
     // thugs, anything else one of tier 2 to 4 alone, or thugs, three or more, with lookouts
     const ids = kind === 'snatch' ? ratedGroup(tgt, 2, 4).ids.slice(0, 1) : ratedGroup(tgt, 1, kind === 'brawl' ? 2 : 4).ids;
     if (kind !== 'brawl' && tierOf(ids[0]) > 1) ids.length = 1;
+    if (ids.length > 6) ids.length = 6; // a crew at a crime; the big gangs hassle people
     const victim = (x, z, line) => ({ kind: 'victim', x, z, look: P, col: pick(VICTIM_COLS), seed: Math.random(), waveUntil: now + 60000, say: line, sayUntil: now + 60000 });
     if (kind === 'snatch') {
       // he is already running, away from you down the street (closer: he has a head start)
@@ -4114,7 +4154,9 @@
     if (!a.tutor) bar(W / 2 + w / 2 - w * 0.36, 42, w * 0.36, 18, Math.max(0, gh / gmax), a.foe.state === 'broken' ? '#ff5a4f' : '#9fb4c8', a.foe.state === 'broken' ? 'Open!' : 'Their guard');
     // the ones waiting their turn: their health, smaller
     const wait = others(a);
-    wait.forEach((f, i) => bar(W / 2 - w / 2 + i * (w * 0.5 + 4), 102, w * 0.5 - 4, 14, Math.max(0, f.hp / f.maxHp), '#a8443e', 'Next'));
+    // (10/29: a big group is one bar, their health together)
+    if (wait.length <= 2) wait.forEach((f, i) => bar(W / 2 - w / 2 + i * (w * 0.5 + 4), 102, w * 0.5 - 4, 14, Math.max(0, f.hp / f.maxHp), '#a8443e', 'Next'));
+    else bar(W / 2 - w / 2, 102, w, 14, Math.max(0, wait.reduce((n, f) => n + Math.max(0, f.hp), 0) / wait.reduce((n, f) => n + f.maxHp, 0)), '#a8443e', `${wait.length} waiting`);
     // a shift window counting down
     if (Fight.shift && now < Fight.shift.until && !a.tutor) {
       const left = (Fight.shift.until - now) / Fight.shift.ms;
@@ -5303,7 +5345,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-26 PM \u00b7 rating per walk, tier 2 and up read your habits';
+  const BUILD = '2026-10-29 \u00b7 big gangs, guards always up, uppercuts without a dip (engine 0.22.0)';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5356,7 +5398,7 @@
     Object.assign(Tutor, { report: '', clip: null });
     Object.assign(Q, { fights: [], fight: null });
     Object.assign(Habit, { escape: [], punch: [], shots: [], read: 0 });
-    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start });
+    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, ease: false });
     Object.assign(Rec, { walk: {}, win: { t: 0, spm: 0 } });
     Object.assign(G, { restMs: 0, cabs: 0, intervalLog: [] });
     Traffic.cars = []; Vendors.list = [];

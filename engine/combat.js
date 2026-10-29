@@ -451,8 +451,21 @@
         this.hipPrev = { t, x: hm.x };
       }
       const bodyMoving = t < (this.hipQuiet || 0);
+      // 0.22.0 (Mark, 10/26 and 10/27: "slipping occasionally causes punches to be thrown", "other than the
+      // pillar to stay strict"): while the head moves fast (the nose across from the hips in S, the shoulders'
+      // drop in T) and for headQuietMs after, the pillar's room is headK times wider, so a fist carried along by
+      // a slip, or a tracker wobble with it, stays inside; a counter thrown out of a slip reaches well past that
+      // and still lands (an uppercut rises out the top, which keeps the normal room)
+      const hd = ctx.sig && ctx.sig.body && ctx.sig.body.nose && hm ? { x: ctx.sig.body.nose.x - hm.x, y: ctx.sig.shoulderDrop || 0 } : null;
+      if (hd && this.headPrev && t > this.headPrev.t) {
+        const dt = (t - this.headPrev.t) / 1000;
+        if (Math.hypot((hd.x - this.headPrev.x) / dt, (hd.y - this.headPrev.y) / dt) > c.headSpeed) this.headQuiet = t + c.headQuietMs;
+      }
+      if (hd) this.headPrev = { t, x: hd.x, y: hd.y };
+      const headMoving = t < (this.headQuiet || 0);
+      out.punchStrict = headMoving;
       // the room: one fist, or with a side camera the room the player set on the phone (0.20.0)
-      const sv = ctx.sideView, dead = ctx.sideOn && sv && sv.zoneFists > 0 ? sv.zoneFists * c.fistM : c.dead;
+      const sv = ctx.sideView, dead0 = ctx.sideOn && sv && sv.zoneFists > 0 ? sv.zoneFists * c.fistM : c.dead, dead = dead0 * (headMoving ? c.headK : 1);
       out.punchZoneM = dead;
       // the pillar (0.21.0), meters from the shoulder midpoint: its front past the farther guard fist,
       // its sides past the shoulders or the wider guard fist, by the zone's room
@@ -515,7 +528,7 @@
             // a fast move out of a spot inside starts a trip; it is a punch if it leaves the pillar
             if (!h.away && (wasInside || h.inside) && s.v >= c.startSpeed * k && t - (h.landAt || -Infinity) >= c.refractoryMs) {
               const r0 = h.rest || s;
-              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: h.home, short: false, low: r0.y, wide: 0 };
+              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: h.home, short: false, low: r0.y, wide: 0, atGuard: Math.hypot(r0.x - h.home.x, r0.y - h.home.y, r0.z - h.home.z) <= c.rearm * k };
             } else { h.rest = s; continue; }
           }
           const m = h.move;
@@ -526,7 +539,12 @@
           // out of it: landed exitMs later (enough of its path to tell its shape), or as it slows or turns back
           // (a low, tired guard: punches rise to the head inside the column a fist at the belly sets, so a
           // fist farther than `farK` zones from where it left, and not on its way down, has left the body too)
-          const gone = !inside || (d >= Math.max(c.farMin, c.farK * dead) * k && s.y > m.home.y);
+          // (the strict pillar widens the front and sides only: an uppercut out of a slip rises inside)
+          // (0.22.0: and a fist thrown from its guard and risen upExit, up the middle, has left the top (one coming
+          // back up from the ribs did not start at its guard), opening the elbow (the guard snapped up closes it): an uppercut
+          // with no dip travels about 0.22 m, short of farMin; more up than across, and the elbow moves with it,
+          // unlike a fist brought across the face)
+          const gone = !inside || (d >= Math.max(c.farMin, c.farK * dead0) * k && s.y > m.home.y) || (m.atGuard && s.y - m.home.y >= c.upExit * k && s.angle - m.home.angle >= c.upOpenMin && Math.abs(s.x - m.home.x) < s.y - m.home.y && Math.hypot(s.ex - m.home.ex, s.ey - m.home.ey, s.ez - m.home.ez) >= c.exitElbow * k);
           if (gone && m.exitAt == null) {
             // (leaving it down past the hips is the guard dropping to the sides, not a punch)
             if (s.y < -c.lowest * k) { h.move = null; h.away = true; continue; }
@@ -634,6 +652,17 @@
       let rise = 0, low = p[0].y;
       for (const x of p) { if (x.y < low) low = x.y; if (x.y - low > rise) rise = x.y - low; }
       let arc = straight ? null : flare <= c.straightFlare * k && rise >= c.upRise * k ? 'up' : 'side';
+      // 0.22.0 (Mark, three sessions: "uppercut detection is not perfect"): most people throw an uppercut with
+      // no dip first, the elbow in and the fist driven up the middle, and landed as it leaves the pillar it had
+      // only risen, so it read as a straight. A fist that has risen `upLift` (m) and `upPic` (S in the picture,
+      // which holds up when the camera squashes depth) by then is an uppercut: synthetic straights rise at most
+      // 0.037 m and 0.088 S, uppercuts with no dip at least 0.053 m and 0.132 S, opening the elbow 21 to 51 degrees
+      // (it still has to move the elbow or reach out, below: a forearm swung up on a still elbow is not a punch)
+      let lifted = false;
+      // (and the elbow stays bent, opening under upOpen degrees: a straight opens it 60 and more, also one
+      // thrown out of a slip, whose lean lifts the fist as it goes)
+      const opened = Math.max(...p.map((x) => x.angle)) - s0.angle;
+      if (straight && rise >= c.upLift * k && p[p.length - 1].py - Math.min(...p.map((x) => x.py)) >= c.upPic && opened < c.upOpen) { straight = false; arc = 'up'; lifted = true; }
       // (0.18.0: landed as it leaves, a fist may not be in front of its shoulder yet, so instead of that a
       // fist heading mostly down, and not rising out of it as an uppercut, is a guard dropping, not a punch)
       if (c.fireOnExit) {
@@ -644,7 +673,7 @@
         if (exit && L.y < -c.lowest * k) return;
         // and a fist leaving on a still elbow (a forearm swinging out) is not a punch unless the arm
         // reaches well out or it rises as an uppercut: straights and hooks move the elbow from the start
-        if (arc !== 'up' && elbow < c.exitElbow * k && ext < c.exitExtend * k) return;
+        if ((arc !== 'up' || lifted) && elbow < c.exitElbow * k && ext < c.exitExtend * k) return;
       }
       // the fist's path across the picture (0.16.0, Mark: punches traverse the clock): pathPoints
       // points from where it left to where it landed, [x, y] in S from the shoulder midpoint in the

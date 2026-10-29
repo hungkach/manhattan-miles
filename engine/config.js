@@ -215,6 +215,14 @@
           extend: 0.14,      // m: the fist gets this much farther from its shoulder
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
+          headSpeed: 1.0,    // S/s (or T/s down): the head moving this fast, a slip or a duck, makes the pillar strict (0.22.0)
+          headQuietMs: 200,  // and for this long after
+          headK: 2,          // the room is this many times wider meanwhile
+          upLift: 0.045,     // m: a fist risen this much as it leaves, with no dip and the elbow in, is an uppercut (0.22.0)
+          upPic: 0.11,       // S: and risen this much in the picture
+          upExit: 0.12,      // m: a fist this far above where it left has left the pillar's top (0.22.0)
+          upOpenMin: 12,     // degrees: and the elbow opens at least this much on the way (an uppercut 21 and up; a guard raised closes it)
+          upOpen: 58,        // degrees: with the elbow opening less than this (a straight opens it 60 and more)
           straightFlare: 0.078, // m: and its elbow swings out sideways no more than this (a hook's 0.083 and more; 0.21.0: was 0.07, a rear straight read from rest swings 0.072)
           pathPoints: 8,     // points in a punch's path (0.16.0)
           wideOut: 0.35,     // S: a fist this far out to the side of where it left, elbow swung out, is a hook winding up
