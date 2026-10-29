@@ -2041,7 +2041,10 @@
     // window), their head caught off the line or moving into it, from an angle, or with no guard to speak of
     // (broken, shooting, braced, stuffed, down). A slip or a level change by itself no longer gets one in.
     const outOf = now - Math.max(Fight.lastSlipAt, Fight.lastLowAt) < FT.guard.cleanMs;
-    const midPunch = foe.state === 'windup' || now < (foe.swingUntil || 0);
+    // 10/29 PM (Mark: one side, like real life): their punch opens the middle and the side of the hand that
+    // throws it; their other hand still guards. Your round comes in on the side of their hand facing it (your
+    // right hand's round lands on their left side), so it gets in only when that hand is the one punching.
+    const midPunch = (foe.state === 'windup' || now < (foe.swingUntil || 0)) && (!(kind === 'hook' || kind === 'overhand') || where === 'body' || (foe.punchHand || 'L') === (hand === 'right' ? 'L' : 'R'));
     const clean = into || caughtOff || shifted || midPunch || now < Fight.counterUntil || ['broken', 'shoot', 'brace', 'stuffed', 'down'].includes(foe.state);
     if (!clean && (foe.guardHp ?? 0) > 0 && kind !== 'down_strike') {
       foe.guardHp -= dmg;
@@ -2177,7 +2180,8 @@
     Fight.fistFlash[e.hand] = now + 180;
     if (!isDemo() && !a.tutor && now - a.start < FT.gate.startQuietMs) return;
     if (!claim(e.hand, now)) return;
-    Fight.lastPunchAt = now; // your guard is down while it is out (FT.myGuard.openMs)
+    Fight.lastPunchAt = now; // that side of your guard is down while it is out (FT.myGuard.openMs)
+    Fight.punchAt = Fight.punchAt || {}; Fight.punchAt[e.hand] = now;
     const lead = engine.signals().stance === 'southpaw' ? 'right' : 'left';
     const rd = readPunch(e, lead);
     readTheirPunch(a, rd, now);
@@ -2314,7 +2318,7 @@
       foe.hv = { x: to.x, y: to.y }; foe.hSeq = [Object.assign({ until: now + 450 }, to)]; foe.hMove = { dx: 0, dy: 0, t: now };
       Fight.readMsg = { t: now, text: `Read your ${key}: mix it up` };
       // and the counter comes straight back
-      foe.state = 'windup'; foe.judging = false; foe.kind = key === 'round' ? 'uppercut' : 'hook'; foe.hookSide = s < 0 ? 'R' : 'L';
+      foe.state = 'windup'; foe.judging = false; foe.kind = key === 'round' ? 'uppercut' : 'hook'; foe.hookSide = s < 0 ? 'R' : 'L'; foe.punchHand = foe.hookSide;
       foe.aim = Object.assign({}, Fight.head); foe.read = null;
       foe.until = now + windupMs() * HAB.counterK;
     } else {
@@ -2477,7 +2481,10 @@
       // 10/29 (Mark: "both guard bars should work the same way: auto block unless you are slipping, ducking or
       // weaving or in the middle of throwing a strike"): yours is down while your punch is out (openMs) and when
       // their punch finds your head off the 12 o'clock line or mid weave, as theirs is (see landed)
-      const punching = now - (Fight.lastPunchAt || -Infinity) < FT.myGuard.openMs;
+      // (one side, like real life: your punch opens the middle and the side of the hand that threw it; their hook
+      // to your other side still meets your other hand)
+      const out = (h) => now - ((Fight.punchAt || {})[h] || -Infinity) < FT.myGuard.openMs;
+      const punching = foe.kind === 'hook' ? out(key === 'hookR' ? 'right' : 'left') : out('left') || out('right');
       const guardDown = punching || !inHours(c.hour, [11, 1]) || !!s.weaving;
       if (evaded) habitPush(Habit.escape, lowNow ? 'low' : c.vx >= 0 ? 'right' : 'left');
       const readHit = foe.read === 'escape' && !evaded;
@@ -2496,7 +2503,7 @@
         Fight.block = { t: now, side: 'both' }; clack(); Fight.shake = { t: now, k: 0.5 };
         if (Fight.guardHp < 0.5) { fightMsg('Guard bar empty!', 1100); say('Guard down. Slip and duck.', 'feedback'); } else fightMsg('Blocked');
       }
-      else if (guardDown) { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg(punching ? 'Caught punching' : 'Moved into it', 1100); }
+      else if (guardDown) { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg(punching ? 'Caught punching: hand back to the chin' : 'Moved into it', 1100); }
       else { hurtPlayer(now, archOf(foe).hit); tone(150, 0.2, 0.35, 'sine', 0, 50); Fight.shake = { t: now, k: 1.4 }; fightMsg({ straight: 'Slip the straight!', hook: key === 'hookR' ? 'Duck it or roll left!' : 'Duck it or roll right!', uppercut: 'Stand tall when it comes up the middle!' }[foe.kind] || 'Hit', 1100); }
       if (readHit) { fightMsg(`Read your ${ESC_NAME[foe.readEsc]}: mix it up`, 1400); fightTalk('foe', 'landed', now, 0.5); }
       if (foe.read === 'escape') foe.read = null;
@@ -2527,6 +2534,7 @@
     const punch = (kind, side) => {
       a.range = 'close'; foe.state = 'windup'; foe.judging = false; foe.kind = kind; foe.aim = Object.assign({}, Fight.head);
       if (kind === 'hook') foe.hookSide = side || (Math.random() < 0.5 ? 'L' : 'R');
+      foe.punchHand = kind === 'hook' ? foe.hookSide : Math.random() < 0.6 ? 'L' : 'R'; // a straight is mostly the lead (left) hand
       foe.until = now + windupMs() + (kind === 'hook' ? 100 : kind === 'uppercut' ? 50 : 0);
     };
     // 10/21 (Mark: the AI should read your head movement and level, so you can bait them):
@@ -5352,7 +5360,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-29 PM \u00b7 your guard works like theirs: down while punching or moving into it';
+  const BUILD = '2026-10-29 late \u00b7 a punch opens only its own side, yours and theirs';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
