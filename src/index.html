@@ -1203,7 +1203,7 @@
     else if (it.id === 'spawn') spawnFoes(14);
     else if (it.id === 'tutor') startTutor(performance.now());
     else if (it.id === 'look') {
-      const ids = Object.keys(LOOKS).filter((k) => k !== 'gym'), next = ids[(ids.indexOf(Object.keys(LOOKS).find((k) => LOOKS[k] === L)) + 1) % ids.length];
+      const ids = Object.keys(LOOKS).filter((k) => k !== 'gym'), next = ids[(ids.indexOf(lookId) + 1) % ids.length]; // (10/30: L is a season-tinted copy, so go by lookId)
       setLook(next); try { localStorage.setItem(LOOK_KEY, next); } catch (_) {}
       $('look').value = next; say(LOOKS[next].name, 'confirm');
     }
@@ -5562,7 +5562,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-30 \u00b7 season pick on the phone';
+  const BUILD = '2026-10-30 \u00b7 time of day picks work with seasons';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -5573,7 +5573,7 @@
     $('playDemo').textContent = playLabel;
   }).catch((err) => { World.error = err; $('playDemo').textContent = 'Could not load the map: ' + err.message; });
   $('realNames').checked = realNames;
-  $('look').value = Object.keys(LOOKS).find((k) => LOOKS[k] === L);
+  $('look').value = lookId;
   $('gfx').value = GFX.mode;
   try { applySeason(localStorage.getItem(SEASON_KEY) || 'auto'); } catch (_) { applySeason('auto'); }
   $('season').value = seasonPick;
