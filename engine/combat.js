@@ -479,7 +479,10 @@
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
         // (with the pillar a punch on its way low, a body round, is not a hand dropped)
-        const dropped = s.y < -c.lowest * k && !(c.pillar && (h.move || h.away));
+        // (0.24.0: nor a hand at or above the guard the gym learned, however low that guard is: a tired guard at
+        // the belly sits about on the lowest line, and crossing it lost the hand's home, so its punches never started)
+        const gpd = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+        const dropped = s.y < Math.min(-c.lowest * k, gpd ? gpd.y - this.gt : Infinity) && !(c.pillar && (h.move || h.away));
         if (ctx.upperLow || bodyMoving || dropped) { h.move = null; h.home = null; h.away = false; h.trail = null; continue; }
         // 0.18.0: a punch landed as it left the zone is followed to its end for 'punch_path' (the whole sweep)
         if (h.trail) {
@@ -496,6 +499,7 @@
           }
         }
         const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
+        if (d <= c.rearm * k) h.homeAt = t;
         if (c.pillar) {
           // 0.21.0 the pillar (Mark 10/25: "the player is a pillar, any hand that leaves the body
           // outside a deadzone is a strike"): the body is a column from the back of the guard to the
@@ -528,7 +532,9 @@
             // a fast move out of a spot inside starts a trip; it is a punch if it leaves the pillar
             if (!h.away && (wasInside || h.inside) && s.v >= c.startSpeed * k && t - (h.landAt || -Infinity) >= c.refractoryMs) {
               const r0 = h.rest || s;
-              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: h.home, short: false, low: r0.y, wide: 0, atGuard: Math.hypot(r0.x - h.home.x, r0.y - h.home.y, r0.z - h.home.z) <= c.rearm * k };
+              // (0.24.0: the guard's spot counts toward a dip only when the fist left it just now, a low round's
+              // drop; a guard that drifted down and rested there is where the punch starts)
+              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: r0.t - (h.homeAt ?? -Infinity) <= c.dropMs ? h.home : null, short: false, low: r0.y, wide: 0, atGuard: Math.hypot(r0.x - h.home.x, r0.y - h.home.y, r0.z - h.home.z) <= c.rearm * k };
             } else { h.rest = s; continue; }
           }
           const m = h.move;
@@ -669,7 +675,12 @@
       // (and the elbow stays bent, opening under upOpen degrees: a straight opens it 60 and more, also one
       // thrown out of a slip, whose lean lifts the fist as it goes)
       const opened = Math.max(...p.map((x) => x.angle)) - s0.angle;
-      if (straight && rise >= c.upLift * k && p[p.length - 1].py - Math.min(...p.map((x) => x.py)) >= c.upPic && opened < c.upOpen) { straight = false; arc = 'up'; lifted = true; }
+      // (0.24.0, Mark 10/30: "not a single rear straight landed, very few lead straights, majority was rounds": a
+      // straight from a low, tired guard rises from the belly to the head with the elbow barely opening, so it
+      // read as an uppercut. Its elbow lifts with the arm (synthetic 0.18 m and up from a guard at the belly); an
+      // uppercut's elbow stays down under the fist (0.11 m at most, from any guard), so lifting liftElbow keeps it a straight)
+      const elbowLift = Math.max(...p.map((x) => x.ey)) - e0.ey;
+      if (straight && rise >= c.upLift * k && p[p.length - 1].py - Math.min(...p.map((x) => x.py)) >= c.upPic && opened < c.upOpen && elbowLift < c.liftElbow * k) { straight = false; arc = 'up'; lifted = true; }
       // (0.18.0: landed as it leaves, a fist may not be in front of its shoulder yet, so instead of that a
       // fist heading mostly down, and not rising out of it as an uppercut, is a guard dropping, not a punch)
       if (c.fireOnExit) {

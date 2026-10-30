@@ -119,7 +119,7 @@
   #note[hidden] { display: none; }
 </style>
 <script>
-/* rep-engine 0.23.0 from hungkach/body-arcade@332aa30, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
+/* rep-engine 0.24.0 from hungkach/body-arcade@0be4564, inlined by build/build.mjs. Edit engine/ via scripts/update-engine.mjs, not this copy. */
 // ---- engine/core.js ----
 // rep-engine core: namespace, landmark indices, small shared helpers.
 // Every engine file is a plain script that adds to globalThis.RepEngine,
@@ -128,7 +128,7 @@
   'use strict';
   const RE = (g.RepEngine = g.RepEngine || {});
 
-  RE.version = '0.23.0';
+  RE.version = '0.24.0';
 
   // MediaPipe Pose landmark indices (33-point model). "Left" and "right"
   // are the player's own anatomical sides.
@@ -446,11 +446,13 @@
           extend: 0.14,      // m: the fist gets this much farther from its shoulder
           elbowMove: 0.1,    // m: or the elbow travels this far (a forearm wiping on a still elbow is not a punch)
           straightDip: 0.05, // m: a straight dips no more than this first (an uppercut dips 0.08 and more)
+          dropMs: 400,       // ms: the guard's spot counts toward the dip only when the fist left it this recently (0.24.0)
           headSpeed: 1.0,    // S/s (or T/s down): the head moving this fast, a slip or a duck, makes the pillar strict (0.22.0)
           headQuietMs: 200,  // and for this long after
           headK: 2,          // the room is this many times wider meanwhile
           liftFlare: 0.115,  // m: a punch whose elbow stays within this (0.23.0) ...
           liftElbow: 0.13,   // m: ... and lifts this much, with no dip, is a straight thrown from a chest-high guard
+                             // (0.24.0: and a rising punch whose elbow lifts this much is a straight, not an uppercut)
           liftOut: 0.25,     // m: (its fist going no farther out to its own side than this)
           upLift: 0.045,     // m: a fist risen this much as it leaves, with no dip and the elbow in, is an uppercut (0.22.0)
           upPic: 0.11,       // S: and risen this much in the picture
@@ -2040,7 +2042,10 @@
         s.v = h.prev && t > h.prev.t ? Math.hypot(s.x - h.prev.x, s.y - h.prev.y, s.z - h.prev.z) / ((t - h.prev.t) / 1000) : 0;
         h.prev = s;
         // (with the pillar a punch on its way low, a body round, is not a hand dropped)
-        const dropped = s.y < -c.lowest * k && !(c.pillar && (h.move || h.away));
+        // (0.24.0: nor a hand at or above the guard the gym learned, however low that guard is: a tired guard at
+        // the belly sits about on the lowest line, and crossing it lost the hand's home, so its punches never started)
+        const gpd = ctx.cal && ctx.cal.guardPos && ctx.cal.guardPos[hand];
+        const dropped = s.y < Math.min(-c.lowest * k, gpd ? gpd.y - this.gt : Infinity) && !(c.pillar && (h.move || h.away));
         if (ctx.upperLow || bodyMoving || dropped) { h.move = null; h.home = null; h.away = false; h.trail = null; continue; }
         // 0.18.0: a punch landed as it left the zone is followed to its end for 'punch_path' (the whole sweep)
         if (h.trail) {
@@ -2057,6 +2062,7 @@
           }
         }
         const d = h.home ? Math.hypot(s.x - h.home.x, s.y - h.home.y, s.z - h.home.z) : Infinity;
+        if (d <= c.rearm * k) h.homeAt = t;
         if (c.pillar) {
           // 0.21.0 the pillar (Mark 10/25: "the player is a pillar, any hand that leaves the body
           // outside a deadzone is a strike"): the body is a column from the back of the guard to the
@@ -2089,7 +2095,9 @@
             // a fast move out of a spot inside starts a trip; it is a punch if it leaves the pillar
             if (!h.away && (wasInside || h.inside) && s.v >= c.startSpeed * k && t - (h.landAt || -Infinity) >= c.refractoryMs) {
               const r0 = h.rest || s;
-              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: h.home, short: false, low: r0.y, wide: 0, atGuard: Math.hypot(r0.x - h.home.x, r0.y - h.home.y, r0.z - h.home.z) <= c.rearm * k };
+              // (0.24.0: the guard's spot counts toward a dip only when the fist left it just now, a low round's
+              // drop; a guard that drifted down and rested there is where the punch starts)
+              h.move = { from: r0.t, path: [r0], peakV: 0, far: 0, farAt: s, home: r0, guard: r0.t - (h.homeAt ?? -Infinity) <= c.dropMs ? h.home : null, short: false, low: r0.y, wide: 0, atGuard: Math.hypot(r0.x - h.home.x, r0.y - h.home.y, r0.z - h.home.z) <= c.rearm * k };
             } else { h.rest = s; continue; }
           }
           const m = h.move;
@@ -2230,7 +2238,12 @@
       // (and the elbow stays bent, opening under upOpen degrees: a straight opens it 60 and more, also one
       // thrown out of a slip, whose lean lifts the fist as it goes)
       const opened = Math.max(...p.map((x) => x.angle)) - s0.angle;
-      if (straight && rise >= c.upLift * k && p[p.length - 1].py - Math.min(...p.map((x) => x.py)) >= c.upPic && opened < c.upOpen) { straight = false; arc = 'up'; lifted = true; }
+      // (0.24.0, Mark 10/30: "not a single rear straight landed, very few lead straights, majority was rounds": a
+      // straight from a low, tired guard rises from the belly to the head with the elbow barely opening, so it
+      // read as an uppercut. Its elbow lifts with the arm (synthetic 0.18 m and up from a guard at the belly); an
+      // uppercut's elbow stays down under the fist (0.11 m at most, from any guard), so lifting liftElbow keeps it a straight)
+      const elbowLift = Math.max(...p.map((x) => x.ey)) - e0.ey;
+      if (straight && rise >= c.upLift * k && p[p.length - 1].py - Math.min(...p.map((x) => x.py)) >= c.upPic && opened < c.upOpen && elbowLift < c.liftElbow * k) { straight = false; arc = 'up'; lifted = true; }
       // (0.18.0: landed as it leaves, a fist may not be in front of its shoulder yet, so instead of that a
       // fist heading mostly down, and not rising out of it as an uppercut, is a guard dropping, not a punch)
       if (c.fireOnExit) {
@@ -11484,7 +11497,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-30 \u00b7 time of day picks work with seasons';
+  const BUILD = '2026-10-30 \u00b7 engine 0.24: straights from a low guard';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
