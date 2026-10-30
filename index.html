@@ -7054,6 +7054,7 @@ void main() {
       Stage.on ? { id: 'leave', label: 'Leave this crime center' } : { id: 'skip', label: 'Skip this stop' },
       { id: 'tutor', label: 'Combat tutorial' },
       { id: 'look', label: `Time of day: ${L.name}` },
+      { id: 'season', label: `Season: ${seasonPick === 'auto' ? `Auto (${SEA.name})` : SEA.name}` },
       { id: 'teleport', label: 'Teleport (test)' },
       { id: 'spawn', label: 'Spawn opponent (test)' },
       { id: 'end', label: 'End session' },
@@ -7127,6 +7128,12 @@ void main() {
       const ids = Object.keys(LOOKS).filter((k) => k !== 'gym'), next = ids[(ids.indexOf(Object.keys(LOOKS).find((k) => LOOKS[k] === L)) + 1) % ids.length];
       setLook(next); try { localStorage.setItem(LOOK_KEY, next); } catch (_) {}
       $('look').value = next; say(LOOKS[next].name, 'confirm');
+    }
+    else if (it.id === 'season') {
+      // auto, then each season in turn (the same pick as the title's, kept for next time)
+      const ids = ['auto', ...Object.keys(SEASONS)], next = ids[(ids.indexOf(seasonPick) + 1) % ids.length];
+      applySeason(next); try { localStorage.setItem(SEASON_KEY, seasonPick); } catch (_) {}
+      $('season').value = seasonPick; say(seasonPick === 'auto' ? `Season by the date: ${SEA.name}` : SEA.name, 'confirm');
     }
   }
   function phoneTick(now) {
@@ -11477,7 +11484,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-10-30 \u00b7 no fixed tiers or groups: a budget, ranks and waves';
+  const BUILD = '2026-10-30 \u00b7 season pick on the phone';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
