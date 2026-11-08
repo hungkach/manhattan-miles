@@ -7022,8 +7022,9 @@ void main() {
     // streakT to the next encounter's budget; a loss or an escape ends the streak (and eases the next, as before),
     // and counts streakLoss of the streak's extra too, so a streak that climbed past you comes back down
     streakK: 0.3, streakT: 25, streakLoss: 0.5,
+    lossTop: 0.45, lossSoft: 0.6,
     tierR: { 1: 800, 2: 1000, 3: 1200, 4: 1400, 5: 1600, 6: 1800, 7: 1900 }, mix: [[0.7, 0], [0.2, -150], [0.1, 200]] };
-  const Rating = { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, cleanRun: 0, lossRun: 0, winRun: 0, bestRun: 0, push: false, ease: false };
+  const Rating = { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, cleanRun: 0, lossRun: 0, winRun: 0, bestRun: 0, push: false, ease: 0 };
   // an encounter's rating: its members' strengths ({ id or arch, rk }) added up like Elo strengths
   function encRating(ms) {
     const sum = ms.reduce((n, m) => n + 10 ** (strengthOf(m.id || m.arch, m.rk ?? 1) / 400), 0);
@@ -7031,7 +7032,7 @@ void main() {
   }
   // the next encounter's budget: near your rating, easier after a loss, harder after a clean streak
   function rateTarget() {
-    if (Rating.ease) { Rating.ease = false; return Rating.r - RATE.gap + RATE.lossEase; }
+    if (Rating.ease) { const k = Rating.ease; Rating.ease = 0; return Rating.r - RATE.gap + RATE.lossEase * k; }
     let r = Math.random(), off = 0;
     for (const [p, o] of RATE.mix) { if ((r -= p) <= 0) { off = o; break; } }
     if (Rating.push) { Rating.push = false; off = Math.max(off, 0) + RATE.push; }
@@ -7042,20 +7043,28 @@ void main() {
   const restGap = (fightMs) => Math.max(FT.restS[0], Math.min(FT.restS[1], fightMs / 1000)) * rand(0.9, 1.1) * (Rating.lossRun >= RATE.lossRun ? RATE.restK : 1);
   // a fight's score, 0 to 1, from how you fought: a win is 0.6 to 1, a loss or an escape 0 to 0.4 (hits as a
   // share of your health, the knockouts' health back included, so a long mob fight is judged fairly)
+  // 11/8 (Mark: "a loss shouldn't be as punished if you did well in the fight"): a loss's score is how far you
+  // got through them (the share of the group's health you took, `q.progress`) and how much you avoided, up to
+  // RATE.lossTop; a loss that went well costs the rating less, eases the next one less and takes back less of a
+  // streak (see rateFight, rateFlush)
   function fightScore(q, won) {
-    const def = (q.avoided + 0.3 * q.blocked) / Math.max(3, q.atYou);
-    const k = 0.6 * (1 - Math.min(1, q.hits / (FT.playerHp + (q.healed || 0)))) + 0.4 * Math.min(1, def);
-    return won ? 0.6 + 0.4 * k : 0.4 * k;
+    const def = Math.min(1, (q.avoided + 0.3 * q.blocked) / Math.max(3, q.atYou));
+    if (!won) return RATE.lossTop * (0.6 * (q.progress || 0) + 0.4 * def);
+    const k = 0.6 * (1 - Math.min(1, q.hits / (FT.playerHp + (q.healed || 0)))) + 0.4 * def;
+    return 0.6 + 0.4 * k;
   }
+  // how well a loss went, 0 to 1
+  const lossQ = (s) => Math.min(1, s / RATE.lossTop);
   function rateFight(q, won, encR) {
     const e = 1 / (1 + 10 ** ((encR - Rating.r) / 400));
     const s = fightScore(q, won), ended = won ? 0 : Rating.winRun;
     Rating.winRun = won ? Rating.winRun + 1 : 0;
     Rating.bestRun = Math.max(Rating.bestRun, Rating.winRun);
-    Rating.pending.push({ s, e, w: Rating.walkFights++ === 0 ? RATE.firstK : 1, m: won ? 1 + RATE.streakK * (Rating.winRun - 1) : 1 + RATE.streakLoss * RATE.streakK * Math.max(0, ended - 1) });
+    Rating.pending.push({ s, e, w: Rating.walkFights++ === 0 ? RATE.firstK : 1, m: won ? 1 + RATE.streakK * (Rating.winRun - 1) : (1 - RATE.lossSoft * lossQ(s)) * (1 + (1 - lossQ(s)) * RATE.streakLoss * RATE.streakK * Math.max(0, ended - 1)) });
     if (won && s >= RATE.cleanS) { if (++Rating.cleanRun >= RATE.pushAfter) { Rating.push = true; Rating.cleanRun = 0; } } else Rating.cleanRun = 0;
-    Rating.lossRun = won ? 0 : Rating.lossRun + 1;
-    if (!won) { Rating.ease = true; rateFlush(); }
+    // (only a loss that went badly, under half, counts toward the longer walk after losses in a row)
+    Rating.lossRun = won ? 0 : lossQ(s) < 0.5 ? Rating.lossRun + 1 : Rating.lossRun;
+    if (!won) { Rating.ease = 1 - lossQ(s); rateFlush(); }
   }
   function rateFlush() {
     const P0 = Rating.pending;
@@ -7944,6 +7953,7 @@ void main() {
     G.fightsDone++;
     // a win pays by how it was won: clean shots, accuracy, and how little you took
     const fq = Q.fight ? fightQuality(Q.fight) : 0;
+    if (Q.fight) { const all = Fight.foes.filter((f) => f.maxHp > 0), tot = all.reduce((n, f) => n + f.maxHp, 0); Q.fight.progress = tot ? all.reduce((n, f) => n + f.maxHp - Math.max(0, f.state === 'ko' ? 0 : f.hp), 0) / tot : 0; }
     if (Q.fight && !a.tutor && a.encR != null) rateFight(Q.fight, how === 'won', a.encR);
     if (Q.fight) { Q.fights.push(Object.assign({ how, q: fq, ms: now - a.start }, Q.fight)); Q.fight = null; }
     if (how === 'won') award(Math.round(XP.win * (0.4 + 0.6 * fq)), a.foe.state === 'flee' ? 'they ran' : 'knockout');
@@ -11517,7 +11527,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-11-08 \u00b7 win streaks ramp the difficulty';
+  const BUILD = '2026-11-08 \u00b7 a close loss costs less';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -11573,7 +11583,7 @@ void main() {
     Object.assign(Tutor, { report: '', clip: null });
     Object.assign(Q, { fights: [], fight: null });
     Object.assign(Habit, { escape: [], punch: [], shots: [], read: 0 });
-    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, ease: false, push: false, cleanRun: 0, lossRun: 0, winRun: 0, bestRun: 0 });
+    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, ease: 0, push: false, cleanRun: 0, lossRun: 0, winRun: 0, bestRun: 0 });
     Object.assign(Rec, { walk: {}, win: { t: 0, spm: 0 } });
     Object.assign(G, { restMs: 0, cabs: 0, intervalLog: [] });
     Traffic.cars = []; Vendors.list = [];
