@@ -219,6 +219,8 @@
           headSpeed: 1.0,    // S/s (or T/s down): the head moving this fast, a slip or a duck, makes the pillar strict (0.22.0)
           headQuietMs: 200,  // and for this long after
           headK: 2,          // the room is this many times wider meanwhile
+          backNear: 0.06,    // m: within this of where it left, across and up, a fist that came back that quickly went back (0.25.0)
+          strictExitMs: 120, // and a fist out the front or a side has to stay out this long to land (a tracker jump lasts two or three frames; 0.25.0)
           liftFlare: 0.115,  // m: a punch whose elbow stays within this (0.23.0) ...
           liftElbow: 0.13,   // m: ... and lifts this much, with no dip, is a straight thrown from a chest-high guard
                              // (0.24.0: and a rising punch whose elbow lifts this much is a straight, not an uppercut)

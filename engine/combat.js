@@ -556,6 +556,7 @@
             if (s.y < -c.lowest * k) { h.move = null; h.away = true; continue; }
             m.exitAt = t; m.exit = inside ? 'up' : outX > outF ? 'side' : 'front';
           }
+          if (headMoving) m.strict = true;
           if (m.exitAt != null) {
             m.out = Math.max(m.out || 0, outF, outX);
             // (a fist that dipped with the elbow in and has not risen yet may be an uppercut: it lands on the
@@ -572,6 +573,16 @@
             // (one that waited, barely out, and came back inside with the elbow in is a hand going back to its
             // guard; out by half the room or more, it left the body: a punch)
             else if (m.waited && !gone && m.out < 0.5 * dead * k && Math.abs(s.ex - m.path[0].ex) <= c.straightFlare * k) { h.move = null; h.away = true; }
+            // (0.25.0, Mark 11/1 to 11/5: "strikes are being detected from head movement": while the head moves, a
+            // fist has to stay out strictExitMs before it lands; one that pops out and straight back to where it left, the tracker
+            // throwing the wrist for two or three frames in a fast slip, is not a punch. A real counter stays out
+            // 150 ms and more, so it still lands, about 90 ms later than it would with the head still (a hook sweeping back in across the face
+            // is not back where it left, so it lands once the wait is over; back is read across and up, since the depth MediaPipe
+            // gives a wrist that jumped toward the camera eases back over several frames); a fist that has risen
+            // upRise with its elbow opening is not held, an uppercut: a short one is out only a moment)
+            else if (m.strict && !(s.y - m.home.y >= c.upRise * k && s.angle - m.home.angle >= c.upOpenMin) && t - m.exitAt < c.strictExitMs) {
+              if (!gone && Math.hypot(s.x - m.home.x, s.y - m.home.y) <= c.backNear * k) { h.move = null; h.away = true; }
+            }
             else if (t - m.exitAt >= c.exitMs || s.v <= c.stopFrac * m.peakV || !gone) this.land(hand, h, out, k, m.exit);
           }
           // slowed down inside, or never left: the hand moved, it did not punch
