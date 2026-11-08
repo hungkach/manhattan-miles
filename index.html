@@ -7017,8 +7017,13 @@ void main() {
   // to the next one is restK longer as well as easier (see restGap)
   const RATE = { start: 1200, doubt: 350, minDoubt: 80, shrink: 0.85, kMin: 24, kMax: 120, clip: 0.35, firstK: 0.5, batch: 2, lossEase: -150, lossK: 60, lossClip: 0.6, gap: 190,
     cleanS: 0.85, pushAfter: 3, push: 150, lossRun: 2, restK: 1.5,
+    // 11/8 win streaks (Mark: "I am getting more fit and want a more intense workout, maybe a multiplier for
+    // consecutive wins"): every win in a row after the first adds streakK to what a win moves the rating and
+    // streakT to the next encounter's budget; a loss or an escape ends the streak (and eases the next, as before),
+    // and counts streakLoss of the streak's extra too, so a streak that climbed past you comes back down
+    streakK: 0.3, streakT: 25, streakLoss: 0.5,
     tierR: { 1: 800, 2: 1000, 3: 1200, 4: 1400, 5: 1600, 6: 1800, 7: 1900 }, mix: [[0.7, 0], [0.2, -150], [0.1, 200]] };
-  const Rating = { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, cleanRun: 0, lossRun: 0, push: false, ease: false };
+  const Rating = { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, cleanRun: 0, lossRun: 0, winRun: 0, bestRun: 0, push: false, ease: false };
   // an encounter's rating: its members' strengths ({ id or arch, rk }) added up like Elo strengths
   function encRating(ms) {
     const sum = ms.reduce((n, m) => n + 10 ** (strengthOf(m.id || m.arch, m.rk ?? 1) / 400), 0);
@@ -7030,7 +7035,7 @@ void main() {
     let r = Math.random(), off = 0;
     for (const [p, o] of RATE.mix) { if ((r -= p) <= 0) { off = o; break; } }
     if (Rating.push) { Rating.push = false; off = Math.max(off, 0) + RATE.push; }
-    return Rating.r - RATE.gap + off;
+    return Rating.r - RATE.gap + off + RATE.streakT * Math.max(0, Rating.winRun - 1);
   }
   // the walk to the next encounter (work to rest, Mark: "the RPE should be just right"): as long as the
   // fight was, within FT.restS, longer after losses in a row
@@ -7044,8 +7049,10 @@ void main() {
   }
   function rateFight(q, won, encR) {
     const e = 1 / (1 + 10 ** ((encR - Rating.r) / 400));
-    const s = fightScore(q, won);
-    Rating.pending.push({ s, e, w: Rating.walkFights++ === 0 ? RATE.firstK : 1 });
+    const s = fightScore(q, won), ended = won ? 0 : Rating.winRun;
+    Rating.winRun = won ? Rating.winRun + 1 : 0;
+    Rating.bestRun = Math.max(Rating.bestRun, Rating.winRun);
+    Rating.pending.push({ s, e, w: Rating.walkFights++ === 0 ? RATE.firstK : 1, m: won ? 1 + RATE.streakK * (Rating.winRun - 1) : 1 + RATE.streakLoss * RATE.streakK * Math.max(0, ended - 1) });
     if (won && s >= RATE.cleanS) { if (++Rating.cleanRun >= RATE.pushAfter) { Rating.push = true; Rating.cleanRun = 0; } } else Rating.cleanRun = 0;
     Rating.lossRun = won ? 0 : Rating.lossRun + 1;
     if (!won) { Rating.ease = true; rateFlush(); }
@@ -7057,7 +7064,7 @@ void main() {
     const R = Rating;
     for (const p of P0) {
       const lost = p.s < 0.6, k = Math.max(lost ? RATE.lossK : 0, RATE.kMin + (RATE.kMax - RATE.kMin) * (R.doubt / RATE.doubt));
-      R.r += k * p.w * Math.max(-(lost ? RATE.lossClip : RATE.clip), Math.min(RATE.clip, p.s - p.e));
+      R.r += k * p.w * (p.m || 1) * Math.max(-(lost ? RATE.lossClip : RATE.clip), Math.min(RATE.clip, p.s - p.e));
       R.doubt = Math.max(RATE.minDoubt, R.doubt * RATE.shrink);
     }
     R.low = Math.min(R.low, R.r); R.high = Math.max(R.high, R.r);
@@ -11510,7 +11517,7 @@ void main() {
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-11-08 \u00b7 engine 0.25: no punches from tracker jumps in slips';
+  const BUILD = '2026-11-08 \u00b7 win streaks ramp the difficulty';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
@@ -11566,7 +11573,7 @@ void main() {
     Object.assign(Tutor, { report: '', clip: null });
     Object.assign(Q, { fights: [], fight: null });
     Object.assign(Habit, { escape: [], punch: [], shots: [], read: 0 });
-    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, ease: false });
+    Object.assign(Rating, { r: RATE.start, doubt: RATE.doubt, pending: [], walkFights: 0, low: RATE.start, high: RATE.start, ease: false, push: false, cleanRun: 0, lossRun: 0, winRun: 0, bestRun: 0 });
     Object.assign(Rec, { walk: {}, win: { t: 0, spm: 0 } });
     Object.assign(G, { restMs: 0, cabs: 0, intervalLog: [] });
     Traffic.cars = []; Vendors.list = [];
@@ -11624,7 +11631,7 @@ void main() {
       ['Stops reached', G.arrived], ...(Stage.started ? [['Crime centers cleared', `${Stage.cleared} of ${Stage.started}`]] : []),
       ...(G.fightsDone || fq.length ? [['Fights won', `${Fight.stats.won} of ${G.fightsDone}`], ['Punches landed', `${landed} of ${thrown}${clean < landed ? `, ${clean} clean` : ''}`], ['Takedowns', `${Fight.stats.takedowns} of ${Fight.stats.shots} shots`], ['Guards broken', Fight.stats.guardBreaks], ['Fight time', fmt(Fight.stats.ms)]] : []),
       ...(Fight.stats.caught || Fight.stats.got_away ? [['Runners caught', `${Fight.stats.caught} of ${Fight.stats.caught + Fight.stats.got_away}`]] : []),
-      ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Habits read against you', Habit.read], ['Street rating today', isDemo() ? 'rated in camera play' : `${Math.round(Rating.r)} (started at ${RATE.start}, range ${Math.round(Rating.low)} to ${Math.round(Rating.high)})`],
+      ['Police calls answered', `${Calls.answered}${Calls.missed ? ` (${Calls.missed} missed)` : ''}`], ['XP this walk', `${Prog.walkXp} (level ${level()}, ${titleOf(level())})`], ['Habits read against you', Habit.read], ['Street rating today', isDemo() ? 'rated in camera play' : `${Math.round(Rating.r)} (started at ${RATE.start}, range ${Math.round(Rating.low)} to ${Math.round(Rating.high)})`], ['Longest win streak', Rating.bestRun],
       ...(Tutor.report ? [['Combat tutorial', Tutor.report]] : []),
     ].map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     const lines = [];
