@@ -504,7 +504,13 @@
   // speech: false keeps the engine quiet; the game voices setup prompts itself, with 2 s gaps (see say)
   // requireJump (engine 0.7.0, Mark 10/16): the squat is the level change, a jump off it is the
   // takedown. The recorder runs up to 2 minutes so the combat tutorial can be saved whole.
-  const engine = RE.create({ video: $('pip'), preset: 'living_room', speech: false, config: { combat: { fight: { requireJump: true } }, recorder: { maxMs: 125000 } } });
+  // 11/9 (Mark: after updating his iPad the camera check froze at once): MediaPipe's GPU mode can hang a new
+  // Safari outright, so the engine's fall back to CPU never runs. On iPhones and iPads the tracker runs on the CPU
+  // (the lite model keeps up); localStorage manhattan-miles-gpu = '1' tries the GPU again
+  const appleTouch = /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  let useGpu = !appleTouch;
+  try { if (localStorage.getItem('manhattan-miles-gpu') === '1') useGpu = true; } catch (_) {}
+  const engine = RE.create({ video: $('pip'), preset: 'living_room', speech: false, config: { pose: { delegate: useGpu ? 'GPU' : 'CPU' }, combat: { fight: { requireJump: true } }, recorder: { maxMs: 125000 } } });
   engine.on('step', () => { if (G.state === 'walk') G.steps++; });
   engine.on('run_start', () => { P.running = true; });
   engine.on('run_end', () => { P.running = false; });
@@ -5579,7 +5585,7 @@
 
   // ---------- flow ----------
   // shown on the title screen, so a cached old page is easy to spot; update with each push
-  const BUILD = '2026-11-08 \u00b7 a close loss costs less';
+  const BUILD = '2026-11-09 \u00b7 camera tracker on the CPU for iPad';
   $('buildStamp').textContent = `Build ${BUILD}`;
   // the map loads in the background (about a second); the walk buttons wait for it
   for (const id of ['playDemo', 'playSticks', 'playCamera']) $(id).disabled = true;
